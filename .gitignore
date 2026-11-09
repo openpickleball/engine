@@ -1,0 +1,34 @@
+# Secrets
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+
+# Local data: never commit real player data
+/data/
+/local-data/
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/

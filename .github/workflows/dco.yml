@@ -1,0 +1,32 @@
+name: DCO
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  sign-off:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check that every commit is signed off
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          missing="$(gh api --paginate "repos/$REPO/pulls/$PR/commits" --jq '
+            .[]
+            | select((.parents | length) < 2)
+            | select(.commit.message | split("\n") | any(test("^Signed-off-by: .+ <[^<> ]+@[^<> ]+>\\s*$")) | not)
+            | .sha[0:7] + " " + (.commit.message | split("\n") | .[0])
+          ')"
+          if [ -n "$missing" ]; then
+            echo "These commits are missing a Signed-off-by line:"
+            echo "$missing"
+            echo "Add one with: git commit --amend -s (or git rebase --signoff for several commits)."
+            exit 1
+          fi
+          echo "All commits are signed off."
