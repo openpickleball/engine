@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openpickleball-engine"
+dynamic = ["version"]
+description = "Demonstration rating engine for OPEN, the Open Pickleball Evaluation Network (unvalidated, not for production use)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "OPEN contributors" }]
+keywords = ["pickleball", "rating", "elo", "sports"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/openpickleball"
+Source = "https://github.com/openpickleball/engine"
+Issues = "https://github.com/openpickleball/engine/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6", "build"]
+
+[tool.hatch.version]
+path = "src/open_engine/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/open_engine"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests", "examples"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
