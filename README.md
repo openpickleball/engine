@@ -1,5 +1,7 @@
 # OPEN rating engine
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/openpickleball/engine/badge)](https://scorecard.dev/viewer/?uri=github.com/openpickleball/engine)
+
 The reference rating engine for [OPEN](https://github.com/openpickleball), the Open Pickleball Evaluation Network.
 
 > **Project status:** This engine is a demonstration. Its methods have not been validated on real match data, its outputs are not OPEN ratings, and its API may change without notice. Do not use it to rate real players. OPEN is in early development, and no OPEN rating is live.
