@@ -63,6 +63,15 @@ def main() -> None:
     print("Match result:", result)
     for player_id in ("player_a", "player_b", "player_c", "player_d"):
         print(engine.player_summary(player_id, RatingFormat.DOUBLES))
+    print(
+        "Team A win probability (before calibration data):",
+        round(
+            engine.win_probability(
+                match.team_a, match.team_b, match.rating_format, match.game_format, match.best_of
+            ),
+            3,
+        ),
+    )
     print("Config", cfg.version, cfg.fingerprint())
 
 

@@ -143,7 +143,7 @@ ALL_GAME_FORMATS: frozenset[tuple[ScoringType, int]] = frozenset(
 
 @dataclass(frozen=True)
 class Config:
-    version: str = "0.1.0"
+    version: str = "0.2.0"
 
     # Rating scale
     min_rating: float = 2.0

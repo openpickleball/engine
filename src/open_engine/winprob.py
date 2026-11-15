@@ -79,6 +79,8 @@ def game_win_probability(p: float, game_format: GameFormat) -> float:
 
 def match_win_probability(p: float, game_format: GameFormat, best_of: int) -> float:
     """Probability of winning a best-of-N match from a per-point win probability."""
+    if not isinstance(best_of, int) or isinstance(best_of, bool) or best_of < 1 or best_of % 2 == 0:
+        raise ValueError(f"best_of must be an odd integer >= 1, got {best_of!r}")
     g = game_win_probability(p, game_format)
     w = best_of // 2 + 1
     return sum(comb(w - 1 + k, k) * g**w * (1 - g) ** k for k in range(w))

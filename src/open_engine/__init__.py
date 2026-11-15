@@ -38,7 +38,7 @@ from .engine import (
 )
 from .winprob import calibrate_win_probability, game_win_probability, match_win_probability
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "Config",
@@ -55,8 +55,8 @@ __all__ = [
     "RatingState",
     "ReplayInfo",
     "ScaleFit",
-    "WinCalibrationFit",
     "ScoringType",
+    "WinCalibrationFit",
     "calibrate_win_probability",
     "clone_player",
     "evaluate",

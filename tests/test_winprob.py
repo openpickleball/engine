@@ -100,3 +100,9 @@ def test_engine_win_probability_uses_calibration() -> None:
     assert got == pytest.approx(expected)
     shrunk = build(0.5).win_probability(["a1", "a2"], ["b1", "b2"], fmt_rating, fmt)
     assert 0.5 < shrunk < got
+
+
+@pytest.mark.parametrize("best_of", [0, 2, 4, -1, 3.0, True])
+def test_match_win_probability_rejects_invalid_best_of(best_of: object) -> None:
+    with pytest.raises(ValueError, match="best_of"):
+        match_win_probability(0.55, FORMATS[0], best_of)  # type: ignore[arg-type]

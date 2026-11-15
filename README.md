@@ -55,7 +55,9 @@ print(result.deltas)
 print(engine.player_summary("alice", RatingFormat.DOUBLES))
 ```
 
-Authoritative ratings come from `replay(ledger, as_of=...)`. Calibrate the expectation scale on match history with `fit_scale(...)`. See [`examples/`](examples) for a fuller example.
+Authoritative ratings come from `replay(ledger, as_of=...)`. Calibrate the expectation scale on match history with `fit_scale(...)`. The expectation scale and the K factor together set how sharp predictions are, and in a closed pool they also set the rating spread. Run `fit_scale` with `mode="scheduled"` and a `score_from` date that skips immature ratings, then check `at_bound` and `profile` on the result: a fit that sits on a search edge or has a flat error profile is not identified. `RatingEngine.win_probability` assumes points are independent, which tends to make match win probabilities overconfident. Calibrate them with `fit_win_calibration` and store the result in `Config.win_calibration_by_scoring`.
+
+See [`examples/`](examples) for a fuller example.
 
 ## Test data
 
