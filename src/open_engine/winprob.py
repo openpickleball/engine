@@ -1,8 +1,9 @@
 """Convert an expected point share into game and match win probabilities.
 
-Model: points are independent and team A wins each with probability p. This is
-exact for rally scoring and an approximation for side-out scoring, where only
-the serving side can score.
+Model: points are independent and team A wins each with probability p. The
+result is exact under the independent-points assumption, which suits rally
+scoring and only approximates side-out scoring, where only the serving side can
+score.
 
 Demonstration only: not validated on real match data, outputs are not OPEN
 ratings, and the API may change without notice.
