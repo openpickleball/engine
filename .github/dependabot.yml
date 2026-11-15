@@ -8,6 +8,14 @@ updates:
     groups:
       minor-and-patch:
         update-types: [minor, patch]
+  # uv, not pip: Dependabot's pip updater reruns pip-compile and drops --python-version.
+  - package-ecosystem: uv
+    directory: /.github/requirements
+    schedule:
+      interval: weekly
+    groups:
+      release-tools:
+        update-types: [minor, patch]
   - package-ecosystem: github-actions
     directory: /
     schedule:

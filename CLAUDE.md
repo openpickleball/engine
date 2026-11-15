@@ -18,6 +18,8 @@ The engine is a demonstration. Its methods have not been validated on real match
 - `tests/`: pytest suite. `tests/fixtures/` holds synthetic fixtures only (see its README).
 - `examples/basic_match.py`: a runnable example, linted with the rest of the code.
 - `scripts/check_sdist.py`: checks a built source distribution's layout: one `openpickleball_engine-<version>` root, clean member paths, only allowed top-level entries, and the required ones present. CI runs it in the `package` job.
+- `scripts/check_release.py`: checks that a release tag is `v` plus the version of the built sdist and wheel, and that `dist/` holds nothing else. The release workflow runs it.
+- `docs/releasing.md`: the release workflow, its one-time setup, and the steps for each release.
 - `docs/plans/`: plans recorded for issues before their work lands.
 
 ## Stack
@@ -31,7 +33,7 @@ The engine is a demonstration. Its methods have not been validated on real match
 
 - **Determinism.** `replay(ledger, as_of=...)` must give the same result for the same ledger, config, and date, whatever order the matches arrive in. A code path that consumes a ledger goes through `_ledger`. It validates every row, collapses or rejects repeated `match_id`s, and sorts by `ledger_order`. Sorting by `ledger_order` alone skips validation and the duplicate check. Rows that repeat a `match_id` collapse only when they are interchangeable for replay (`_canonical`). Any other repeat raises `LedgerConflictError`. Never compare repeated rows with `Match` equality (`==`). Never add randomness, wall-clock reads, or iteration over unordered sets or dicts to a code path that affects ratings.
 - **Config provenance.** `Config.fingerprint()` hashes every parameter, and each replay's `ReplayInfo` stores `as_of`, the config version, and the fingerprint. The fingerprint walks every dataclass field, so a new `Config` field is included automatically, but its value must be a type that `norm()` turns into stable JSON (add a case there if not). Validate a new field in `__post_init__` when it has a valid range. A change to a default value or to rating behavior changes published ratings: record it in `CHANGELOG.md`.
-- **Versions.** `Config.version` and `__version__` move together, and only in a release. The backend pins the engine as a git dependency on a release tag.
+- **Versions.** `Config.version` and `__version__` move together, and only in a release. A dev release such as `0.3.0.dev1` counts as a release. A test fails if the two differ. The backend pins the engine as a git dependency on a release tag.
 - **Zero-sum exceptions.** Team average movement is zero-sum except for the two documented cases, `clamped` and `frozen`, both reported on every `MatchResult`. A change that adds another exception must report it the same way and document it in the module docstring.
 - **Provisional versus authoritative.** Authoritative ratings come from scheduled replays. Live updates between replays are provisional and labeled with the count since the last recalculation. Keep that labeling.
 - **External ratings are a seed only.** An imported rating initializes a player. It can never overwrite an OPEN-earned rating once OPEN matches exist. Imported reliability is shown separately from OPEN-earned reliability, and `reliability` is never a conversion of an external score.
@@ -68,6 +70,8 @@ python scripts/check_sdist.py dist/*.tar.gz   # CI's package job; clear dist/ fi
 The sdist ships only the paths in `only-include` under `[tool.hatch.build.targets.sdist]` in `pyproject.toml`, plus the `PKG-INFO` and `.gitignore` that hatchling adds. A new top-level path that must ship goes in that list and in `ALLOWED_TOP_LEVEL` in `scripts/check_sdist.py`. If it is in `only-include` but not in `ALLOWED_TOP_LEVEL`, the `package` job fails.
 
 CI also runs `.github/workflows/dco.yml` (the `sign-off` check) on every pull request and the OpenSSF Scorecard workflow. GitHub Actions are pinned by commit SHA with the version in a comment; keep that form when Dependabot or a contributor bumps one.
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which calls `test.yml` as its gate and publishes to TestPyPI (see `docs/releasing.md`). The `package` job and the release build install their tools from `.github/requirements/release.txt`, a hash-pinned lock. Never edit it by hand: regenerate it with the command in its header, on Linux (see `docs/releasing.md`).
 
 ## Tests
 

@@ -209,6 +209,11 @@ def test_live_updates_labeled_and_replay_resets():
     assert rebuilt.replay_info.config_fingerprint == Config().fingerprint()
 
 
+def test_config_version_matches_package_version():
+    # A release tag is checked against __version__; Config.version must move with it.
+    assert Config().version == open_engine.__version__
+
+
 # 7. Same-day ordering follows real play ------------------------------------------
 
 
