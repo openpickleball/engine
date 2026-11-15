@@ -20,11 +20,11 @@ from open_engine import (
     RejectionReason,
     ScoringType,
     fit_scale,
-    inflated_rd,
     ledger_order,
     prequential_predictions,
     replay,
 )
+from open_engine.engine import inflated_rd
 
 D = RatingFormat.DOUBLES
 SNAP_DATE = date(2026, 10, 1)
