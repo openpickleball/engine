@@ -50,6 +50,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
 from datetime import date, datetime, time, timedelta
 from enum import Enum
+from typing import Literal
 
 from .winprob import calibrate_win_probability, match_win_probability
 
@@ -1064,6 +1065,126 @@ class EvaluationReport:
     # Each bin: (expected lower bound, mean expected, mean actual, count)
 
 
+@dataclass(frozen=True)
+class PrequentialPrediction:
+    match_id: str
+    played_on: date
+    players: tuple[str, ...]
+    expected: float  # team A's expected point share
+    actual: float  # raw points_a / total, not win_weight-adjusted
+    team_a_won: bool
+    win_probability_raw: float  # before calibration
+    win_probability: float  # calibrated with cfg
+
+
+PredictionMode = Literal["live", "scheduled"]
+
+
+def _is_established(engine: RatingEngine, match: Match, burn_in_matches: int) -> bool:
+    return all(
+        (s := engine._peek_state(pid, match.rating_format)).initial_source_date is not None
+        or s.matches_played >= burn_in_matches
+        for pid in match.team_a + match.team_b
+    )
+
+
+def _predict_match(engine: RatingEngine, match: Match) -> PrequentialPrediction:
+    cfg = engine.cfg
+    scoring = match.game_format.scoring
+    expected = engine.predict(match.team_a, match.team_b, match.rating_format, scoring)
+    raw = match_win_probability(expected, match.game_format, match.best_of)
+    points_a = sum(a for a, _ in match.games)
+    total = sum(a + b for a, b in match.games)
+    games_a = sum(a > b for a, b in match.games)
+    return PrequentialPrediction(
+        match_id=match.match_id,
+        played_on=match.played_on,
+        players=match.team_a + match.team_b,
+        expected=expected,
+        actual=points_a / total,
+        team_a_won=games_a > len(match.games) - games_a,
+        win_probability_raw=raw,
+        win_probability=calibrate_win_probability(raw, cfg.win_calibration_by_scoring[scoring]),
+    )
+
+
+def prequential_predictions(
+    matches: Iterable[Match],
+    seed_players: Iterable[Player] = (),
+    *,
+    cfg: Config | None = None,
+    scoring: ScoringType | None = None,
+    burn_in_matches: int = 5,
+    mode: PredictionMode = "live",
+    score_from: date | None = None,
+    anchor: date | None = None,
+) -> list[PrequentialPrediction]:
+    """
+    Predict each eligible match from ratings that have not seen it.
+
+    A match is eligible when every participant is established in its rating
+    format (imported baseline, or at least `burn_in_matches` OPEN matches),
+    its scoring equals `scoring` when given, and it is played on or after
+    `score_from` when given. Only matches that `record` counts are kept.
+
+    "live" records every match live in one engine, in ledger order.
+    "scheduled" mirrors production: replay dates are
+    `anchor + k * cfg.replay_interval_days` (anchor defaults to the first match
+    date). A match on day d is predicted from replay(matches on or before s,
+    as_of=s) for the largest replay date s strictly before d, and matches in
+    that window are then predicted and recorded live in ledger order.
+    """
+    if mode not in ("live", "scheduled"):
+        raise ValueError(f"mode must be 'live' or 'scheduled', not {mode!r}")
+    cfg = cfg or Config()
+    ordered = sorted(matches, key=ledger_order)
+    seeds = list(seed_players)
+    predictions: list[PrequentialPrediction] = []
+
+    def step(engine: RatingEngine, match: Match) -> None:
+        match.validate()
+        eligible = (
+            (scoring is None or match.game_format.scoring is scoring)
+            and (score_from is None or match.played_on >= score_from)
+            and _is_established(engine, match, burn_in_matches)
+        )
+        prediction = _predict_match(engine, match) if eligible else None
+        if engine.record(match).counted and prediction is not None:
+            predictions.append(prediction)
+
+    if mode == "live":
+        engine = RatingEngine(cfg)
+        for player in seeds:
+            engine.add_player(player)
+        for match in ordered:
+            step(engine, match)
+        return predictions
+
+    if not ordered:
+        return predictions
+    interval = cfg.replay_interval_days
+    if anchor is None:
+        anchor = ordered[0].played_on
+    windows: dict[date, list[Match]] = {}
+    for match in ordered:
+        # Largest k with anchor + k * interval strictly before played_on.
+        k = ((match.played_on - anchor).days - 1) // interval
+        windows.setdefault(anchor + timedelta(days=k * interval), []).append(match)
+
+    for replay_date, window in sorted(windows.items()):
+        if score_from is not None and all(m.played_on < score_from for m in window):
+            continue
+        engine = replay(
+            [m for m in ordered if m.played_on <= replay_date],
+            seeds,
+            cfg=cfg,
+            as_of=replay_date,
+        )
+        for match in window:
+            step(engine, match)
+    return predictions
+
+
 def evaluate(
     matches: Iterable[Match],
     seed_players: Iterable[Player] = (),
@@ -1071,30 +1192,36 @@ def evaluate(
     cfg: Config | None = None,
     scoring: ScoringType | None = None,
     burn_in_matches: int = 5,
+    mode: PredictionMode = "live",
+    score_from: date | None = None,
+    anchor: date | None = None,
 ) -> EvaluationReport:
     """
     Prequential evaluation: each match is predicted before it updates ratings.
 
-    Only matches where every participant is established (imported baseline,
-    or at least `burn_in_matches` OPEN matches in that format) are scored.
+    Scores the matches that prequential_predictions() returns, with the same
+    eligibility, mode, score_from and anchor rules.
     """
     cfg = cfg or Config()
-    engine = RatingEngine(cfg)
-    for player in seed_players:
-        engine.add_player(player)
-
-    pairs: list[tuple[float, float]] = []
-    for match in sorted(matches, key=ledger_order):
-        scored = scoring is None or match.game_format.scoring is scoring
-        if scored:
-            scored = all(
-                (s := engine._peek_state(pid, match.rating_format)).initial_source_date is not None
-                or s.matches_played >= burn_in_matches
-                for pid in match.team_a + match.team_b
-            )
-        result = engine.record(match)
-        if scored and result.counted:
-            pairs.append((result.expected_a, result.actual_a))
+    predictions = prequential_predictions(
+        matches,
+        seed_players,
+        cfg=cfg,
+        scoring=scoring,
+        burn_in_matches=burn_in_matches,
+        mode=mode,
+        score_from=score_from,
+        anchor=anchor,
+    )
+    # Same target and 5-decimal precision as MatchResult.expected_a/actual_a.
+    w = cfg.win_weight
+    pairs = [
+        (
+            round(p.expected, 5),
+            round((1.0 - w) * p.actual + w * float(p.team_a_won), 5),
+        )
+        for p in predictions
+    ]
 
     if not pairs:
         raise ValueError("No established matches to evaluate")
@@ -1132,6 +1259,8 @@ class ScaleFit:
     default_scale: float
     fitted: EvaluationReport
     at_default: EvaluationReport
+    profile: tuple[tuple[float, float], ...] = ()  # (scale, mse), sorted by scale
+    at_bound: bool = False  # fitted scale within tolerance of low or high
 
 
 def fit_scale(
@@ -1144,6 +1273,9 @@ def fit_scale(
     high: float = 8.0,
     tolerance: float = 0.01,
     burn_in_matches: int = 5,
+    mode: PredictionMode = "live",
+    score_from: date | None = None,
+    anchor: date | None = None,
 ) -> ScaleFit:
     """
     Fit one scoring type's scale by minimizing prequential point-share MSE.
@@ -1161,7 +1293,14 @@ def fit_scale(
         if key not in cache:
             trial = replace(cfg, scale_by_scoring={**cfg.scale_by_scoring, scoring: scale})
             cache[key] = evaluate(
-                ledger, seeds, cfg=trial, scoring=scoring, burn_in_matches=burn_in_matches
+                ledger,
+                seeds,
+                cfg=trial,
+                scoring=scoring,
+                burn_in_matches=burn_in_matches,
+                mode=mode,
+                score_from=score_from,
+                anchor=anchor,
             )
         return cache[key]
 
@@ -1183,10 +1322,14 @@ def fit_scale(
     fitted_scale = round((a + b) / 2, 3)
 
     default_scale = cfg.scale_by_scoring[scoring]
+    fitted = run(fitted_scale)
+    at_default = run(default_scale)
     return ScaleFit(
         scoring=scoring.value,
         scale=fitted_scale,
         default_scale=default_scale,
-        fitted=run(fitted_scale),
-        at_default=run(default_scale),
+        fitted=fitted,
+        at_default=at_default,
+        profile=tuple((float(scale), report.mse) for scale, report in sorted(cache.items())),
+        at_bound=fitted_scale - low <= tolerance or high - fitted_scale <= tolerance,
     )
