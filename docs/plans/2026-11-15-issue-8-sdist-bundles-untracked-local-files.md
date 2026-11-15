@@ -3,8 +3,8 @@ Risk tier: Medium. Build and CI config plus a small stdlib check script. It chan
 Domain skills: test-driven-development: invoke (the check script gets tests written first). All others not applicable because the change has no framework, UI, API, data, auth, payments, or email surface.
 
 ## Acceptance criteria
-1. `pyproject.toml` has `[tool.hatch.build.targets.sdist]` with `only-include = ["src", "tests", "examples", "README.md", "LICENSE", "CHANGELOG.md", "pyproject.toml"]`. The wheel target is unchanged.
-2. With untracked `uv.lock`, `.superpowers/review.diff`, and `notes.txt` present in the checkout, `python -m build --sdist` produces a tarball whose `tar tzf` listing has exactly these top-level entries under `openpickleball_engine-<version>/`: `src/`, `tests/`, `examples/`, `README.md`, `LICENSE`, `CHANGELOG.md`, `pyproject.toml`, `PKG-INFO`, `.gitignore` (hatchling always adds the last two). `CLAUDE.md`, `docs/`, and `.github/` are no longer shipped.
+1. `pyproject.toml` has `[tool.hatch.build.targets.sdist]` with `only-include = ["src", "tests", "scripts", "examples", "README.md", "LICENSE", "CHANGELOG.md", "pyproject.toml"]`. The wheel target is unchanged.
+2. With untracked `uv.lock`, `.superpowers/review.diff`, and `notes.txt` present in the checkout, `python -m build --sdist` produces a tarball whose `tar tzf` listing has exactly these top-level entries under `openpickleball_engine-<version>/`: `src/`, `tests/`, `scripts/`, `examples/`, `README.md`, `LICENSE`, `CHANGELOG.md`, `pyproject.toml`, `PKG-INFO`, `.gitignore` (hatchling always adds the last two). `CLAUDE.md`, `docs/`, and `.github/` are no longer shipped.
 3. `.gitignore` ignores `.superpowers/` (`git check-ignore .superpowers/x` succeeds). `uv.lock`: see "Open decision" below.
 4. `scripts/check_sdist.py PATH...` (standard library only, typed, Python 3.10 compatible) opens each sdist tarball and exits non-zero, naming each offending path, when any top-level entry under the single root directory is outside the allowed set in criterion 2, when a member is not under that root, or when a required entry (`src/`, `pyproject.toml`, `PKG-INFO`) is missing. It exits 0 and prints the checked file otherwise. It also exits non-zero when given no paths.
 5. `.github/workflows/test.yml` gains a `package` job (one Python version, 3.12) that checks out the repo, installs `build`, runs `python -m build`, then `python scripts/check_sdist.py dist/*.tar.gz`. Actions are pinned to the same SHAs, with version comments, as the `test` job. The existing `test` job is unchanged.
@@ -18,14 +18,14 @@ Domain skills: test-driven-development: invoke (the check script gets tests writ
 - `pyproject.toml`: add the sdist target table above the wheel table.
 - `.gitignore`: add `.superpowers/` and `/uv.lock` in a "Local tooling" group.
 - `scripts/check_sdist.py`: new.
-- `tests/test_check_sdist.py`: new. Loads the script with `importlib.util.spec_from_file_location` from `Path(__file__).parents[1] / "scripts" / "check_sdist.py"` (`scripts/` is not a package and is not shipped).
+- `tests/test_check_sdist.py`: new. Loads the script with `importlib.util.spec_from_file_location` from `Path(__file__).parents[1] / "scripts" / "check_sdist.py"` (`scripts/` is not a package; it ships in the sdist so the shipped tests can load it).
 - `.github/workflows/test.yml`: new `package` job.
 - `CHANGELOG.md`, and `CLAUDE.md`/`README.md` only if their text becomes wrong (Phase 8).
 
 ## Order of work
 1. Write `tests/test_check_sdist.py` against the interface below; run it and see it fail (script missing). Commit the red test.
 2. Write `scripts/check_sdist.py`:
-   - `ALLOWED_TOP_LEVEL: frozenset[str]` = the nine names in criterion 2 (directories without the slash), with a comment that it mirrors `only-include` in `pyproject.toml` plus the two hatchling adds.
+   - `ALLOWED_TOP_LEVEL: frozenset[str]` = the ten names in criterion 2 (directories without the slash), with a comment that it mirrors `only-include` in `pyproject.toml` plus the two hatchling adds.
    - `REQUIRED_TOP_LEVEL = frozenset({"src", "pyproject.toml", "PKG-INFO"})`.
    - `problems(names: list[str]) -> list[str]`: pure function over tar member names; returns human-readable problem strings, sorted, empty when clean. Root is the first path component; all members must share one root.
    - `main(argv: list[str] | None = None) -> int`: for each path, `tarfile.open(path, "r:gz")`, `getnames()`, print problems to stderr; return 1 if any path had problems or no paths were given, else 0.
@@ -39,6 +39,7 @@ Domain skills: test-driven-development: invoke (the check script gets tests writ
 - `only-include` drops anything not listed. Checked: `PKG-INFO`, the readme, and the license are still in the sdist, and the wheel is unchanged (measured below).
 - An untracked file inside an included directory (for example `src/open_engine/scratch.py`) would still ship in both sdist and wheel. Not in scope: the issue's criterion is top-level paths. `.gitignore` still filters inside included directories.
 - The allowed set lives in two places (`pyproject.toml` and the script). The CI job catches drift in one direction (a new top-level path), and a removed required entry fails the check.
+- `scripts/` ships in the sdist: the user chose this at implementation time, because the shipped `tests/test_check_sdist.py` loads the script and pytest from an extracted sdist otherwise errors.
 - Riskiest step: the CI job, since it only runs on GitHub. The live drive runs the same two commands locally from a clean `git archive` export.
 - Not doing: a release or publish workflow ("build release artifacts only in CI" needs a publish job, which does not exist yet; worth its own issue), checking wheel contents, type-checking `scripts/` in the gate (CI runs `mypy src`; the script is checked with `mypy --strict scripts/check_sdist.py` during implementation but the gate command is not changed).
 

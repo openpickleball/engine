@@ -13,11 +13,13 @@ import sys
 import tarfile
 
 # Mirrors `only-include` in pyproject.toml's [tool.hatch.build.targets.sdist],
-# plus PKG-INFO and .gitignore, which hatchling always adds.
+# plus PKG-INFO and .gitignore, which hatchling always adds. scripts/ ships because
+# tests/test_check_sdist.py loads scripts/check_sdist.py.
 ALLOWED_TOP_LEVEL: frozenset[str] = frozenset(
     {
         "src",
         "tests",
+        "scripts",
         "examples",
         "README.md",
         "LICENSE",
