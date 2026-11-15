@@ -42,3 +42,9 @@ class LedgerConflictError(OpenEngineError):
     def __init__(self, match_ids: Iterable[str]) -> None:
         self.match_ids: tuple[str, ...] = tuple(sorted(set(match_ids)))
         super().__init__("Conflicting ledger rows for match_id: " + ", ".join(self.match_ids))
+
+    def __reduce__(
+        self,
+    ) -> tuple[type[LedgerConflictError], tuple[tuple[str, ...]], dict[str, object]]:
+        # Rebuild from match_ids, not from the message, so pickle and copy work.
+        return (type(self), (self.match_ids,), self.__dict__)

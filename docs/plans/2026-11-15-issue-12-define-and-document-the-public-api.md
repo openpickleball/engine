@@ -38,7 +38,9 @@ browser work; this is a standard-library Python package.
      established matches, `fit_win_calibration` with nothing to fit, and the argument
      checks in `open_engine.winprob` (`game_win_probability`, `match_win_probability`).
    - `LedgerConflictError` keeps its name and `match_ids`, and is re-parented to
-     `OpenEngineError` (still a `ValueError`). No `DuplicateMatchError`: nothing raises on
+     `OpenEngineError` (still a `ValueError`). Its `__reduce__` rebuilds it from
+     `match_ids`, so pickle, `copy.copy`, and `copy.deepcopy` keep the message and ids
+     (`tests/test_ledger_conflict_copy.py`). No `DuplicateMatchError`: nothing raises on
      a duplicate (`record` returns a not-counted result).
 4. `player_summary` returns a frozen `PlayerSummary` dataclass with precise types: dates
    are `date | None`, `rating_format` is `RatingFormat`.
