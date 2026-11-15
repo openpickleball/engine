@@ -367,6 +367,85 @@ def test_internal_helpers_are_not_exported(name: str) -> None:
     assert callable(getattr(engine_module, name))
 
 
+PUBLIC_API = [
+    "Config",
+    "ConfigError",
+    "EvaluationError",
+    "EvaluationReport",
+    "ExternalRatingSnapshot",
+    "GameFormat",
+    "InvalidMatchError",
+    "InvalidSeedError",
+    "LedgerConflictError",
+    "Match",
+    "MatchResult",
+    "MatchType",
+    "OpenEngineError",
+    "Player",
+    "PlayerError",
+    "PlayerSummary",
+    "PrequentialPrediction",
+    "RatingEngine",
+    "RatingFormat",
+    "RatingState",
+    "RejectionReason",
+    "ReliabilityBasis",
+    "ReplayInfo",
+    "ScaleFit",
+    "ScoringType",
+    "WinCalibrationFit",
+    "calibrate_win_probability",
+    "evaluate",
+    "expected_point_share",
+    "fit_scale",
+    "fit_win_calibration",
+    "game_win_probability",
+    "ledger_order",
+    "match_win_probability",
+    "prequential_predictions",
+    "reliability",
+    "replay",
+]
+README = Path(__file__).resolve().parent.parent / "README.md"
+START, END = "<!-- public-api:start -->", "<!-- public-api:end -->"
+
+
+def _readme_api_section() -> str:
+    text = README.read_text(encoding="utf-8")
+    assert text.count(START) == 1 and text.count(END) == 1
+    return text[text.index(START) + len(START) : text.index(END)]
+
+
+def _readme_api_names() -> list[str]:
+    """Each backticked name at the start of a list item in the section."""
+    names: list[str] = []
+    for line in _readme_api_section().splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- `"):
+            names.append(stripped[3:].split("`", 1)[0])
+    return names
+
+
+def test_all_is_the_planned_public_api() -> None:
+    assert sorted(open_engine.__all__) == PUBLIC_API
+    assert len(set(open_engine.__all__)) == len(open_engine.__all__)
+    assert all(hasattr(open_engine, name) for name in open_engine.__all__)
+
+
+def test_readme_lists_exactly_the_public_api() -> None:
+    names = _readme_api_names()
+    assert len(names) == len(set(names))
+    assert sorted(names) == sorted(open_engine.__all__)
+
+
+def test_readme_api_section_states_its_limits() -> None:
+    section = _readme_api_section()
+    assert "The API may change in any 0.x release." in section
+    assert "`open_engine.engine`" in section
+    assert "`open_engine.winprob`" in section
+    assert "internal" in section
+
+
 def _own_doc(obj: object, name: str) -> str | None:
     """obj's own docstring, ignoring generated and inherited ones."""
     doc = obj.__dict__.get("__doc__") if isinstance(obj, type) else getattr(obj, "__doc__", None)
