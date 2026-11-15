@@ -2,7 +2,8 @@
 
 import random
 import re
-from datetime import date, datetime, timedelta, timezone, tzinfo
+from datetime import UTC, date, datetime, timedelta, timezone, tzinfo
+from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytest
@@ -214,6 +215,22 @@ def test_config_version_matches_package_version():
     assert Config().version == open_engine.__version__
 
 
+def test_version_has_one_source():
+    # _version.py is the one place a release sets the version.
+    from open_engine import _version
+
+    assert open_engine.__version__ == _version.__version__
+    assert Config().version == _version.__version__
+    assert "_version" not in open_engine.__all__
+    package_dir = Path(open_engine.__file__).parent
+    holders = sorted(
+        path.name
+        for path in package_dir.glob("*.py")
+        if f'"{_version.__version__}"' in path.read_text(encoding="utf-8")
+    )
+    assert holders == ["_version.py"]
+
+
 # 7. Same-day ordering follows real play ------------------------------------------
 
 
@@ -367,7 +384,6 @@ def test_validate_game_rejects_impossible_scores(
 
 # 12. Ledger order, duplicate IDs, and time zones (issue 9) ----------------------
 
-UTC = timezone.utc
 EST = timezone(timedelta(hours=-5))
 JST = timezone(timedelta(hours=9))
 LEDGER_DAY = date(2026, 10, 29)

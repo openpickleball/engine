@@ -7,7 +7,7 @@ name = "openpickleball-engine"
 dynamic = ["version"]
 description = "Demonstration rating engine for OPEN, the Open Pickleball Evaluation Network (unvalidated, not for production use)"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "OPEN contributors" }]
@@ -17,7 +17,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -32,10 +31,10 @@ Source = "https://github.com/openpickleball/engine"
 Issues = "https://github.com/openpickleball/engine/issues"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6", "mypy>=1.13", "build"]
+dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6", "mypy>=1.13", "build", "twine"]
 
 [tool.hatch.version]
-path = "src/open_engine/__init__.py"
+path = "src/open_engine/_version.py"
 
 [tool.hatch.build.targets.sdist]
 only-include = [
@@ -67,11 +66,15 @@ strict = true
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 src = ["src", "tests", "examples"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
+# UP042 would turn the `str, Enum` enums into StrEnum. That changes str() and
+# format() of members, and so any printed or stringified output. Keep `str, Enum`;
+# switching is a separate decision with its own changelog entry.
+ignore = ["UP042"]
 
 [tool.ruff.format]
 quote-style = "double"

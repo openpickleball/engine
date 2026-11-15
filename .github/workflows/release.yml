@@ -8,7 +8,7 @@ permissions: {}
 
 jobs:
   gate:
-    # Rerun the full pull request checks (lint, types, tests on 3.10 to 3.13, package)
+    # Rerun the full pull request checks (lint, types, tests on 3.11 to 3.13, package)
     # on the tagged commit before anything is built for release.
     permissions:
       contents: read
@@ -39,6 +39,8 @@ jobs:
         run: python -m build --no-isolation
       - name: Check sdist contents
         run: python scripts/check_sdist.py dist/*.tar.gz
+      - name: Check wheel contents
+        run: python scripts/check_wheel.py dist/*.whl
       - name: Check tag matches version
         env:
           TAG: ${{ github.ref_name }}
