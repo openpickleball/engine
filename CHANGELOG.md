@@ -13,7 +13,7 @@ The engine is a demonstration. Its outputs are not OPEN ratings.
 
 ### Changed
 
-- The source distribution now ships only `src/`, `tests/`, `scripts/`, `examples/`, `README.md`, `LICENSE`, `CHANGELOG.md`, and `pyproject.toml` (plus the `PKG-INFO` and `.gitignore` that hatchling adds). Untracked local files and repo-only paths such as `CLAUDE.md`, `docs/`, and `.github/` are no longer bundled. The wheel is unchanged.
+- The source distribution now ships only `src/`, `tests/`, `scripts/`, `examples/`, `README.md`, `LICENSE`, `CHANGELOG.md`, and `pyproject.toml` (plus the `PKG-INFO` and `.gitignore` that hatchling adds). Untracked top-level files and directories (such as local tool output) and repo-only paths such as `CLAUDE.md`, `docs/`, and `.github/` are no longer bundled. Untracked files that are not gitignored inside the shipped directories still ship, and those under `src/` also ship in the wheel. The wheel is otherwise unchanged.
 - fit_scale compares unrounded MSE; ScaleFit.profile reports unrounded values.
 - The engine now type-checks under `mypy --strict`, and CI runs `mypy src` on every supported Python version. `ledger_order` is annotated as returning `tuple[date, time, int, str]`, and `RatingEngine.player_summary` as returning `dict[str, Any]`. Runtime behavior is unchanged.
 
