@@ -20,7 +20,7 @@ Domain skills: test-driven-development: invoke (the check script gets tests writ
 - `scripts/check_sdist.py`: new.
 - `tests/test_check_sdist.py`: new. Loads the script with `importlib.util.spec_from_file_location` from `Path(__file__).parents[1] / "scripts" / "check_sdist.py"` (`scripts/` is not a package; it ships in the sdist so the shipped tests can load it).
 - `.github/workflows/test.yml`: new `package` job.
-- `CHANGELOG.md`, and `CLAUDE.md`/`README.md` only if their text becomes wrong (Phase 8).
+- `CHANGELOG.md`, and `CLAUDE.md`/`README.md` only if their text becomes wrong or a contributor needs a new rule to keep the change working (Phase 8). Phase 8 outcome: `CLAUDE.md` gains a file-list entry for `scripts/check_sdist.py`, the check command, and the rule that a new shipped top-level path goes in both `only-include` and `ALLOWED_TOP_LEVEL`, since the two lists can drift. `README.md` is unchanged.
 
 ## Order of work
 1. Write `tests/test_check_sdist.py` against the interface below; run it and see it fail (script missing). Commit the red test.
