@@ -1,6 +1,7 @@
 """Tests for the OPEN rating engine. Run with: python -m pytest -q"""
 
 import random
+import re
 from datetime import date, datetime, timedelta
 
 import pytest
@@ -288,3 +289,65 @@ def test_rejected_match_changes_nothing():
     before = eng.state("a", D).rd
     assert not eng.record(match("m", ("a", "b"), ("c", "d"))).counted
     assert eng.state("a", D).rd == before and "b" not in eng.players
+
+
+# 11. GameFormat.validate_game edge cases --------------------------------------
+
+STANDARD = GameFormat(points_to=11)
+CAPPED = GameFormat(points_to=11, cap=15)
+WIN_BY_3 = GameFormat(points_to=11, win_by=3)
+
+VALID_GAMES = [
+    pytest.param(STANDARD, 11, 9, id="standard-11-9"),
+    pytest.param(STANDARD, 11, 0, id="standard-11-0"),
+    pytest.param(STANDARD, 12, 10, id="standard-12-10"),
+    pytest.param(STANDARD, 13, 11, id="standard-13-11"),
+    pytest.param(CAPPED, 14, 12, id="capped-14-12"),
+    pytest.param(CAPPED, 15, 13, id="capped-15-13"),
+    pytest.param(CAPPED, 15, 14, id="capped-15-14"),
+    pytest.param(WIN_BY_3, 12, 9, id="win_by_3-12-9"),
+]
+
+INVALID_GAMES = [
+    pytest.param(STANDARD, 10, 8, "A game must reach its target score", id="standard-10-8"),
+    pytest.param(STANDARD, 11, 10, "Game was not won by the required margin", id="standard-11-10"),
+    pytest.param(
+        STANDARD,
+        14,
+        11,
+        "Extended game must end at exactly the win-by margin",
+        id="standard-14-11",
+    ),
+    pytest.param(
+        STANDARD,
+        12,
+        11,
+        "Extended game must end at exactly the win-by margin",
+        id="standard-12-11",
+    ),
+    pytest.param(CAPPED, 16, 14, "Game score exceeds the cap", id="capped-16-14"),
+    pytest.param(CAPPED, 15, 12, "Capped game score is not reachable", id="capped-15-12"),
+    pytest.param(CAPPED, 15, 11, "Capped game score is not reachable", id="capped-15-11"),
+    pytest.param(WIN_BY_3, 11, 9, "Game was not won by the required margin", id="win_by_3-11-9"),
+]
+
+BOTH_ORDERS = pytest.mark.parametrize("swap", [False, True], ids=["a_wins", "b_wins"])
+
+
+@BOTH_ORDERS
+@pytest.mark.parametrize(("fmt", "winner", "loser"), VALID_GAMES)
+def test_validate_game_accepts_possible_scores(
+    fmt: GameFormat, winner: int, loser: int, swap: bool
+) -> None:
+    score_a, score_b = (loser, winner) if swap else (winner, loser)
+    fmt.validate_game(score_a, score_b)
+
+
+@BOTH_ORDERS
+@pytest.mark.parametrize(("fmt", "winner", "loser", "message"), INVALID_GAMES)
+def test_validate_game_rejects_impossible_scores(
+    fmt: GameFormat, winner: int, loser: int, message: str, swap: bool
+) -> None:
+    score_a, score_b = (loser, winner) if swap else (winner, loser)
+    with pytest.raises(ValueError, match=re.escape(message)):
+        fmt.validate_game(score_a, score_b)
