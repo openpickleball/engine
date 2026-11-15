@@ -191,10 +191,11 @@ task with the gate green; each behavior change starts with a failing test commit
   pass with only the named mechanical edits. Any other test edit is a red flag to report.
 - **Import cycle** between `engine.py` and `winprob.py` if the exceptions live in
   `engine.py`. Mitigation: `_errors.py`.
-- **Stricter ids (criterion 11).** A ledger that replays today with a blank,
-  whitespace, or non-string id (after `as_of`, or in a row rejected before commit) now
-  raises `InvalidMatchError`. No rating changes for any ledger that replays successfully
-  today.
+- **Stricter ids (criterion 11).** Some ledgers that replay today now raise
+  `InvalidMatchError`: any row with a blank, whitespace-only, or non-`str` player id or
+  `match_id`. That includes rows after `as_of` and rows rejected before commit, and also
+  non-`str` ids that used to replay fully, such as `bytes` ids. Every ledger that still
+  replays gives the same ratings.
 - **`__all__` drift from the README.** Mitigation: the parsing test.
 - **Downstream breakage.** The evaluation repo calls `engine.predict` three times and reads
   `.reason` once; the backend does not import the engine yet. All breaks are allowed in

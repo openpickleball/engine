@@ -858,7 +858,7 @@ class RatingEngine:
 
         Raises InvalidSeedError when the snapshot or the existing rating does
         not allow the seed, and PlayerError when player_id is blank or the
-        snapshot's external identity is already linked to another player.
+        snapshot's external identity cannot be linked (see attach_external_id).
         """
         cfg = self.cfg
         if not cfg.min_rating <= snapshot.rating <= cfg.max_rating:
