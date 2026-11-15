@@ -835,6 +835,10 @@ class RatingEngine:
 
         The external rating is an initial condition, not a live dependency.
         Once OPEN matches exist, external refreshes cannot overwrite the rating.
+
+        Raises InvalidSeedError when the snapshot or the existing rating does
+        not allow the seed, and PlayerError when player_id is blank or the
+        snapshot's external identity is already linked to another player.
         """
         cfg = self.cfg
         if not cfg.min_rating <= snapshot.rating <= cfg.max_rating:
@@ -1229,6 +1233,9 @@ def replay(
     value, are counted once; any other repeat raises LedgerConflictError, even when it
     falls after as_of. Seeds must be
     unplayed: imported or provisional states only.
+
+    Raises InvalidSeedError for a seed that already has OPEN matches, and
+    PlayerError when two seeds share a player id.
     """
     engine = RatingEngine(cfg)
     for player in seed_players:

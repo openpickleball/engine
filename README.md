@@ -131,7 +131,7 @@ Errors (every class is a `ValueError`):
 - `ConfigError`: a `Config` or `GameFormat` value is not valid.
 - `InvalidMatchError`: a match, its teams, its scores, or its `played_at` is not valid.
 - `InvalidSeedError`: an external or replay seed cannot initialize a rating.
-- `PlayerError`: a player identity, account link, or external identity is not valid.
+- `PlayerError`: a player identity, account link, or external identity is not valid. `seed_external_rating` raises it for a blank player id or an external identity already linked to another player, and `replay` raises it when two seeds share a player id.
 - `EvaluationError`: an evaluation, fit, or win probability cannot be computed.
 - `LedgerConflictError`: ledger rows share a `match_id` but differ. Its `match_ids` lists them.
 <!-- public-api:end -->
