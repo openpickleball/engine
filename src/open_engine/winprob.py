@@ -11,6 +11,8 @@ import math
 from math import comb
 from typing import TYPE_CHECKING
 
+from ._errors import EvaluationError
+
 if TYPE_CHECKING:
     from .engine import GameFormat
 
@@ -65,7 +67,7 @@ def game_win_probability(p: float, game_format: GameFormat) -> float:
     """
     win_by = game_format.win_by
     if win_by not in (1, 2):
-        raise ValueError("win_by must be 1 or 2")
+        raise EvaluationError("win_by must be 1 or 2")
     n = game_format.points_to
     if game_format.cap is not None:
         return _capped(p, n, win_by, game_format.cap)
@@ -80,7 +82,7 @@ def game_win_probability(p: float, game_format: GameFormat) -> float:
 def match_win_probability(p: float, game_format: GameFormat, best_of: int) -> float:
     """Probability of winning a best-of-N match from a per-point win probability."""
     if not isinstance(best_of, int) or isinstance(best_of, bool) or best_of < 1 or best_of % 2 == 0:
-        raise ValueError(f"best_of must be an odd integer >= 1, got {best_of!r}")
+        raise EvaluationError(f"best_of must be an odd integer >= 1, got {best_of!r}")
     g = game_win_probability(p, game_format)
     w = best_of // 2 + 1
     return sum(comb(w - 1 + k, k) * g**w * (1 - g) ** k for k in range(w))

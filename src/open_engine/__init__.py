@@ -5,13 +5,21 @@ ratings, and the API may change without notice. Do not use it to rate real
 players.
 """
 
+from ._errors import (
+    ConfigError,
+    EvaluationError,
+    InvalidMatchError,
+    InvalidSeedError,
+    LedgerConflictError,
+    OpenEngineError,
+    PlayerError,
+)
 from ._version import __version__ as __version__
 from .engine import (
     Config,
     EvaluationReport,
     ExternalRatingSnapshot,
     GameFormat,
-    LedgerConflictError,
     Match,
     MatchResult,
     MatchType,
@@ -42,14 +50,20 @@ from .winprob import calibrate_win_probability, game_win_probability, match_win_
 
 __all__ = [
     "Config",
+    "ConfigError",
+    "EvaluationError",
     "EvaluationReport",
     "ExternalRatingSnapshot",
     "GameFormat",
+    "InvalidMatchError",
+    "InvalidSeedError",
     "LedgerConflictError",
     "Match",
     "MatchResult",
     "MatchType",
+    "OpenEngineError",
     "Player",
+    "PlayerError",
     "PrequentialPrediction",
     "RatingEngine",
     "RatingFormat",
