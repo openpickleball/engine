@@ -114,3 +114,58 @@ def test_scripts_directory_is_allowed(
     path = make_sdist(tmp_path, rooted([*ALLOWED, "scripts/check_sdist.py"]))
     assert check_sdist.main([str(path)]) == 0
     assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        f"{ROOT}//uv.lock",
+        f"{ROOT}/src//a.py",
+    ],
+)
+def test_empty_segment_is_a_problem(check_sdist: ModuleType, bad: str) -> None:
+    found = check_sdist.problems([*rooted(ALLOWED), bad])
+    assert any(bad in problem for problem in found)
+
+
+def test_root_and_directory_entries_are_allowed(check_sdist: ModuleType) -> None:
+    names = [ROOT, f"{ROOT}/", f"{ROOT}/src/", f"{ROOT}/src", *rooted(ALLOWED)]
+    assert check_sdist.problems(names) == []
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        f"{ROOT}/src/../../uv.lock",
+        f"{ROOT}/../uv.lock",
+        f"{ROOT}/./uv.lock",
+        f"{ROOT}/src/./a.py",
+    ],
+)
+def test_dot_segments_are_a_problem(check_sdist: ModuleType, bad: str) -> None:
+    found = check_sdist.problems([*rooted(ALLOWED), bad])
+    assert any(bad in problem for problem in found)
+
+
+def test_stray_member_first_does_not_become_the_root(check_sdist: ModuleType) -> None:
+    found = check_sdist.problems(["stray.txt", *rooted(ALLOWED)])
+    assert len(found) == 1
+    assert "stray.txt" in found[0]
+    assert ROOT in found[0]
+
+
+def test_root_without_package_prefix_is_a_problem(check_sdist: ModuleType) -> None:
+    found = check_sdist.problems([f"r-1/{name}" for name in ALLOWED])
+    assert any("openpickleball_engine-" in problem for problem in found)
+
+
+def test_offending_member_paths_are_named(
+    check_sdist: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    extra = [".superpowers/review.diff", "docs/plans/x.md", "docs/plans/y.md"]
+    path = make_sdist(tmp_path, rooted([*ALLOWED, *extra]))
+    assert check_sdist.main([str(path)]) == 1
+    err = capsys.readouterr().err
+    for name in [".superpowers", "docs", *extra]:
+        assert name in err
+    assert err.index("docs/plans/x.md") < err.index("docs/plans/y.md")
