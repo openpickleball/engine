@@ -270,3 +270,42 @@ def test_fit_win_calibration_empty_raises(monkeypatch):
     _patch_predictions(monkeypatch, _synthetic_predictions([math.nan], [True]))
     with pytest.raises(ValueError):
         fit_win_calibration([])
+
+
+def test_fit_scale_profile_is_unrounded():
+    ledger, true = simulate_league_with_truth()
+    fit = fit_scale(ledger, true_rating_seeds(true), scoring=ScoringType.RALLY)
+    assert any(abs(m * 1e6 - round(m * 1e6)) > 1e-6 for _, m in fit.profile)
+    # The reports stay rounded to 6 decimals.
+    assert fit.fitted.mse == round(fit.fitted.mse, 6)
+
+
+def test_fit_scale_picks_lower_unrounded_mse_when_rounded_values_tie(monkeypatch):
+    # Every scale gives an MSE of about 0.01; the differences (under 1e-6) sit
+    # below the 6-decimal rounding, with the true minimum at scale 5.0.
+    n = 1000
+
+    def fake_predictions(
+        matches: object, seeds: object = (), *, cfg: Config, **kwargs: object
+    ) -> list[PrequentialPrediction]:
+        scale = cfg.scale_by_scoring[ScoringType.RALLY]
+        shifted = int(100 * abs(scale - 5.0))
+        return [
+            PrequentialPrediction(
+                match_id=str(i),
+                played_on=START,
+                players=("a", "b", "c", "d"),
+                expected=0.49999 if i < shifted else 0.5,
+                actual=0.6,
+                team_a_won=True,
+                win_probability_raw=math.nan,
+                win_probability=math.nan,
+            )
+            for i in range(n)
+        ]
+
+    monkeypatch.setattr(engine_module, "prequential_predictions", fake_predictions)
+    cfg = Config(win_weight=0.0)
+    fit = fit_scale([], cfg=cfg, scoring=ScoringType.RALLY)
+    assert abs(fit.scale - 5.0) <= 0.05
+    assert not fit.at_bound
