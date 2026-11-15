@@ -44,6 +44,7 @@ Decisions taken with the maintainer before planning:
   - Changed (breaking): `Match.played_at` must be timezone-aware; `ledger_order` orders timed matches by UTC instant, places untimed matches first within a day, and returns `tuple[date, int, datetime, int, str]`.
   - Changed (breaking, review round 1): `replay` and `prequential_predictions` validate every ledger row, including rows after `as_of`.
   - Fixed: `replay` and `prequential_predictions` no longer depend on input order when the ledger repeats a `match_id`; rows that match in every field, in type and value, are collapsed (so `matches_considered` counts them once) and any other repeat raises `LedgerConflictError`.
+- `CLAUDE.md` (docs reconciliation): the Determinism rule said "Ordering goes through `ledger_order`", which skips the duplicate check that `_ledger` adds. It now says ledger consumers go through `_ledger`, and that repeated rows are compared with `_canonical`, never plain `==`.
 
 ## Order of work
 
