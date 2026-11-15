@@ -136,6 +136,13 @@ browser work; this is a standard-library Python package.
   mechanical edits in criterion 8.
 - `tests/test_api.py`: new. Criteria 2, 5, 6, plus `PlayerSummary` and `RejectionReason`
   behavior tests (criteria 3 and 4) may live here or beside the existing engine tests.
+- Review fixes, one new test file per defect: `tests/test_enum_str.py` (criterion 10),
+  `tests/test_match_ids.py` (criterion 11), `tests/test_game_shape.py` (criterion 5),
+  `tests/test_winprob_format.py` (decision 3, `ConfigError`),
+  `tests/test_ledger_conflict_copy.py` (decision 3, `LedgerConflictError`),
+  `tests/test_summary_reliability.py` (criterion 3). `tests/test_api.py` also checks the
+  error re-exports from `open_engine.engine`, scans every module in the package for
+  raises, and covers a category match whose parent update is rejected.
 - `examples/basic_match.py`: renamed method; print the summary sensibly.
 - `README.md`: the "Public API" section; update the quick start's `player_summary` and
   `win_probability` mentions.
