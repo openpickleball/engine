@@ -33,8 +33,10 @@ So this work adds the release workflow. After review, it also changes `test.yml`
    the criterion 8 test) and the `package` job rerun on the tagged commit. Its `build` job
    `needs: gate`, has only `contents: read`, checks out with `fetch-depth: 0` and
    `persist-credentials: false`, and first fails with a clear error unless
-   `git merge-base --is-ancestor "$GITHUB_SHA^{commit}" origin/main` passes, so only a
-   commit already on `main` can be released. It then
+   `git merge-base --is-ancestor "$GITHUB_SHA^{commit}" origin/main` passes. This guards
+   against mistakes, such as tagging an unmerged commit. It is not an enforcement
+   boundary: the run uses the `release.yml` from the tagged commit, so a tag on a commit
+   with an edited workflow skips both the gate and the check (see Risks). It then
    builds the sdist and the wheel once, and fails unless all of these pass:
    `python scripts/check_sdist.py dist/*.tar.gz`, `python scripts/check_release.py` (see 5),
    and `twine check --strict dist/*`. It uploads `dist/` as one artifact.
@@ -186,10 +188,16 @@ needs no packaging change. `.github/` does not ship.
   docs give the exact values; the first dev tag is the real test.
 - **Tag pushes are a trust boundary.** Anyone who can push a `v*` tag can trigger a
   publish. In the workflow, the `gate` job reruns the tests on the tagged commit and the
-  ancestry check refuses a commit that is not on `main`. The rest of the mitigation is
-  outside this repo's files: restrict the `testpypi` environment's
-  deployment rule to `v*` tags, add a required reviewer, and protect `v*` tags with a
-  ruleset. `docs/releasing.md` recommends all three.
+  ancestry check refuses a commit that is not on `main`. Both catch mistakes only: GitHub
+  runs the `release.yml` from the tagged commit, so someone who can push a tag can push
+  one on a commit whose workflow drops them, and the trusted publisher (keyed to the
+  workflow file name and environment) still accepts the upload. The controls that hold
+  against that live outside this repo's files: a `v*` tag ruleset that limits who can
+  create release tags, and a required reviewer on the `testpypi` environment who checks
+  the tagged commit. Restricting the environment's deployment rule to `v*` tags stops
+  branch runs from using it but does not stop a malicious `v*` tag. `docs/releasing.md`
+  says which control does what, and says to create and protect the environment before
+  the first tag push, because GitHub creates a missing environment with no protection.
 - **Build tool supply chain.** Unpinned `pip install build twine` would let a compromised
   release of either tool alter the published artifact. Hash pinning closes that, and it
   now covers the build backend too: `hatchling` is in the lock and the build runs with
@@ -216,10 +224,12 @@ maintainer).
 - Criteria 3, 4, 7: `uvx --from actionlint-py actionlint` and `uvx zizmor .github/workflows/`
   clean on the new workflow; `grep -n 'secrets\.' .github/workflows/release.yml` empty.
 - Live drive (High: changed path plus failure and edge paths), in a fresh scratch venv:
-  `pip install --require-hashes -r .github/requirements/release.txt` succeeds; then from a
-  clean `dist/`: `python -m build`, `check_sdist.py`, `check_release.py v0.2.0 dist/*`
-  (exit 0), `check_release.py v0.2.1 dist/*` (exit 1), `check_release.py v0.2.0` with an
-  extra file in `dist/` (exit 1), `twine check --strict dist/*` (passes).
+  `pip install --only-binary ':all:' --require-hashes -r .github/requirements/release.txt`
+  succeeds; then from a clean `dist/`: `python -m build --no-isolation`, `check_sdist.py`,
+  `check_release.py v0.2.0 dist/*` (exit 0), `check_release.py v0.2.1 dist/*` (exit 1),
+  `check_release.py v0.2.0` with an extra file in `dist/` (exit 1),
+  `twine check --strict dist/*` (passes). Ancestry: `git merge-base --is-ancestor` exits 0
+  for the `origin/main` commit and 1 for this branch's unmerged `HEAD`.
 - Measured on `origin/main` at 942ad85: `python -m build` produces
   `openpickleball_engine-0.2.0.tar.gz` and `openpickleball_engine-0.2.0-py3-none-any.whl`;
   `twine check --strict` on both reports PASSED. This fixes the file names
