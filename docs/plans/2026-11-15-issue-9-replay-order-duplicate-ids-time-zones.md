@@ -29,6 +29,8 @@ Decisions taken with the maintainer before planning:
   - `Match.validate()`: call `_require_aware` before the existing `played_at.date() != played_on` check. That check stays: `played_on` is the local calendar date at the venue, and `played_at.date()` of an aware datetime is its local date.
   - `ledger_order()`: return `tuple[date, int, datetime, int, str]`: `(played_on, 0, _UTC_MIN, sequence, match_id)` for an untimed match, `(played_on, 1, played_at.astimezone(timezone.utc), sequence, match_id)` for a timed one, where `_UTC_MIN = datetime.min.replace(tzinfo=timezone.utc)`. Call `_require_aware` first. Update the docstring to state the rule. Drop the `time` import if it becomes unused.
   - Add a private helper `_ledger(matches: Iterable[Match]) -> list[Match]`: group rows by `match_id` in a dict, keep one row per id when all rows for it compare equal, collect every id whose rows differ, raise `LedgerConflictError` with the sorted ids if any, otherwise return the unique rows sorted by `ledger_order`.
+  - Review round 1 change: `_ledger` calls `validate()` on every row before grouping, including rows after `as_of`, so an invalid row raises wherever it sits in the input. Rows sharing a `match_id` collapse only when a canonical form is equal: the row with `played_at` replaced by None (via `dataclasses.replace`), plus the UTC instant and the `utcoffset()` of `played_at` (both None when untimed). `Match.__eq__` is not used, because it is looser than "interchangeable for replay" (see Risks).
+  - Review round 1 change: `_require_aware` becomes `_utc_instant(played_at) -> datetime`, which also converts to UTC and turns an `OverflowError` into `ValueError`. `Match.validate()` and `ledger_order()` both call it.
   - `replay()`: iterate `_ledger(matches)` instead of `sorted(matches, key=ledger_order)`. Update its docstring: identical duplicate rows are collapsed, conflicting ones raise `LedgerConflictError`.
   - `prequential_predictions()`: `ordered = _ledger(matches)`. The scheduled mode's inner `replay(...)` call receives already unique rows, so it does no extra harm.
   - Module docstring: add a "Ledger order" item to the published behavior notes stating the order rule, the time zone requirement, and the duplicate rule.
@@ -52,7 +54,9 @@ Decisions taken with the maintainer before planning:
 
 - Riskiest step: the new `ledger_order` key. A wrong tuple position silently changes rating order. The tests pin the issue's exact example, the untimed-first rule, and the `sequence` and `match_id` tie breaks.
 - Comparing an aware datetime with a naive one raises `TypeError`. `_require_aware` runs inside `ledger_order`, so a naive row raises a clear `ValueError` before any comparison.
-- `Match.__eq__` compares `played_at` by instant. Two rows with the same id, the same instant, and different offsets compare equal only if every other field (including `played_on`) is equal, and then they order identically, so collapsing them is safe.
+- `Match.__eq__` is looser than "interchangeable for replay", which review round 1 confirmed. Rows equal under `==` can differ in validity (same instant but only one `played_at` falls on `played_on`; an int score versus a float one) or in UTC instant (the two readings of a DST fold wall time compare equal within one zone). And two identical rows in a fold with distinct zone objects compare unequal. So `_ledger` validates every row and compares the canonical form instead.
+- Validating every row in `_ledger` extends the maintainer's "check every row passed in" decision: a row after `as_of` that is invalid now raises. Recorded in the README, docstrings, and changelog.
+- A `played_at` near `datetime.min` or `datetime.max` can pass a local date check but overflow on conversion to UTC. `_utc_instant` reports it as `ValueError`.
 - `matches_considered` drops for ledgers that repeat a row. That is a visible provenance change; it is recorded in the changelog.
 - Mypy strict: the new return type and the `datetime.min` sentinel must type-check. `__eq__` comparisons between `Match` values are fine for frozen dataclasses.
 - Not done: a warning for days that mix timed and untimed matches, `hypothesis` as a dev dependency (seeded `random.Random` shuffles are enough and keep the dev set unchanged), and duplicate handling in the live `RatingEngine.record` path (it already rejects a repeated id with "duplicate match_id", which is correct for live ingestion).
@@ -72,6 +76,12 @@ Tests in `tests/test_engine.py`, all on synthetic players:
 | `test_naive_played_at_rejected`: parametrized over `Match.validate` and `ledger_order`, `pytest.raises(ValueError, match="timezone-aware")` | 5 |
 | `test_untimed_before_timed_same_day` and a tie-break test for equal instants by `sequence` then `match_id` | 6 |
 | `test_prequential_is_permutation_invariant` and `test_prequential_conflict_raises` | 7 |
+| Review round 1: `test_duplicate_with_played_at_off_played_on_raises` and `test_duplicate_with_float_score_raises`, both input orders raise the same `ValueError`; `test_invalid_row_after_as_of_raises` | 1 |
+| Review round 1: `test_fold_duplicates_conflict_in_both_orders` (fold=0 versus fold=1 in `America/New_York`, plus a 06:00Z match sharing players: the same `LedgerConflictError` in both orders) | 1, 2 |
+| Review round 1: `test_identical_fold_rows_with_distinct_zone_objects_collapse` (`ZoneInfo.no_cache` twice: `matches_considered == 1` in both orders) | 3 |
+| Review round 1: `test_played_at_outside_utc_range_rejected` (`ValueError` from `validate()` and `replay`) | 5 |
+
+The fold tests use `zoneinfo` and skip only when tzdata for `America/New_York` is missing on the host.
 
 Criterion 8 is checked by reading the README and module docstring in review. Live drive (library): run `python examples/basic_match.py` and a scratch script that replays the issue's ledgers in both orders and prints the result.
 

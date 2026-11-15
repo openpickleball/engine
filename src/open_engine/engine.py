@@ -31,13 +31,15 @@ Published behavior notes:
   reliability. It is carried, clearly labeled, only until OPEN-earned
   reliability exceeds it or the carry limits in Config are reached.
 - Ledger order: `replay` and `prequential_predictions` sort matches by
-  `played_on`. Within one day, untimed matches come first (by `sequence`,
-  then `match_id`), then timed matches (by the UTC instant of `played_at`,
-  then `sequence`, then `match_id`). `played_at` must be timezone-aware; a
-  naive value raises ValueError. Rows that repeat a `match_id` and compare
-  equal are collapsed to one; rows that repeat a `match_id` but differ raise
-  `LedgerConflictError`, even after `as_of`. The result never depends on
-  input order.
+  `played_on` first. Within one `played_on` date, untimed matches come
+  first (by `sequence`, then `match_id`), then timed matches (by the UTC
+  instant of `played_at`, then `sequence`, then `match_id`). Every row
+  passed in is validated, including rows after `as_of`, so a naive
+  `played_at` raises ValueError wherever it sits. Rows that repeat a
+  `match_id` collapse to one only when they are interchangeable for replay
+  (equal apart from `played_at`, with the same UTC instant and offset);
+  any other repeat raises `LedgerConflictError`, even after `as_of`. The
+  result never depends on input order.
 
 Production notes:
 - Persist the match ledger and player identities in a database. This module's
@@ -382,8 +384,11 @@ class Match:
     best_of: int = 1
     game_format: GameFormat = GameFormat()
 
-    # Order of play within a day. Platforms should send played_at when they
-    # have it; sequence breaks ties (for example, round number).
+    # Order of play within a day. played_on is the calendar date at the
+    # venue. played_at must be timezone-aware and fall on played_on; send it
+    # when known. Within one played_on, untimed matches come first, then
+    # timed ones by UTC instant; sequence (for example, round number) and
+    # then match_id break ties.
     played_at: datetime | None = None
     sequence: int = 0
 
@@ -405,7 +410,7 @@ class Match:
         if not set(self.confirmed_by) <= set(all_ids):
             raise ValueError("confirmed_by may only contain match participants")
         if self.played_at is not None:
-            _require_aware(self.played_at)
+            _utc_instant(self.played_at)
         if self.played_at is not None and self.played_at.date() != self.played_on:
             raise ValueError("played_at must fall on played_on")
         if self.sequence < 0:
@@ -441,9 +446,14 @@ class Match:
 _UTC_MIN = datetime.min.replace(tzinfo=timezone.utc)
 
 
-def _require_aware(played_at: datetime) -> None:
+def _utc_instant(played_at: datetime) -> datetime:
+    """The UTC instant of an aware played_at; ValueError when there is none."""
     if played_at.tzinfo is None or played_at.utcoffset() is None:
         raise ValueError("played_at must be timezone-aware")
+    try:
+        return played_at.astimezone(timezone.utc)
+    except OverflowError:
+        raise ValueError("played_at is outside the range that UTC can represent") from None
 
 
 class LedgerConflictError(ValueError):
@@ -465,28 +475,50 @@ def ledger_order(match: Match) -> tuple[date, int, datetime, int, str]:
     """
     if match.played_at is None:
         return (match.played_on, 0, _UTC_MIN, match.sequence, match.match_id)
-    _require_aware(match.played_at)
-    instant = match.played_at.astimezone(timezone.utc)
-    return (match.played_on, 1, instant, match.sequence, match.match_id)
+    return (match.played_on, 1, _utc_instant(match.played_at), match.sequence, match.match_id)
 
 
 def _ledger(matches: Iterable[Match]) -> list[Match]:
     """
     Unique ledger rows in ledger order.
 
-    Rows that repeat a match_id and compare equal are collapsed to one.
-    Rows that repeat a match_id but differ raise LedgerConflictError naming
-    every conflicting id, so the result never depends on input order.
+    Every row is validated first, including rows after a replay's as_of, so
+    an invalid row raises wherever it sits in the input. Rows that repeat a
+    match_id collapse to one only when they are interchangeable for replay:
+    equal in every field once played_at is set aside, and with the same UTC
+    instant and UTC offset for played_at. Any other repeat raises
+    LedgerConflictError naming every conflicting id, so the result never
+    depends on input order.
     """
-    by_id: dict[str, Match] = {}
+    by_id: dict[str, tuple[Match, tuple[object, ...]]] = {}
     conflicts: set[str] = set()
     for match in matches:
-        kept = by_id.setdefault(match.match_id, match)
-        if kept != match:
+        match.validate()
+        key = _canonical(match)
+        _, kept_key = by_id.setdefault(match.match_id, (match, key))
+        if kept_key != key:
             conflicts.add(match.match_id)
     if conflicts:
         raise LedgerConflictError(conflicts)
-    return sorted(by_id.values(), key=ledger_order)
+    return sorted((match for match, _ in by_id.values()), key=ledger_order)
+
+
+def _canonical(match: Match) -> tuple[object, ...]:
+    """
+    A form of a validated row that is equal only for interchangeable rows.
+
+    Match equality compares played_at by instant, which ignores the offset
+    and treats the two readings of a repeated wall time (a DST fold) as
+    equal, and it compares rows in distinct zone objects as unequal inside a
+    fold. This form compares the UTC instant and the offset directly.
+    """
+    if match.played_at is None:
+        return (match, None, None)
+    return (
+        replace(match, played_at=None),
+        _utc_instant(match.played_at),
+        match.played_at.utcoffset(),
+    )
 
 
 @dataclass
@@ -1079,9 +1111,10 @@ def replay(
 
     Run on the published schedule (Config.replay_interval_days). Same ledger,
     seeds, config and as_of always produce the same result, whatever order
-    the ledger rows arrive in. Rows that repeat a match_id and are identical
-    are counted once; rows that repeat a match_id but differ raise
-    LedgerConflictError, even when they fall after as_of. Seeds must be
+    the ledger rows arrive in. Every row is validated, even after as_of.
+    Rows that repeat a match_id and are interchangeable for replay are
+    counted once; any other repeat raises LedgerConflictError, even when it
+    falls after as_of. Seeds must be
     unplayed: imported or provisional states only.
     """
     engine = RatingEngine(cfg)
