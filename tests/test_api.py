@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import importlib
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -21,6 +23,7 @@ from open_engine import (
     MatchType,
     RatingEngine,
     RatingFormat,
+    ScoringType,
     prequential_predictions,
     replay,
 )
@@ -113,15 +116,30 @@ def _raised_names(path: Path) -> list[tuple[int, str]]:
     return found
 
 
-@pytest.mark.parametrize("filename", ["engine.py", "winprob.py"])
-def test_every_raise_uses_an_engine_error(filename: str) -> None:
-    raised = _raised_names(SRC / filename)
-    assert raised
+SOURCE_FILES = sorted(SRC.glob("*.py"))
+
+
+def _module_for(path: Path) -> ModuleType:
+    """The imported module for a source file in the package."""
+    if path.stem == "__init__":
+        return open_engine
+    return importlib.import_module(f"open_engine.{path.stem}")
+
+
+def test_the_raise_scan_finds_the_engine_sources() -> None:
+    names = {path.name for path in SOURCE_FILES}
+    assert {"__init__.py", "_errors.py", "engine.py", "winprob.py"} <= names
+    assert sum(len(_raised_names(path)) for path in SOURCE_FILES) > 0
+
+
+@pytest.mark.parametrize("path", SOURCE_FILES, ids=lambda path: path.name)
+def test_every_raise_uses_an_engine_error(path: Path) -> None:
+    module = _module_for(path)
     bad = [
         (line, name)
-        for line, name in raised
+        for line, name in _raised_names(path)
         if not (
-            isinstance(cls := getattr(engine_module, name, None), type)
+            isinstance(cls := getattr(module, name, None), type)
             and issubclass(cls, open_engine.OpenEngineError)
         )
     ]
@@ -246,6 +264,25 @@ def test_category_parent_result_reports_the_parent_format() -> None:
     assert result.parent.rating_format is D
 
 
+def test_category_match_with_a_rejected_parent_update() -> None:
+    mixed = RatingFormat.MIXED_DOUBLES
+    ratings = {"a": 3.0, "b": 5.0, "c": 4.0, "d": 4.0}
+    eng = _seeded(Config(max_doubles_partner_gap=0.5), D, ratings)
+    # Equal category ratings pass the partner gap; the doubles parent ratings do not.
+    for pid in ratings:
+        eng.players[pid].ratings[mixed] = engine_module.RatingState(rating=3.5, rd=0.8)
+    before = {pid: eng.state(pid, D).rating for pid in ratings}
+    m = Match("m1", ("a", "b"), ("c", "d"), ((11, 7),), ON, mixed)
+    result = eng.record(m)
+    assert result.counted
+    assert result.rating_format is mixed
+    assert result.parent is not None
+    assert not result.parent.counted
+    assert result.parent.reason is open_engine.RejectionReason.DOUBLES_PARTNER_GAP
+    assert result.parent.rating_format is D
+    assert {pid: eng.state(pid, D).rating for pid in ratings} == before
+
+
 # -- player summary --------------------------------------------------------------
 
 SUMMARY_FIELDS = [
@@ -345,7 +382,8 @@ def test_old_prediction_names_are_gone(old_name: str) -> None:
 def test_predict_point_share_matches_the_expectation() -> None:
     eng = _seeded(Config(), D, {"a": 4.0, "b": 4.0, "c": 3.0, "d": 3.0})
     share = eng.predict_point_share(("a", "b"), ("c", "d"), D)
-    assert share == open_engine.expected_point_share(4.0, 3.0, 2.9)
+    scale = Config().scale_by_scoring[ScoringType.SIDE_OUT]
+    assert share == open_engine.expected_point_share(4.0, 3.0, scale)
 
 
 def test_predict_win_probability_uses_the_point_share() -> None:
