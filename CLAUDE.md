@@ -17,6 +17,7 @@ The engine is a demonstration. Its methods have not been validated on real match
 - `src/open_engine/__init__.py`: the public API (`__all__`) and `__version__`.
 - `tests/`: pytest suite. `tests/fixtures/` holds synthetic fixtures only (see its README).
 - `examples/basic_match.py`: a runnable example, linted with the rest of the code.
+- `scripts/check_sdist.py`: checks a built source distribution's layout: one `openpickleball_engine-<version>` root, clean member paths, only allowed top-level entries, and the required ones present. CI runs it in the `package` job.
 - `docs/plans/`: plans recorded for issues before their work lands.
 
 ## Stack
@@ -61,7 +62,10 @@ Other commands:
 ruff format .                # apply formatting
 python examples/basic_match.py
 python -m build              # wheel and source distribution
+python scripts/check_sdist.py dist/*.tar.gz   # CI's package job; clear dist/ first
 ```
+
+The sdist ships only the paths in `only-include` under `[tool.hatch.build.targets.sdist]` in `pyproject.toml`, plus the `PKG-INFO` and `.gitignore` that hatchling adds. A new top-level path that must ship goes in that list and in `ALLOWED_TOP_LEVEL` in `scripts/check_sdist.py`. If it is in `only-include` but not in `ALLOWED_TOP_LEVEL`, the `package` job fails.
 
 CI also runs `.github/workflows/dco.yml` (the `sign-off` check) on every pull request and the OpenSSF Scorecard workflow. GitHub Actions are pinned by commit SHA with the version in a comment; keep that form when Dependabot or a contributor bumps one.
 

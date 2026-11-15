@@ -1,0 +1,184 @@
+"""Tests for scripts/check_sdist.py, the source distribution content check."""
+
+from __future__ import annotations
+
+import importlib.util
+import io
+import tarfile
+from pathlib import Path
+from types import ModuleType
+
+import pytest
+
+SCRIPT = Path(__file__).parents[1] / "scripts" / "check_sdist.py"
+ROOT = "openpickleball_engine-0.0.0"
+ALLOWED = [
+    "src/open_engine/__init__.py",
+    "src/open_engine/py.typed",
+    "tests/test_engine.py",
+    "examples/basic_match.py",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "pyproject.toml",
+    "PKG-INFO",
+    ".gitignore",
+]
+
+
+@pytest.fixture
+def check_sdist() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("check_sdist", SCRIPT)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def make_sdist(directory: Path, names: list[str]) -> Path:
+    path = directory / f"{ROOT}.tar.gz"
+    with tarfile.open(path, "w:gz") as tar:
+        for name in names:
+            data = b"synthetic"
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return path
+
+
+def rooted(paths: list[str]) -> list[str]:
+    return [f"{ROOT}/{path}" for path in paths]
+
+
+def test_allowed_set_passes(
+    check_sdist: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = make_sdist(tmp_path, rooted(ALLOWED))
+    assert check_sdist.main([str(path)]) == 0
+    captured = capsys.readouterr()
+    assert str(path) in captured.out
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize(
+    ("extra", "named"),
+    [
+        ("uv.lock", "uv.lock"),
+        (".superpowers/review.diff", ".superpowers"),
+        ("CLAUDE.md", "CLAUDE.md"),
+        ("docs/plans/x.md", "docs"),
+    ],
+)
+def test_unexpected_top_level_entry_fails(
+    check_sdist: ModuleType,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    extra: str,
+    named: str,
+) -> None:
+    path = make_sdist(tmp_path, rooted([*ALLOWED, extra]))
+    assert check_sdist.main([str(path)]) == 1
+    assert named in capsys.readouterr().err
+
+
+def test_member_outside_root_fails(
+    check_sdist: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = make_sdist(tmp_path, [*rooted(ALLOWED), "stray.txt"])
+    assert check_sdist.main([str(path)]) == 1
+    assert "stray.txt" in capsys.readouterr().err
+
+
+def test_missing_required_entry_fails(
+    check_sdist: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    names = [name for name in ALLOWED if name != "PKG-INFO"]
+    path = make_sdist(tmp_path, rooted(names))
+    assert check_sdist.main([str(path)]) == 1
+    assert "PKG-INFO" in capsys.readouterr().err
+
+
+def test_no_arguments_fails(check_sdist: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:
+    assert check_sdist.main([]) == 1
+    assert capsys.readouterr().err != ""
+
+
+def test_problems_is_empty_for_clean_names(check_sdist: ModuleType) -> None:
+    assert check_sdist.problems(rooted(ALLOWED)) == []
+
+
+def test_scripts_directory_is_allowed(
+    check_sdist: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = make_sdist(tmp_path, rooted([*ALLOWED, "scripts/check_sdist.py"]))
+    assert check_sdist.main([str(path)]) == 0
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        f"{ROOT}//uv.lock",
+        f"{ROOT}/src//a.py",
+    ],
+)
+def test_empty_segment_is_a_problem(check_sdist: ModuleType, bad: str) -> None:
+    found = check_sdist.problems([*rooted(ALLOWED), bad])
+    assert any(bad in problem for problem in found)
+
+
+def test_root_and_directory_entries_are_allowed(check_sdist: ModuleType) -> None:
+    names = [ROOT, f"{ROOT}/", f"{ROOT}/src/", f"{ROOT}/src", *rooted(ALLOWED)]
+    assert check_sdist.problems(names) == []
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        f"{ROOT}/src/../../uv.lock",
+        f"{ROOT}/../uv.lock",
+        f"{ROOT}/./uv.lock",
+        f"{ROOT}/src/./a.py",
+    ],
+)
+def test_dot_segments_are_a_problem(check_sdist: ModuleType, bad: str) -> None:
+    found = check_sdist.problems([*rooted(ALLOWED), bad])
+    assert any(bad in problem for problem in found)
+
+
+def test_stray_member_first_does_not_become_the_root(check_sdist: ModuleType) -> None:
+    found = check_sdist.problems(["stray.txt", *rooted(ALLOWED)])
+    assert len(found) == 1
+    assert "stray.txt" in found[0]
+    assert ROOT in found[0]
+
+
+def test_root_without_package_prefix_is_a_problem(check_sdist: ModuleType) -> None:
+    found = check_sdist.problems([f"r-1/{name}" for name in ALLOWED])
+    assert any("openpickleball_engine-" in problem for problem in found)
+
+
+def test_offending_member_paths_are_named(
+    check_sdist: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    extra = [".superpowers/review.diff", "docs/plans/x.md", "docs/plans/y.md"]
+    path = make_sdist(tmp_path, rooted([*ALLOWED, *extra]))
+    assert check_sdist.main([str(path)]) == 1
+    err = capsys.readouterr().err
+    for name in [".superpowers", "docs", *extra]:
+        assert name in err
+    assert err.index("docs/plans/x.md") < err.index("docs/plans/y.md")
+
+
+def test_prefixed_stray_file_does_not_become_the_root(check_sdist: ModuleType) -> None:
+    stray = "openpickleball_engine-x.txt"
+    found = check_sdist.problems(
+        [
+            stray,
+            "openpickleball_engine-0.2.0/src/a.py",
+            "openpickleball_engine-0.2.0/pyproject.toml",
+            "openpickleball_engine-0.2.0/PKG-INFO",
+        ]
+    )
+    assert found == [f"member outside root 'openpickleball_engine-0.2.0': {stray}"]
