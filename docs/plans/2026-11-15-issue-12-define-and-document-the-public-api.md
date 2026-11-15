@@ -92,6 +92,10 @@ browser work; this is a standard-library Python package.
    `engine.py` module docstring no longer says plain `ValueError` where a specific class
    now applies. (CHANGELOG and CLAUDE.md are done by the coordinator after review; the
    README section and the module docstring are part of the implementation.)
+10. The five public `str` enums (`RatingFormat`, `MatchType`, `ScoringType`,
+    `RejectionReason`, `ReliabilityBasis`) share a private `_StrEnum` base, so `str(m)`
+    and `f"{m}"` give `m.value` on every supported Python. repr, pickle, `json.dumps`,
+    `== "value"`, and `Config().fingerprint()` do not change (`tests/test_enum_str.py`).
 
 ## Files that change
 
@@ -99,6 +103,7 @@ browser work; this is a standard-library Python package.
   `RejectionReason`, `ReliabilityBasis`, `PlayerSummary`; `MatchResult` fields;
   `player_summary`; method renames and internal callers (`_predict_match`); docstrings;
   module docstring wording about exceptions.
+  Review fixes: the `_StrEnum` base (criterion 10).
 - `src/open_engine/winprob.py`: raise `EvaluationError` (import it from `.engine`; check
   for an import cycle: `engine.py` already imports from `.winprob`, so define the
   exception classes in a new private module `src/open_engine/_errors.py` that both

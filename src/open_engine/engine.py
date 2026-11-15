@@ -87,7 +87,17 @@ from .winprob import calibrate_win_probability, match_win_probability
 # ---------------------------------------------------------------------------
 
 
-class RatingFormat(str, Enum):
+class _StrEnum(str, Enum):
+    """A str Enum whose str() and format() give the value, on every Python version."""
+
+    def __str__(self) -> str:
+        return str.__str__(self)
+
+    def __format__(self, format_spec: str) -> str:
+        return str.__format__(self, format_spec)
+
+
+class RatingFormat(_StrEnum):
     """A rating pool. Each player has a separate rating in each format."""
 
     SINGLES = "singles"
@@ -113,7 +123,7 @@ class RatingFormat(str, Enum):
         return None
 
 
-class MatchType(str, Enum):
+class MatchType(_StrEnum):
     """How a match was organized and verified. Sets its evidence weight."""
 
     TOURNAMENT = "tournament"
@@ -122,7 +132,7 @@ class MatchType(str, Enum):
     SELF_REPORTED = "self_reported"
 
 
-class ScoringType(str, Enum):
+class ScoringType(_StrEnum):
     """Side-out scoring (only the serving side scores) or rally scoring."""
 
     SIDE_OUT = "side_out"
@@ -571,7 +581,7 @@ def _strict(value: object) -> object:
     return (type(value), value)
 
 
-class RejectionReason(str, Enum):
+class RejectionReason(_StrEnum):
     """Why record() did not count a match."""
 
     DUPLICATE_MATCH_ID = "duplicate_match_id"
@@ -606,7 +616,7 @@ class MatchResult:
     parent: MatchResult | None = None  # overall doubles update for categories
 
 
-class ReliabilityBasis(str, Enum):
+class ReliabilityBasis(_StrEnum):
     """Where a displayed reliability comes from."""
 
     OPEN = "open"
