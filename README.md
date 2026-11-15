@@ -64,13 +64,77 @@ result = engine.record(
         best_of=3,
     )
 )
-print(result.deltas)
-print(engine.player_summary("alice", RatingFormat.DOUBLES))
+print(result.counted, result.reason, result.deltas)
+
+summary = engine.player_summary("alice", RatingFormat.DOUBLES)
+print(summary.rating, summary.reliability, summary.reliability_basis)
 ```
 
-Authoritative ratings come from `replay(ledger, as_of=...)`. Calibrate the expectation scale on match history with `fit_scale(...)`. The expectation scale and the K factor together set how sharp predictions are, and in a closed pool they also set the rating spread. Run `fit_scale` with `mode="scheduled"` and a `score_from` date that skips immature ratings, then check `at_bound` and `profile` on the result: a fit that sits on a search edge or has a flat error profile is not identified. `RatingEngine.win_probability` assumes points are independent, which tends to make match win probabilities overconfident. Calibrate them with `fit_win_calibration` and store the result in `Config.win_calibration_by_scoring`.
+`result.reason` is `None` when the match counted and a `RejectionReason` when it did not. `player_summary` returns a `PlayerSummary`.
+
+Authoritative ratings come from `replay(ledger, as_of=...)`. Calibrate the expectation scale on match history with `fit_scale(...)`. The expectation scale and the K factor together set how sharp predictions are, and in a closed pool they also set the rating spread. Run `fit_scale` with `mode="scheduled"` and a `score_from` date that skips immature ratings, then check `at_bound` and `profile` on the result: a fit that sits on a search edge or has a flat error profile is not identified. `RatingEngine.predict_win_probability` assumes points are independent, which tends to make match win probabilities overconfident. Calibrate them with `fit_win_calibration` and store the result in `Config.win_calibration_by_scoring`.
 
 See [`examples/`](examples) for a fuller example.
+
+## Public API
+
+<!-- public-api:start -->
+These are the public names, all importable from `open_engine`. The API may change in any 0.x release.
+
+Names not listed here are internal, including everything reached only through `open_engine.engine` or `open_engine.winprob`. They can change or disappear in any release.
+
+Rating:
+
+- `RatingEngine`: holds players and matches, records matches, and predicts outcomes. Its `predict_point_share` and `predict_win_probability` methods give team A's expected point share and calibrated match win probability.
+- `replay`: rebuilds authoritative ratings from seeds and the match ledger as of a date.
+- `ledger_order`: the sort key that sets the order of play in a ledger.
+- `reliability`: OPEN-earned reliability (0 to 100) for one rating state.
+- `expected_point_share`: team A's expected share of points from two team ratings and a scale.
+
+Inputs:
+
+- `Config`: every rating parameter, with a fingerprint for provenance.
+- `Match`: one completed match with its teams, game scores, date, and format.
+- `GameFormat`: how each game is scored (scoring type, points to, win by, cap).
+- `RatingFormat`: the rating pool (singles, doubles, and the doubles categories).
+- `MatchType`: how a match was organized and verified, which sets its weight.
+- `ScoringType`: side-out or rally scoring.
+- `Player`: a player record with ratings by format and linked identities.
+- `RatingState`: one player's rating in one format, with uncertainty and provenance.
+- `ExternalRatingSnapshot`: a verified external rating, used only as a seed.
+
+Results:
+
+- `MatchResult`: what `record` did with a match, including the rating changes.
+- `RejectionReason`: why a match was not counted.
+- `PlayerSummary`: a player's rating, reliability, and provenance in one format.
+- `ReliabilityBasis`: whether a displayed reliability is OPEN-earned or imported.
+- `ReplayInfo`: the date, config version, and config fingerprint of a replay.
+
+Evaluation and calibration:
+
+- `prequential_predictions`: predicts each match from ratings that have not seen it.
+- `PrequentialPrediction`: one such prediction.
+- `evaluate`: scores prequential predictions of point share.
+- `EvaluationReport`: error and calibration bins from `evaluate`.
+- `fit_scale`: fits the expectation scale for one scoring type.
+- `ScaleFit`: the result of `fit_scale`.
+- `fit_win_calibration`: fits the win probability calibration for one scoring type.
+- `WinCalibrationFit`: the result of `fit_win_calibration`.
+- `game_win_probability`: probability of winning a game from a point win probability.
+- `match_win_probability`: probability of winning a best-of-N match from a point win probability.
+- `calibrate_win_probability`: applies a fitted calibration to a win probability.
+
+Errors (every class is a `ValueError`):
+
+- `OpenEngineError`: base class for every error the engine raises on purpose.
+- `ConfigError`: a `Config` or `GameFormat` value is not valid.
+- `InvalidMatchError`: a match, its teams, its scores, or its `played_at` is not valid.
+- `InvalidSeedError`: an external or replay seed cannot initialize a rating.
+- `PlayerError`: a player identity, account link, or external identity is not valid.
+- `EvaluationError`: an evaluation, fit, or win probability cannot be computed.
+- `LedgerConflictError`: ledger rows share a `match_id` but differ. Its `match_ids` lists them.
+<!-- public-api:end -->
 
 ## Ledger order
 
