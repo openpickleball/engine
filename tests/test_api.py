@@ -327,3 +327,30 @@ def test_player_summary_for_a_provisional_player_after_replay() -> None:
     assert type(summary.calculated_as_of) is date
     assert summary.live_updates_since_recalculation == 0
     assert summary.account_linked is True
+
+
+# -- prediction method names -----------------------------------------------------
+
+
+@pytest.mark.parametrize("old_name", ["predict", "win_probability"])
+def test_old_prediction_names_are_gone(old_name: str) -> None:
+    assert not hasattr(RatingEngine, old_name)
+
+
+def test_predict_point_share_matches_the_expectation() -> None:
+    eng = _seeded(Config(), D, {"a": 4.0, "b": 4.0, "c": 3.0, "d": 3.0})
+    share = eng.predict_point_share(("a", "b"), ("c", "d"), D)
+    assert share == open_engine.expected_point_share(4.0, 3.0, 2.9)
+
+
+def test_predict_win_probability_uses_the_point_share() -> None:
+    eng = _seeded(Config(), D, {"a": 4.0, "b": 4.0, "c": 3.0, "d": 3.0})
+    fmt = GameFormat()
+    share = eng.predict_point_share(("a", "b"), ("c", "d"), D, fmt.scoring)
+    got = eng.predict_win_probability(("a", "b"), ("c", "d"), D, fmt, best_of=3)
+    assert got == pytest.approx(open_engine.match_win_probability(share, fmt, 3))
+
+
+def test_prediction_methods_validate_teams() -> None:
+    with pytest.raises(open_engine.InvalidMatchError, match="requires 2 player"):
+        RatingEngine().predict_point_share(("a",), ("c", "d"), D)
