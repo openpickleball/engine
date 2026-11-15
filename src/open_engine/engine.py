@@ -51,6 +51,8 @@ from dataclasses import dataclass, field, fields, replace
 from datetime import date, datetime, time, timedelta
 from enum import Enum
 
+from .winprob import calibrate_win_probability, match_win_probability
+
 # ---------------------------------------------------------------------------
 # Enums and game formats
 # ---------------------------------------------------------------------------
@@ -158,6 +160,15 @@ class Config:
         }
     )
 
+    # Win-probability calibration, one exponent per scoring type: the match win
+    # probability p becomes sigmoid(a * logit(p)). 1.0 leaves it unchanged.
+    win_calibration_by_scoring: Mapping[ScoringType, float] = field(
+        default_factory=lambda: {
+            ScoringType.SIDE_OUT: 1.0,
+            ScoringType.RALLY: 1.0,
+        }
+    )
+
     # Per-player responsiveness. K is derived from RD, then normalized across
     # the match so team-average movement is zero-sum before clamps/freezes.
     k_min: float = 0.12
@@ -239,6 +250,10 @@ class Config:
             raise ValueError("scale_by_scoring needs a value for every scoring type")
         if any(value <= 0 for value in self.scale_by_scoring.values()):
             raise ValueError("scales must be positive")
+        if set(self.win_calibration_by_scoring) != set(ScoringType):
+            raise ValueError("win_calibration_by_scoring needs a value for every scoring type")
+        if any(value <= 0 for value in self.win_calibration_by_scoring.values()):
+            raise ValueError("win calibration values must be positive")
         if not 0 <= self.k_min <= self.k_max:
             raise ValueError("K-factor bounds are invalid")
         if not 0 < self.rd_min <= self.rd_max:
@@ -721,6 +736,21 @@ class RatingEngine:
             sum(ratings_a) / len(ratings_a),
             sum(ratings_b) / len(ratings_b),
             self.cfg.scale_by_scoring[scoring],
+        )
+
+    def win_probability(
+        self,
+        team_a: Sequence[str],
+        team_b: Sequence[str],
+        rating_format: RatingFormat,
+        game_format: GameFormat,
+        best_of: int = 1,
+    ) -> float:
+        """Calibrated probability that team A wins the match."""
+        share = self.predict(team_a, team_b, rating_format, game_format.scoring)
+        raw = match_win_probability(share, game_format, best_of)
+        return calibrate_win_probability(
+            raw, self.cfg.win_calibration_by_scoring[game_format.scoring]
         )
 
     def _validate_teams(

@@ -32,6 +32,7 @@ from .engine import (
     reliability,
     replay,
 )
+from .winprob import calibrate_win_probability, game_win_probability, match_win_probability
 
 __version__ = "0.1.0"
 
@@ -50,13 +51,16 @@ __all__ = [
     "ReplayInfo",
     "ScaleFit",
     "ScoringType",
+    "calibrate_win_probability",
     "clone_player",
     "evaluate",
     "expected_point_share",
     "fit_scale",
+    "game_win_probability",
     "inflated_rd",
     "information_multiplier",
     "ledger_order",
+    "match_win_probability",
     "player_k",
     "recency_multiplier",
     "reliability",
