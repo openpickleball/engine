@@ -111,8 +111,64 @@ def test_more_than_one_dist_info_fails(check_wheel: ModuleType) -> None:
 
 
 def test_directory_entries_are_allowed(check_wheel: ModuleType) -> None:
-    names = ["open_engine/", f"{DIST_INFO}/", f"{DIST_INFO}/licenses/", *ALLOWED]
+    names = ["open_engine/", f"{DIST_INFO}/", *ALLOWED]
     assert check_wheel.problems(names) == []
+
+
+@pytest.mark.parametrize(
+    ("names", "expected"),
+    [
+        pytest.param(
+            [*ALLOWED, "open_engine/__pycache__/"],
+            "unexpected member: open_engine/__pycache__/",
+            id="package-subdirectory-entry",
+        ),
+        pytest.param(
+            [*ALLOWED, "open_engine/sub/pkg/"],
+            "unexpected member: open_engine/sub/pkg/",
+            id="nested-package-directory-entry",
+        ),
+        pytest.param(
+            [*ALLOWED, f"{DIST_INFO}/licenses/"],
+            f"unexpected member: {DIST_INFO}/licenses/",
+            id="dist-info-subdirectory-entry",
+        ),
+        pytest.param(
+            [*PACKAGE, f"{DIST_INFO}/"],
+            f"missing required member: {DIST_INFO}/METADATA",
+            id="dist-info-directory-entry-only",
+        ),
+        pytest.param(
+            [name for name in ALLOWED if name != f"{DIST_INFO}/WHEEL"],
+            f"missing required member: {DIST_INFO}/WHEEL",
+            id="dist-info-without-wheel",
+        ),
+        pytest.param(
+            [name for name in ALLOWED if name != f"{DIST_INFO}/RECORD"],
+            f"missing required member: {DIST_INFO}/RECORD",
+            id="dist-info-without-record",
+        ),
+        pytest.param(
+            [
+                *PACKAGE,
+                "openpickleball_engine-.dist-info/METADATA",
+                "openpickleball_engine-.dist-info/WHEEL",
+                "openpickleball_engine-.dist-info/RECORD",
+            ],
+            "no dist-info directory starting with 'openpickleball_engine-'",
+            id="dist-info-empty-version",
+        ),
+        pytest.param(
+            [*ALLOWED, "open_engine/engine.py"],
+            "duplicate member: open_engine/engine.py",
+            id="duplicate-member",
+        ),
+    ],
+)
+def test_invalid_layout_is_reported(
+    check_wheel: ModuleType, names: list[str], expected: str
+) -> None:
+    assert expected in check_wheel.problems(names)
 
 
 def test_problems_are_sorted_and_all_named(check_wheel: ModuleType) -> None:
