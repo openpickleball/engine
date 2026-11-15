@@ -351,6 +351,22 @@ def test_predict_win_probability_uses_the_point_share() -> None:
     assert got == pytest.approx(open_engine.match_win_probability(share, fmt, 3))
 
 
+HIDDEN_HELPERS = [
+    "clone_player",
+    "inflated_rd",
+    "player_k",
+    "information_multiplier",
+    "recency_multiplier",
+]
+
+
+@pytest.mark.parametrize("name", HIDDEN_HELPERS)
+def test_internal_helpers_are_not_exported(name: str) -> None:
+    assert not hasattr(open_engine, name)
+    assert name not in open_engine.__all__
+    assert callable(getattr(engine_module, name))
+
+
 def test_prediction_methods_validate_teams() -> None:
     with pytest.raises(open_engine.InvalidMatchError, match="requires 2 player"):
         RatingEngine().predict_point_share(("a",), ("c", "d"), D)
