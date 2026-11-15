@@ -18,7 +18,12 @@ browser work; this is a standard-library Python package.
 3. Exception hierarchy, every class a `ValueError` subclass so existing
    `except ValueError` keeps working:
    - `OpenEngineError(ValueError)`: base.
-   - `ConfigError`: `Config.__post_init__`, `GameFormat.validate`.
+   - `ConfigError`: `Config.__post_init__`, `GameFormat.validate`. `game_win_probability`
+     calls `GameFormat.validate` first, so an invalid format (`points_to=0`, a `cap` not
+     above `points_to`, `win_by=0`) raises `ConfigError` from it, `match_win_probability`,
+     and `predict_win_probability` (`tests/test_winprob_format.py`). `win_by=0` moves from
+     `EvaluationError` to `ConfigError`; a valid `win_by` other than 1 or 2 still raises
+     `EvaluationError`.
    - `InvalidMatchError`: `Match.validate`, `GameFormat.validate_game`, played_at checks
      (`_utc_instant`, so `ledger_order` too), team checks (`_validate_teams`, so
      `predict_point_share` and `predict_win_probability` too), `record`'s

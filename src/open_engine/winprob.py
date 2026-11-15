@@ -64,7 +64,10 @@ def game_win_probability(p: float, game_format: GameFormat) -> float:
     """Probability that team A wins a game when it wins each point with probability p.
 
     Exact closed form when the format has no cap, score-state DP when it does.
+    Raises ConfigError for an invalid format and EvaluationError when win_by is
+    not 1 or 2.
     """
+    game_format.validate()
     win_by = game_format.win_by
     if win_by not in (1, 2):
         raise EvaluationError("win_by must be 1 or 2")
