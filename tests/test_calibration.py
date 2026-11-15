@@ -6,17 +6,21 @@ from datetime import date, timedelta
 
 import pytest
 
+import open_engine.engine as engine_module
 from open_engine import (
     Config,
     ExternalRatingSnapshot,
     GameFormat,
     Match,
     MatchType,
+    PrequentialPrediction,
     RatingEngine,
     RatingFormat,
     ScoringType,
+    calibrate_win_probability,
     evaluate,
     fit_scale,
+    fit_win_calibration,
     prequential_predictions,
     replay,
 )
@@ -209,3 +213,60 @@ def test_fit_scale_accepts_scheduled_mode():
     midpoint = ledger[len(ledger) // 2].played_on
     fit = fit_scale(ledger, scoring=ScoringType.RALLY, mode="scheduled", score_from=midpoint)
     assert fit.fitted.matches_scored > 0
+
+
+def _synthetic_predictions(raws: list[float], wins: list[bool]) -> list[PrequentialPrediction]:
+    return [
+        PrequentialPrediction(
+            match_id=f"m{i}",
+            played_on=START,
+            players=("a", "b", "c", "d"),
+            expected=0.5,
+            actual=0.5,
+            team_a_won=won,
+            win_probability_raw=raw,
+            win_probability=raw,
+        )
+        for i, (raw, won) in enumerate(zip(raws, wins, strict=True))
+    ]
+
+
+def _patch_predictions(monkeypatch: pytest.MonkeyPatch, preds: list[PrequentialPrediction]) -> None:
+    monkeypatch.setattr(engine_module, "prequential_predictions", lambda *a, **k: preds)
+
+
+def test_fit_win_calibration_recovers_distortion(monkeypatch):
+    rng = random.Random(7)
+    raws = [rng.uniform(0.05, 0.95) for _ in range(4000)]
+    wins = [rng.random() < calibrate_win_probability(r, 0.5) for r in raws]
+    _patch_predictions(monkeypatch, _synthetic_predictions(raws, wins))
+    fit = fit_win_calibration([])
+    assert 0.4 <= fit.a <= 0.6
+    assert fit.brier < fit.brier_uncalibrated
+    assert fit.n == 4000
+    assert not fit.at_bound
+    assert fit.scoring == ScoringType.SIDE_OUT.value
+
+
+def test_fit_win_calibration_degenerate_is_flagged(monkeypatch):
+    rng = random.Random(3)
+    raws = [rng.uniform(0.49, 0.51) for _ in range(30)]
+    _patch_predictions(monkeypatch, _synthetic_predictions(raws, [True] * 30))
+    fit = fit_win_calibration([])
+    assert fit.at_bound
+    assert min(abs(fit.a - 0.2), abs(fit.a - 3.0)) <= 0.001
+
+
+def test_fit_win_calibration_skips_nan(monkeypatch):
+    preds = _synthetic_predictions([0.6, math.nan, 0.4], [True, True, False])
+    _patch_predictions(monkeypatch, preds)
+    assert fit_win_calibration([]).n == 2
+
+
+def test_fit_win_calibration_empty_raises(monkeypatch):
+    _patch_predictions(monkeypatch, [])
+    with pytest.raises(ValueError):
+        fit_win_calibration([])
+    _patch_predictions(monkeypatch, _synthetic_predictions([math.nan], [True]))
+    with pytest.raises(ValueError):
+        fit_win_calibration([])

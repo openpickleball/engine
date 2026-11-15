@@ -1339,3 +1339,89 @@ def fit_scale(
         profile=tuple((float(scale), report.mse) for scale, report in sorted(cache.items())),
         at_bound=fitted_scale - low <= tolerance or high - fitted_scale <= tolerance,
     )
+
+
+@dataclass(frozen=True)
+class WinCalibrationFit:
+    scoring: str
+    a: float  # exponent on the logit of the raw win probability, rounded to 3 places
+    brier: float  # at the fitted a
+    brier_uncalibrated: float  # at a = 1
+    n: int  # predictions used (those with a modeled win probability)
+    at_bound: bool = False  # fitted a within tolerance of low or high
+
+
+def fit_win_calibration(
+    matches: Iterable[Match],
+    seed_players: Iterable[Player] = (),
+    *,
+    cfg: Config | None = None,
+    scoring: ScoringType = ScoringType.SIDE_OUT,
+    low: float = 0.2,
+    high: float = 3.0,
+    tolerance: float = 0.001,
+    burn_in_matches: int = 5,
+    mode: PredictionMode = "live",
+    score_from: date | None = None,
+    anchor: date | None = None,
+) -> WinCalibrationFit:
+    """
+    Fit one scoring type's win-probability exponent by minimizing the Brier score.
+
+    Uses the raw win probabilities computed with cfg's scale, so fit the scale
+    first. Predictions without a modeled win probability (win_by not 1 or 2)
+    are skipped. Same search as fit_scale: coarse grid, then golden section.
+    Raises ValueError when no prediction remains.
+    """
+    predictions = prequential_predictions(
+        matches,
+        seed_players,
+        cfg=cfg or Config(),
+        scoring=scoring,
+        burn_in_matches=burn_in_matches,
+        mode=mode,
+        score_from=score_from,
+        anchor=anchor,
+    )
+    data = [
+        (p.win_probability_raw, 1.0 if p.team_a_won else 0.0)
+        for p in predictions
+        if not math.isnan(p.win_probability_raw)
+    ]
+    if not data:
+        raise ValueError("no predictions with a modeled win probability to fit")
+    cache: dict[float, float] = {}
+
+    def brier(a: float) -> float:
+        key = round(a, 6)
+        if key not in cache:
+            cache[key] = sum((calibrate_win_probability(r, key) - w) ** 2 for r, w in data) / len(
+                data
+            )
+        return cache[key]
+
+    steps = 14
+    grid = [low + (high - low) * i / steps for i in range(steps + 1)]
+    best = min(grid, key=brier)
+    step = (high - low) / steps
+    lo, hi = max(low, best - step), min(high, best + step)
+
+    ratio = (math.sqrt(5) - 1) / 2
+    c, d = hi - ratio * (hi - lo), lo + ratio * (hi - lo)
+    while hi - lo > tolerance:
+        if brier(c) <= brier(d):
+            hi, d = d, c
+            c = hi - ratio * (hi - lo)
+        else:
+            lo, c = c, d
+            d = lo + ratio * (hi - lo)
+    fitted = round((lo + hi) / 2, 3)
+
+    return WinCalibrationFit(
+        scoring=scoring.value,
+        a=fitted,
+        brier=brier(fitted),
+        brier_uncalibrated=brier(1.0),
+        n=len(data),
+        at_bound=fitted - low <= tolerance or high - fitted <= tolerance,
+    )
