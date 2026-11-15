@@ -32,7 +32,7 @@ Source = "https://github.com/openpickleball/engine"
 Issues = "https://github.com/openpickleball/engine/issues"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.6", "build"]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.13", "build"]
 
 [tool.hatch.version]
 path = "src/open_engine/__init__.py"
@@ -42,6 +42,9 @@ packages = ["src/open_engine"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.mypy]
+strict = true
 
 [tool.ruff]
 line-length = 100

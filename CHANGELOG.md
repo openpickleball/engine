@@ -6,6 +6,10 @@ The engine is a demonstration. Its outputs are not OPEN ratings.
 
 ## [Unreleased]
 
+### Changed
+
+- The engine now type-checks under `mypy --strict`, and CI runs `mypy src` on every supported Python version. `ledger_order` is annotated as returning `tuple[date, time, int, str]`, and `RatingEngine.player_summary` as returning `dict[str, Any]`. Runtime behavior is unchanged.
+
 ## [0.2.0] - 2026-11-15
 
 ### Added
