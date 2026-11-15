@@ -33,3 +33,7 @@ build/
 dist/
 *.egg-info/
 /.claude/worktrees/
+
+# Local tooling
+.superpowers/
+/uv.lock
