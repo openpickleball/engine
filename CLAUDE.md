@@ -29,7 +29,7 @@ The engine is a demonstration. Its methods have not been validated on real match
 - Python 3.11 or later (`requires-python = ">=3.11"`, ruff `target-version = "py311"`). CI tests 3.11, 3.12, and 3.13, so do not use syntax or standard library features newer than 3.11. Ruff ignores UP042: the enums stay `str, Enum`, because `StrEnum` changes their `str()` output. Modules use `from __future__ import annotations`.
 - No runtime dependencies (`dependencies = []`). Keep it that way: the standard library only.
 - Build backend hatchling. The version is read from `__version__` in `src/open_engine/_version.py`. The package ships `py.typed`.
-- Dev tools: pytest, ruff (lint rules `E`, `F`, `W`, `I`, `B`, `UP`, line length 100), mypy in strict mode, build.
+- Dev tools: pytest, ruff (lint rules `E`, `F`, `W`, `I`, `B`, `UP`, line length 100), mypy in strict mode, build, twine.
 
 ## Engine rules
 

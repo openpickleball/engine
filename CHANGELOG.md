@@ -39,7 +39,9 @@ The first dev release, published to TestPyPI.
 
 - `replay` and `prequential_predictions` no longer depend on input order when the ledger repeats a `match_id`. Rows with the same `match_id` collapse to one, so `ReplayInfo.matches_considered` counts them once, only when every field matches in type and value, with `played_at` compared by its UTC instant and UTC offset. Any other repeat raises `LedgerConflictError`, including values equal under `==` but of different types (such as `best_of=3` and `best_of=3.0`) and two readings of a repeated wall time in a daylight saving fold.
 
-## [0.2.0] - 2026-11-15
+## 0.2.0 - 2026-11-15
+
+0.2.0 was never tagged or published.
 
 ### Added
 
@@ -63,6 +65,5 @@ The first dev release, published to TestPyPI.
 - A basic match example in `examples/basic_match.py`.
 
 [Unreleased]: https://github.com/openpickleball/engine/compare/v0.3.0.dev0...HEAD
-[0.3.0.dev0]: https://github.com/openpickleball/engine/compare/v0.2.0...v0.3.0.dev0
-[0.2.0]: https://github.com/openpickleball/engine/compare/v0.1.0...v0.2.0
+[0.3.0.dev0]: https://github.com/openpickleball/engine/compare/v0.1.0...v0.3.0.dev0
 [0.1.0]: https://github.com/openpickleball/engine/releases/tag/v0.1.0

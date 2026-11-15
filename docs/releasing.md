@@ -7,7 +7,7 @@ The workflow uses Trusted Publishing. TestPyPI trusts a short-lived token that G
 ## What the workflow does
 
 1. `gate` reruns `test.yml` on the tagged commit: lint, type check, and tests on every supported Python version, plus the package build check.
-2. `build` checks that the tagged commit is on `main`. It installs `build`, `hatchling`, and `twine` from the hash-pinned lock in `.github/requirements/release.txt` and builds the sdist and wheel once. Then it runs `scripts/check_sdist.py` and `scripts/check_release.py`, which fails unless the tag is exactly `v` plus the version in both file names and `dist/` holds nothing else. It runs `twine check --strict` and uploads `dist/` as an artifact.
+2. `build` checks that the tagged commit is on `main`. It installs `build`, `hatchling`, and `twine` from the hash-pinned lock in `.github/requirements/release.txt` and builds the sdist and wheel once. Then it runs `scripts/check_sdist.py`, `scripts/check_wheel.py` (which fails unless the wheel holds only the `open_engine` modules and one complete dist-info directory), and `scripts/check_release.py`, which fails unless the tag is exactly `v` plus the version in both file names and `dist/` holds nothing else. It runs `twine check --strict` and uploads `dist/` as an artifact.
 3. `publish-testpypi` runs in the `testpypi` environment. It downloads that artifact and publishes it. It is the only job with `id-token: write`, and it does not check out the repository.
 
 Every `v*` tag publishes to TestPyPI, final versions included.
@@ -38,7 +38,7 @@ GitHub runs the `release.yml` from the tagged commit. Someone who can push a tag
 
 ## Making a release
 
-1. In a pull request, set `__version__` in `src/open_engine/_version.py` to the new version. It is the one place the version is set: `open_engine.__version__`, the `Config.version` default, and the build all read it. A dev release such as `0.3.0.dev1` counts as a release. Use the canonical version form (`0.3.0.dev1`, not `0.3.0-dev1`). For a final release, move the `## [Unreleased]` entries in `CHANGELOG.md` under the new version.
+1. In a pull request, set `__version__` in `src/open_engine/_version.py` to the new version. It is the one place the version is set: `open_engine.__version__`, the `Config.version` default, and the build all read it. A dev release such as `0.3.0.dev1` counts as a release. Use the canonical version form (`0.3.0.dev1`, not `0.3.0-dev1`). Update the TestPyPI install line in `README.md` to the same version; `tests/test_readme.py` fails if it pins any other. For every release, dev releases included, move the `## [Unreleased]` entries in `CHANGELOG.md` under a new section for the version, and update the compare links at the bottom.
 2. Merge it, then tag the commit on `main` and push the tag:
 
    ```bash
