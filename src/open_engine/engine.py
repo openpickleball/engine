@@ -538,11 +538,23 @@ def _strict(value: object) -> object:
     return (type(value), value)
 
 
+class RejectionReason(str, Enum):
+    """Why record() did not count a match."""
+
+    DUPLICATE_MATCH_ID = "duplicate_match_id"
+    GAME_FORMAT_NOT_ACCEPTED = "game_format_not_accepted"
+    SELF_REPORTED_UNCONFIRMED = "self_reported_unconfirmed"
+    SELF_REPORTED_REPEAT_LIMIT = "self_reported_repeat_limit"
+    BEFORE_IMPORTED_BASELINE = "before_imported_baseline"
+    SINGLES_RATING_GAP = "singles_rating_gap"
+    DOUBLES_PARTNER_GAP = "doubles_partner_gap"
+
+
 @dataclass
 class MatchResult:
     counted: bool
-    reason: str = ""
-    rating_format: str = ""
+    rating_format: RatingFormat
+    reason: RejectionReason | None = None  # None when the match counted
     expected_a: float = 0.0
     actual_a: float = 0.0
     surprise: float = 0.0
@@ -883,12 +895,12 @@ class RatingEngine:
         """
         match.validate()
         if match.match_id in self.processed_match_ids:
-            return MatchResult(False, "duplicate match_id")
+            return MatchResult(False, match.rating_format, RejectionReason.DUPLICATE_MATCH_ID)
 
         cfg = self.cfg
         format_key = (match.game_format.scoring, match.game_format.points_to)
         if format_key not in cfg.allowed_game_formats:
-            return MatchResult(False, "game format is not accepted for rating")
+            return MatchResult(False, match.rating_format, RejectionReason.GAME_FORMAT_NOT_ACCEPTED)
 
         live = as_of is None
         as_of = as_of or match.played_on
@@ -902,7 +914,7 @@ class RatingEngine:
                 confirmed = set(match.confirmed_by)
                 if not (confirmed & set(match.team_a) and confirmed & set(match.team_b)):
                     return MatchResult(
-                        False, "self-reported match needs confirmation from both teams"
+                        False, match.rating_format, RejectionReason.SELF_REPORTED_UNCONFIRMED
                     )
             matchup = _matchup_key(match)
             cutoff = match.played_on - timedelta(days=cfg.self_reported_repeat_window_days)
@@ -910,7 +922,9 @@ class RatingEngine:
                 1 for d in self.self_reported_log.get(matchup, []) if cutoff <= d <= match.played_on
             )
             if prior >= cfg.self_reported_max_repeats:
-                return MatchResult(False, "self-reported matchup repeat limit reached")
+                return MatchResult(
+                    False, match.rating_format, RejectionReason.SELF_REPORTED_REPEAT_LIMIT
+                )
             repeat_factor = cfg.self_reported_repeat_factor**prior
 
         primary, primary_updates = self._compute(match, match.rating_format, as_of, repeat_factor)
@@ -959,11 +973,7 @@ class RatingEngine:
             and match.played_on <= baseline_date
         }
         if len(frozen) == len(ids):
-            return MatchResult(
-                False,
-                "match is on or before every participant's imported baseline",
-                rating_format=rating_format.value,
-            ), None
+            return MatchResult(False, rating_format, RejectionReason.BEFORE_IMPORTED_BASELINE), None
 
         states_a = [work[pid] for pid in match.team_a]
         states_b = [work[pid] for pid in match.team_b]
@@ -975,18 +985,12 @@ class RatingEngine:
             and cfg.max_singles_rating_gap is not None
             and abs(rating_a - rating_b) > cfg.max_singles_rating_gap
         ):
-            return MatchResult(
-                False,
-                "singles rating gap exceeds configured limit",
-                rating_format=rating_format.value,
-            ), None
+            return MatchResult(False, rating_format, RejectionReason.SINGLES_RATING_GAP), None
         if cfg.max_doubles_partner_gap is not None and rating_format.team_size == 2:
             for team_states in (states_a, states_b):
                 if abs(team_states[0].rating - team_states[1].rating) > cfg.max_doubles_partner_gap:
                     return MatchResult(
-                        False,
-                        "doubles partner rating gap exceeds configured limit",
-                        rating_format=rating_format.value,
+                        False, rating_format, RejectionReason.DOUBLES_PARTNER_GAP
                     ), None
 
         for pid in ids:
@@ -1051,7 +1055,7 @@ class RatingEngine:
 
         result = MatchResult(
             counted=True,
-            rating_format=rating_format.value,
+            rating_format=rating_format,
             expected_a=round(expected, 5),
             actual_a=round(actual, 5),
             surprise=round(surprise, 5),

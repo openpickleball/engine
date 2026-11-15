@@ -17,6 +17,7 @@ from open_engine import (
     MatchType,
     RatingEngine,
     RatingFormat,
+    RejectionReason,
     ScoringType,
     fit_scale,
     inflated_rd,
@@ -182,7 +183,7 @@ def self_reported(mid, on, confirmed=frozenset({"a", "c"})):
 def test_self_reported_needs_both_teams():
     eng = RatingEngine()
     r = eng.record(self_reported("m", date(2026, 10, 1), frozenset({"a", "b"})))
-    assert not r.counted and "both teams" in r.reason
+    assert not r.counted and r.reason is RejectionReason.SELF_REPORTED_UNCONFIRMED
 
 
 def test_self_reported_repeats_decay_then_stop():
