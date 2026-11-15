@@ -30,6 +30,14 @@ Published behavior notes:
 - An imported external reliability is shown separately from OPEN-earned
   reliability. It is carried, clearly labeled, only until OPEN-earned
   reliability exceeds it or the carry limits in Config are reached.
+- Ledger order: `replay` and `prequential_predictions` sort matches by
+  `played_on`. Within one day, untimed matches come first (by `sequence`,
+  then `match_id`), then timed matches (by the UTC instant of `played_at`,
+  then `sequence`, then `match_id`). `played_at` must be timezone-aware; a
+  naive value raises ValueError. Rows that repeat a `match_id` and compare
+  equal are collapsed to one; rows that repeat a `match_id` but differ raise
+  `LedgerConflictError`, even after `as_of`. The result never depends on
+  input order.
 
 Production notes:
 - Persist the match ledger and player identities in a database. This module's
@@ -48,7 +56,7 @@ import json
 import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Literal
 
@@ -396,6 +404,8 @@ class Match:
             raise ValueError("A player cannot appear more than once in a match")
         if not set(self.confirmed_by) <= set(all_ids):
             raise ValueError("confirmed_by may only contain match participants")
+        if self.played_at is not None:
+            _require_aware(self.played_at)
         if self.played_at is not None and self.played_at.date() != self.played_on:
             raise ValueError("played_at must fall on played_on")
         if self.sequence < 0:
@@ -428,10 +438,55 @@ class Match:
             raise ValueError("Match score does not contain a completed winner")
 
 
-def ledger_order(match: Match) -> tuple[date, time, int, str]:
-    """Deterministic order of play: date, time, sequence, then match_id."""
-    played_time = match.played_at.replace(tzinfo=None).time() if match.played_at else time.min
-    return (match.played_on, played_time, match.sequence, match.match_id)
+_UTC_MIN = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _require_aware(played_at: datetime) -> None:
+    if played_at.tzinfo is None or played_at.utcoffset() is None:
+        raise ValueError("played_at must be timezone-aware")
+
+
+class LedgerConflictError(ValueError):
+    """Two or more ledger rows share a match_id but differ."""
+
+    def __init__(self, match_ids: Iterable[str]) -> None:
+        self.match_ids: tuple[str, ...] = tuple(sorted(set(match_ids)))
+        super().__init__("Conflicting ledger rows for match_id: " + ", ".join(self.match_ids))
+
+
+def ledger_order(match: Match) -> tuple[date, int, datetime, int, str]:
+    """
+    Deterministic order of play.
+
+    Matches sort by played_on. Within one day, untimed matches come first,
+    by sequence then match_id. Timed matches follow, by the UTC instant of
+    played_at, then sequence, then match_id. played_at must be
+    timezone-aware; a naive value raises ValueError.
+    """
+    if match.played_at is None:
+        return (match.played_on, 0, _UTC_MIN, match.sequence, match.match_id)
+    _require_aware(match.played_at)
+    instant = match.played_at.astimezone(timezone.utc)
+    return (match.played_on, 1, instant, match.sequence, match.match_id)
+
+
+def _ledger(matches: Iterable[Match]) -> list[Match]:
+    """
+    Unique ledger rows in ledger order.
+
+    Rows that repeat a match_id and compare equal are collapsed to one.
+    Rows that repeat a match_id but differ raise LedgerConflictError naming
+    every conflicting id, so the result never depends on input order.
+    """
+    by_id: dict[str, Match] = {}
+    conflicts: set[str] = set()
+    for match in matches:
+        kept = by_id.setdefault(match.match_id, match)
+        if kept != match:
+            conflicts.add(match.match_id)
+    if conflicts:
+        raise LedgerConflictError(conflicts)
+    return sorted(by_id.values(), key=ledger_order)
 
 
 @dataclass
@@ -1023,7 +1078,10 @@ def replay(
     Rebuild authoritative ratings from seeds plus the immutable match ledger.
 
     Run on the published schedule (Config.replay_interval_days). Same ledger,
-    seeds, config and as_of always produce the same result. Seeds must be
+    seeds, config and as_of always produce the same result, whatever order
+    the ledger rows arrive in. Rows that repeat a match_id and are identical
+    are counted once; rows that repeat a match_id but differ raise
+    LedgerConflictError, even when they fall after as_of. Seeds must be
     unplayed: imported or provisional states only.
     """
     engine = RatingEngine(cfg)
@@ -1033,7 +1091,7 @@ def replay(
         engine.add_player(player)
 
     considered = counted = 0
-    for match in sorted(matches, key=ledger_order):
+    for match in _ledger(matches):
         if match.played_on > as_of:
             continue
         considered += 1
@@ -1146,7 +1204,7 @@ def prequential_predictions(
     if mode not in ("live", "scheduled"):
         raise ValueError(f"mode must be 'live' or 'scheduled', not {mode!r}")
     cfg = cfg or Config()
-    ordered = sorted(matches, key=ledger_order)
+    ordered = _ledger(matches)
     seeds = list(seed_players)
     predictions: list[PrequentialPrediction] = []
 

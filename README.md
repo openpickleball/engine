@@ -62,6 +62,16 @@ Authoritative ratings come from `replay(ledger, as_of=...)`. Calibrate the expec
 
 See [`examples/`](examples) for a fuller example.
 
+## Ledger order
+
+`replay` and `prequential_predictions` sort the ledger the same way whatever order the rows arrive in.
+
+- Matches sort by `played_on`, the calendar date at the venue.
+- On one day, matches without a `played_at` come first, by `sequence` and then `match_id`.
+- Matches with a `played_at` follow, by the moment they were played in UTC, then `sequence`, then `match_id`. A match at 21:00 at UTC-5 comes after one at 22:00 UTC on the same day.
+- `played_at` must include a time zone. A `played_at` without one raises `ValueError`.
+- Rows that repeat a `match_id` and are identical count once. Rows that repeat a `match_id` but differ raise `LedgerConflictError`, a `ValueError` whose `match_ids` lists every conflicting id. This check covers every row passed in, including rows after `as_of`.
+
 ## Test data
 
 Use only made-up or properly de-identified data. Do not put real player names, contact details, or match histories in this repository, including in test fixtures and screenshots. See [`tests/fixtures/README.md`](tests/fixtures/README.md).

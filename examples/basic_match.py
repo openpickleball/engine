@@ -1,6 +1,6 @@
 """Record one doubles match and print the results. Run with: python examples/basic_match.py"""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 
 from open_engine import (
     Config,
@@ -56,7 +56,8 @@ def main() -> None:
         match_type=MatchType.LEAGUE,
         best_of=3,
         game_format=GameFormat(ScoringType.SIDE_OUT, points_to=11),
-        played_at=datetime(2026, 10, 29, 19, 30),
+        # played_at must be timezone-aware. This venue is at UTC-5.
+        played_at=datetime(2026, 10, 29, 19, 30, tzinfo=timezone(timedelta(hours=-5))),
     )
 
     result = engine.record(match)

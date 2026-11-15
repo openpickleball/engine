@@ -65,6 +65,7 @@ Tests in `tests/test_engine.py`, all on synthetic players:
 | --- | --- |
 | `test_replay_is_permutation_invariant`: a generated ledger of about 40 doubles and singles matches over several days, mixing untimed rows, timed rows in at least three UTC offsets, repeated `sequence` values, and identical duplicate rows; compare the snapshot of `replay(ledger, as_of=...)` (every player, format: rating, rd, matches_played; plus `replay_info`) against 50 `random.Random(seed).shuffle` permutations | 1, 3 |
 | `test_conflicting_duplicate_ids_raise`: the issue's `dup` rows (11-0 and 0-11) in both input orders raise `LedgerConflictError` with `match=` on the id; `isinstance(err, ValueError)`; with two conflicting ids, `match_ids` is the same sorted tuple for both input orders | 2 |
+| `test_conflict_ids_sorted_whatever_the_input_order`: the two-id case, split out of the test above | 2 |
 | `test_conflicting_duplicate_after_as_of_raises` | 2 |
 | `test_identical_duplicates_collapse`: `replay([m, m])` equals `replay([m])` and `matches_considered == 1` | 3 |
 | `test_order_follows_utc_instant`: the issue's 21:00 UTC-5 versus 22:00 UTC example | 4 |
@@ -85,3 +86,9 @@ naive allowed: True
 ```
 
 So on main a duplicate id depends on input order, the UTC-5 match sorts before the earlier UTC match, an untimed match already sorts before a timed one on the same day (criterion 6 keeps that), and a naive `played_at` validates.
+
+Implementation notes:
+
+- The two-conflicting-ids check of criterion 2 is its own test, `test_conflict_ids_sorted_whatever_the_input_order`, so each test exercises one input shape.
+- The untimed-first rule was not fully in place on main: a timed match at local midnight had the same time key as an untimed one (`time.min`), so it could sort before untimed matches with a higher `sequence`. `test_untimed_before_timed_same_day` uses a 00:00 UTC match and failed on main for that reason. The changelog records it.
+- `test_prequential_is_permutation_invariant` passed on main: identical duplicates were already rejected by `record` the same way in any order, and conflicting ones are covered by `test_prequential_conflict_raises`. It stays as a regression guard for criterion 7.

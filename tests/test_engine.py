@@ -213,8 +213,12 @@ def test_live_updates_labeled_and_replay_resets():
 
 def test_same_day_order_uses_time_not_id():
     day = date(2026, 10, 29)
-    late = match("aaa", ("a", "b"), ("c", "d"), on=day, played_at=datetime(2026, 10, 29, 20))
-    early = match("zzz", ("a", "b"), ("c", "d"), on=day, played_at=datetime(2026, 10, 29, 18))
+    late = match(
+        "aaa", ("a", "b"), ("c", "d"), on=day, played_at=datetime(2026, 10, 29, 20, tzinfo=UTC)
+    )
+    early = match(
+        "zzz", ("a", "b"), ("c", "d"), on=day, played_at=datetime(2026, 10, 29, 18, tzinfo=UTC)
+    )
     assert sorted([late, early], key=ledger_order) == [early, late]
 
 
