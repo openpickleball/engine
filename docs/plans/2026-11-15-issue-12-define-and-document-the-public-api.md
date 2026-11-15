@@ -24,7 +24,7 @@ browser work; this is a standard-library Python package.
      `predict_point_share` and `predict_win_probability` too), `record`'s
      "as_of cannot be earlier than the match date", `_actual_point_share`. Also a
      `match_id` or team player id that is not a non-empty, non-whitespace `str`
-     (criterion 11).
+     (criterion 11), and a game that is not a tuple or list of two scores (criterion 5).
    - `InvalidSeedError`: `seed_external_rating`, and `replay`'s "Seed for ... already
      contains OPEN matches".
    - `PlayerError`: `RatingEngine.player`, `add_player`, `link_account`,
@@ -78,7 +78,10 @@ browser work; this is a standard-library Python package.
    decision 3. A test scans the source of `engine.py` and `winprob.py` (with `ast`) and
    fails on any `raise` of a class that is not an `OpenEngineError` subclass. A
    parametrized test checks one representative input per class raises that class, and
-   each class is a `ValueError` subclass.
+   each class is a `ValueError` subclass. Malformed input reaches these classes too: a
+   game that is not a tuple or list of exactly two items raises `InvalidMatchError`
+   from `Match.validate`, not a bare `ValueError` or `TypeError` from unpacking
+   (`tests/test_game_shape.py`).
 6. Every name in `__all__` has its own docstring (a dataclass's generated signature does
    not count), and so does every public method and property defined on a public class.
    A test enforces both.

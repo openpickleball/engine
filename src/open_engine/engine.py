@@ -472,6 +472,8 @@ class Match:
             raise InvalidMatchError("sequence must be nonnegative")
         if not self.games:
             raise InvalidMatchError("At least one game score is required")
+        if not all(isinstance(game, (tuple, list)) and len(game) == 2 for game in self.games):
+            raise InvalidMatchError("Each game must be a pair of scores")
         if self.best_of < 1 or self.best_of % 2 == 0:
             raise InvalidMatchError("best_of must be a positive odd number")
         if len(self.games) > self.best_of:
