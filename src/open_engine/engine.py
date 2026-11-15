@@ -60,7 +60,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from enum import Enum
-from typing import Any, Literal
+from typing import Literal
 
 from ._errors import (
     ConfigError,
@@ -563,6 +563,34 @@ class MatchResult:
     frozen: tuple[str, ...] = ()  # predates the player's imported baseline
     clamped: tuple[str, ...] = ()  # hit the rating floor or ceiling
     parent: MatchResult | None = None  # overall doubles update for categories
+
+
+class ReliabilityBasis(str, Enum):
+    """Where a displayed reliability comes from."""
+
+    OPEN = "open"
+    IMPORTED = "imported"
+
+
+@dataclass(frozen=True)
+class PlayerSummary:
+    player_id: str
+    rating_format: RatingFormat
+    rating: float  # rounded to 3 places
+    reliability: float  # displayed reliability, 0-100
+    reliability_basis: ReliabilityBasis
+    open_reliability: float  # OPEN-earned reliability, 0-100
+    rd: float  # inflated to the reference date, rounded to 4 places
+    matches_played: int
+    last_played: date | None
+    initial_rating: float
+    initial_source: str
+    initial_source_reliability: float | None
+    initial_source_date: date | None
+    calculated_as_of: date | None  # date of the last replay, None when never replayed
+    live_updates_since_recalculation: int
+    config_version: str
+    account_linked: bool
 
 
 @dataclass(frozen=True)
@@ -1070,7 +1098,7 @@ class RatingEngine:
 
     def player_summary(
         self, player_id: str, rating_format: RatingFormat, as_of: date | None = None
-    ) -> dict[str, Any]:
+    ) -> PlayerSummary:
         cfg = self.cfg
         player = self.player(player_id)
         state = self.state(player_id, rating_format)
@@ -1079,7 +1107,7 @@ class RatingEngine:
 
         # Imported reliability is shown, labeled, only while it is fresh,
         # higher than what OPEN has earned, and within the carry match limit.
-        displayed, basis = earned, "open"
+        displayed, basis = earned, ReliabilityBasis.OPEN
         seed_reliability = state.initial_source_reliability
         if (
             seed_reliability is not None
@@ -1088,31 +1116,27 @@ class RatingEngine:
             and (reference - state.initial_source_date).days <= cfg.import_reliability_max_age_days
             and seed_reliability > earned
         ):
-            displayed, basis = round(seed_reliability, 1), "imported"
+            displayed, basis = round(seed_reliability, 1), ReliabilityBasis.IMPORTED
 
-        return {
-            "player_id": player.id,
-            "rating_format": rating_format.value,
-            "rating": round(state.rating, 3),
-            "reliability": displayed,
-            "reliability_basis": basis,
-            "open_reliability": earned,
-            "rd": round(inflated_rd(state, reference, cfg), 4),
-            "matches_played": state.matches_played,
-            "last_played": state.last_played.isoformat() if state.last_played else None,
-            "initial_rating": state.initial_rating,
-            "initial_source": state.initial_source,
-            "initial_source_date": (
-                state.initial_source_date.isoformat() if state.initial_source_date else None
-            ),
-            "initial_source_reliability": state.initial_source_reliability,
-            "calculated_as_of": (
-                self.calculated_as_of.isoformat() if self.calculated_as_of else None
-            ),
-            "live_updates_since_recalculation": state.live_updates_since_replay,
-            "config_version": cfg.version,
-            "account_linked": player.account_user_id is not None,
-        }
+        return PlayerSummary(
+            player_id=player.id,
+            rating_format=rating_format,
+            rating=round(state.rating, 3),
+            reliability=displayed,
+            reliability_basis=basis,
+            open_reliability=earned,
+            rd=round(inflated_rd(state, reference, cfg), 4),
+            matches_played=state.matches_played,
+            last_played=state.last_played,
+            initial_rating=state.initial_rating,
+            initial_source=state.initial_source,
+            initial_source_reliability=state.initial_source_reliability,
+            initial_source_date=state.initial_source_date,
+            calculated_as_of=self.calculated_as_of,
+            live_updates_since_recalculation=state.live_updates_since_replay,
+            config_version=cfg.version,
+            account_linked=player.account_user_id is not None,
+        )
 
 
 # ---------------------------------------------------------------------------

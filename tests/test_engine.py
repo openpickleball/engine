@@ -59,15 +59,15 @@ def test_import_reliability_carried_and_labeled():
     eng = RatingEngine()
     eng.seed_external_rating("a", D, snapshot(reliability=85))
     s = eng.player_summary("a", D, as_of=date(2026, 10, 2))
-    assert s["reliability"] == 85 and s["reliability_basis"] == "imported"
-    assert s["open_reliability"] < 40
+    assert s.reliability == 85 and s.reliability_basis == "imported"
+    assert s.open_reliability < 40
 
 
 def test_import_reliability_expires_with_age():
     eng = RatingEngine()
     eng.seed_external_rating("a", D, snapshot(reliability=85))
     s = eng.player_summary("a", D, as_of=date(2028, 1, 1))
-    assert s["reliability_basis"] == "open"
+    assert s.reliability_basis == "open"
 
 
 def test_import_reliability_expires_after_carry_matches():
@@ -75,7 +75,7 @@ def test_import_reliability_expires_after_carry_matches():
     eng.seed_external_rating("a", D, snapshot(reliability=85))
     for i in range(2):
         eng.record(match(f"m{i}", ("a", f"x{i}"), (f"y{i}", f"z{i}"), on=date(2026, 10, 10 + i)))
-    assert eng.player_summary("a", D)["reliability_basis"] == "open"
+    assert eng.player_summary("a", D).reliability_basis == "open"
 
 
 # 3. Scale calibration ----------------------------------------------------------
@@ -203,11 +203,11 @@ def test_live_updates_labeled_and_replay_resets():
     m = match("m", ("a", "b"), ("c", "d"))
     eng = RatingEngine()
     eng.record(m)
-    assert eng.player_summary("a", D)["live_updates_since_recalculation"] == 1
+    assert eng.player_summary("a", D).live_updates_since_recalculation == 1
     rebuilt = replay([m], as_of=date(2026, 11, 1))
     s = rebuilt.player_summary("a", D)
-    assert s["live_updates_since_recalculation"] == 0
-    assert s["calculated_as_of"] == "2026-11-01"
+    assert s.live_updates_since_recalculation == 0
+    assert s.calculated_as_of == date(2026, 11, 1)
     assert rebuilt.replay_info.config_fingerprint == Config().fingerprint()
 
 
