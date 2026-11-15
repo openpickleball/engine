@@ -27,8 +27,14 @@ So this work adds the release workflow. After review, it also changes `test.yml`
 1. CI runs `ruff check .`, `ruff format --check .`, `mypy src`, and `pytest` on every
    supported Python version (3.10 to 3.13). Already true; verified, not changed.
 2. `mypy src` passes under `strict = true`. Already true; verified, not changed.
-3. A new `.github/workflows/release.yml` runs on a push of any tag matching `v*`. Its
-   `build` job has only `contents: read`, checks out with `persist-credentials: false`,
+3. A new `.github/workflows/release.yml` runs on a push of any tag matching `v*`. A
+   `gate` job with only `contents: read` calls `./.github/workflows/test.yml` (which gains
+   a `workflow_call:` trigger), so the full pull request matrix (3.10 to 3.13, including
+   the criterion 8 test) and the `package` job rerun on the tagged commit. Its `build` job
+   `needs: gate`, has only `contents: read`, checks out with `fetch-depth: 0` and
+   `persist-credentials: false`, and first fails with a clear error unless
+   `git merge-base --is-ancestor "$GITHUB_SHA^{commit}" origin/main` passes, so only a
+   commit already on `main` can be released. It then
    builds the sdist and the wheel once, and fails unless all of these pass:
    `python scripts/check_sdist.py dist/*.tar.gz`, `python scripts/check_release.py` (see 5),
    and `twine check --strict dist/*`. It uploads `dist/` as one artifact.
@@ -72,7 +78,8 @@ So this work adds the release workflow. After review, it also changes `test.yml`
   Never edited by hand.
 - `.github/dependabot.yml`: add a `pip` entry for `directory: /.github/requirements`,
   weekly, grouped like the existing one.
-- `.github/workflows/test.yml`: the `package` job installs from the lock with
+- `.github/workflows/test.yml`: gains a `workflow_call:` trigger so `release.yml` can
+  call it as its `gate` job. The `package` job installs from the lock with
   `--only-binary :all: --require-hashes`, builds with `--no-isolation`, and runs
   `twine check --strict`; both checkouts set `persist-credentials: false`.
 - `scripts/check_release.py` (new).
@@ -160,6 +167,10 @@ needs no packaging change. `.github/` does not ship.
              repository-url: https://test.pypi.org/legacy/
    ```
 
+   After review, the shape changed as criteria 3 and 7 describe: a `gate` job calling
+   `test.yml`, `fetch-depth: 0` and an ancestry check against `origin/main` in `build`,
+   `--only-binary ':all:'` on the install, and `--no-isolation` on the build.
+
    The SHAs above were resolved with `gh api repos/<owner>/<repo>/commits/<tag> --jq .sha`
    on 2026-11-15. Re-resolve them the same way before committing and use what it returns.
    Commit.
@@ -172,7 +183,9 @@ needs no packaging change. `.github/` does not ship.
   typo in the environment name or workflow file name makes the OIDC exchange fail. The
   docs give the exact values; the first dev tag is the real test.
 - **Tag pushes are a trust boundary.** Anyone who can push a `v*` tag can trigger a
-  publish. Mitigation is outside this repo's files: restrict the `testpypi` environment's
+  publish. In the workflow, the `gate` job reruns the tests on the tagged commit and the
+  ancestry check refuses a commit that is not on `main`. The rest of the mitigation is
+  outside this repo's files: restrict the `testpypi` environment's
   deployment rule to `v*` tags, add a required reviewer, and protect `v*` tags with a
   ruleset. `docs/releasing.md` recommends all three.
 - **Build tool supply chain.** Unpinned `pip install build twine` would let a compromised
@@ -188,8 +201,7 @@ needs no packaging change. `.github/` does not ship.
 - Riskiest step: step 5, because CI cannot run it on a pull request. Mitigated by
   actionlint and zizmor, and by running the build job's commands locally.
 
-Chosen not to do: publishing to the real PyPI (a later issue); running the test suite again
-in the release workflow (the tagged commit already passed CI on `main`); creating the
+Chosen not to do: publishing to the real PyPI (a later issue); creating the
 GitHub environment or the TestPyPI publisher from this run (external, done by a
 maintainer).
 

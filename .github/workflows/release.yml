@@ -7,14 +7,29 @@ on:
 permissions: {}
 
 jobs:
+  gate:
+    # Rerun the full pull request checks (lint, types, tests on 3.10 to 3.13, package)
+    # on the tagged commit before anything is built for release.
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test.yml
+
   build:
+    needs: gate
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
+      - name: Check tagged commit is on main
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA^{commit}" origin/main; then
+            echo "::error::Tagged commit $GITHUB_SHA is not on main. Tag a commit that has been merged to main."
+            exit 1
+          fi
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
