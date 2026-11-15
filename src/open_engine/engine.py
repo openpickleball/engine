@@ -50,7 +50,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
 from datetime import date, datetime, time, timedelta
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
 from .winprob import calibrate_win_probability, match_win_probability
 
@@ -287,7 +287,7 @@ class Config:
     def fingerprint(self) -> str:
         """Stable hash of every parameter, stored with each replay."""
 
-        def norm(value):
+        def norm(value: object) -> object:
             if isinstance(value, Enum):
                 return value.value
             if isinstance(value, Mapping):
@@ -428,7 +428,7 @@ class Match:
             raise ValueError("Match score does not contain a completed winner")
 
 
-def ledger_order(match: Match) -> tuple:
+def ledger_order(match: Match) -> tuple[date, time, int, str]:
     """Deterministic order of play: date, time, sequence, then match_id."""
     played_time = match.played_at.replace(tzinfo=None).time() if match.played_at else time.min
     return (match.played_on, played_time, match.sequence, match.match_id)
@@ -467,7 +467,7 @@ def expected_point_share(team_a_rating: float, team_b_rating: float, scale: floa
     """Expected fraction of total points won by team A."""
     exponent = (team_b_rating - team_a_rating) / scale
     exponent = max(-12.0, min(12.0, exponent))
-    return 1.0 / (1.0 + 10.0**exponent)
+    return 1.0 / (1.0 + float(10.0**exponent))
 
 
 def inflated_rd(state: RatingState, on: date, cfg: Config) -> float:
@@ -494,7 +494,7 @@ def recency_multiplier(played_on: date, as_of: date, cfg: Config) -> float:
     if cfg.recency_half_life_days is None:
         return 1.0
     age_days = max(0, (as_of - played_on).days)
-    return 0.5 ** (age_days / cfg.recency_half_life_days)
+    return float(0.5 ** (age_days / cfg.recency_half_life_days))
 
 
 def _actual_point_share(match: Match, cfg: Config) -> tuple[float, bool]:
@@ -552,7 +552,10 @@ def clone_player(player: Player) -> Player:
     )
 
 
-def _matchup_key(match: Match) -> tuple:
+MatchupKey = tuple[RatingFormat, frozenset[frozenset[str]]]
+
+
+def _matchup_key(match: Match) -> MatchupKey:
     return (
         match.rating_format,
         frozenset({frozenset(match.team_a), frozenset(match.team_b)}),
@@ -569,7 +572,7 @@ class RatingEngine:
         self.cfg = cfg or Config()
         self.players: dict[str, Player] = {}
         self.processed_match_ids: set[str] = set()
-        self.self_reported_log: dict[tuple, list[date]] = {}
+        self.self_reported_log: dict[MatchupKey, list[date]] = {}
         self.calculated_as_of: date | None = None
         self.replay_info: ReplayInfo | None = None
 
@@ -807,7 +810,7 @@ class RatingEngine:
             repeat_factor = cfg.self_reported_repeat_factor**prior
 
         primary, primary_updates = self._compute(match, match.rating_format, as_of, repeat_factor)
-        if not primary.counted:
+        if not primary.counted or primary_updates is None:
             return primary
 
         parent_updates = None
@@ -819,7 +822,7 @@ class RatingEngine:
             )
 
         self._commit(match.rating_format, primary_updates, live)
-        if parent_updates:
+        if parent_updates and parent_format is not None:
             self._commit(parent_format, parent_updates, live)
         if matchup is not None:
             self.self_reported_log.setdefault(matchup, []).append(match.played_on)
@@ -848,8 +851,8 @@ class RatingEngine:
         frozen = {
             pid
             for pid in ids
-            if work[pid].initial_source_date is not None
-            and match.played_on <= work[pid].initial_source_date
+            if (baseline_date := work[pid].initial_source_date) is not None
+            and match.played_on <= baseline_date
         }
         if len(frozen) == len(ids):
             return MatchResult(
@@ -959,7 +962,7 @@ class RatingEngine:
 
     def player_summary(
         self, player_id: str, rating_format: RatingFormat, as_of: date | None = None
-    ) -> dict:
+    ) -> dict[str, Any]:
         cfg = self.cfg
         player = self.player(player_id)
         state = self.state(player_id, rating_format)

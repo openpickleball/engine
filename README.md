@@ -20,12 +20,13 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-Run the tests, linter, and formatter:
+Run the tests, linter, formatter, and type checker:
 
 ```bash
 pytest
 ruff check .
 ruff format .
+mypy src
 ```
 
 Build a wheel and source distribution:
