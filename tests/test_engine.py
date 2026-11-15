@@ -2,7 +2,7 @@
 
 import random
 import re
-from datetime import date, datetime, timedelta, timezone, tzinfo
+from datetime import UTC, date, datetime, timedelta, timezone, tzinfo
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytest
@@ -367,7 +367,6 @@ def test_validate_game_rejects_impossible_scores(
 
 # 12. Ledger order, duplicate IDs, and time zones (issue 9) ----------------------
 
-UTC = timezone.utc
 EST = timezone(timedelta(hours=-5))
 JST = timezone(timedelta(hours=9))
 LEDGER_DAY = date(2026, 10, 29)

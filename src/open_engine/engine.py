@@ -58,7 +58,7 @@ import json
 import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass, replace
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from enum import Enum
 from typing import Any, Literal
 
@@ -443,7 +443,7 @@ class Match:
             raise ValueError("Match score does not contain a completed winner")
 
 
-_UTC_MIN = datetime.min.replace(tzinfo=timezone.utc)
+_UTC_MIN = datetime.min.replace(tzinfo=UTC)
 
 
 def _utc_instant(played_at: datetime) -> datetime:
@@ -451,7 +451,7 @@ def _utc_instant(played_at: datetime) -> datetime:
     if played_at.tzinfo is None or played_at.utcoffset() is None:
         raise ValueError("played_at must be timezone-aware")
     try:
-        return played_at.astimezone(timezone.utc)
+        return played_at.astimezone(UTC)
     except OverflowError:
         raise ValueError("played_at is outside the range that UTC can represent") from None
 

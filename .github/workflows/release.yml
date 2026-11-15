@@ -8,7 +8,7 @@ permissions: {}
 
 jobs:
   gate:
-    # Rerun the full pull request checks (lint, types, tests on 3.10 to 3.13, package)
+    # Rerun the full pull request checks (lint, types, tests on 3.11 to 3.13, package)
     # on the tagged commit before anything is built for release.
     permissions:
       contents: read
