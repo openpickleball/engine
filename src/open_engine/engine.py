@@ -62,6 +62,7 @@ from datetime import UTC, date, datetime, timedelta
 from enum import Enum
 from typing import Any, Literal
 
+from ._version import __version__
 from .winprob import calibrate_win_probability, match_win_probability
 
 # ---------------------------------------------------------------------------
@@ -153,7 +154,7 @@ ALL_GAME_FORMATS: frozenset[tuple[ScoringType, int]] = frozenset(
 
 @dataclass(frozen=True)
 class Config:
-    version: str = "0.2.0"
+    version: str = __version__
 
     # Rating scale
     min_rating: float = 2.0

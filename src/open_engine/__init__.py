@@ -5,6 +5,7 @@ ratings, and the API may change without notice. Do not use it to rate real
 players.
 """
 
+from ._version import __version__ as __version__
 from .engine import (
     Config,
     EvaluationReport,
@@ -38,8 +39,6 @@ from .engine import (
     replay,
 )
 from .winprob import calibrate_win_probability, game_win_probability, match_win_probability
-
-__version__ = "0.2.0"
 
 __all__ = [
     "Config",
