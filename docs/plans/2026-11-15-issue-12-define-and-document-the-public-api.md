@@ -72,7 +72,8 @@ browser work; this is a standard-library Python package.
    `RatingState`), `initial_source_date: date | None`, `calculated_as_of: date | None`,
    `live_updates_since_recalculation: int`, `config_version: str`,
    `account_linked: bool`. `ReliabilityBasis` is a `str` enum with `OPEN = "open"` and
-   `IMPORTED = "imported"`. Rounding stays as today.
+   `IMPORTED = "imported"`. Rounding stays as today. `reliability` is always a `float`,
+   even when the imported reliability is an `int` (`tests/test_summary_reliability.py`).
 4. `MatchResult.reason` is `RejectionReason | None`: `None` when the match counted, a
    member otherwise. `RejectionReason` is a `str` enum with one member per rejection the
    engine produces today, with stable snake_case values:

@@ -1209,7 +1209,7 @@ class RatingEngine:
             and (reference - state.initial_source_date).days <= cfg.import_reliability_max_age_days
             and seed_reliability > earned
         ):
-            displayed, basis = round(seed_reliability, 1), ReliabilityBasis.IMPORTED
+            displayed, basis = round(float(seed_reliability), 1), ReliabilityBasis.IMPORTED
 
         return PlayerSummary(
             player_id=player.id,
