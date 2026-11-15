@@ -106,3 +106,11 @@ def test_no_arguments_fails(check_sdist: ModuleType, capsys: pytest.CaptureFixtu
 
 def test_problems_is_empty_for_clean_names(check_sdist: ModuleType) -> None:
     assert check_sdist.problems(rooted(ALLOWED)) == []
+
+
+def test_scripts_directory_is_allowed(
+    check_sdist: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = make_sdist(tmp_path, rooted([*ALLOWED, "scripts/check_sdist.py"]))
+    assert check_sdist.main([str(path)]) == 0
+    assert capsys.readouterr().err == ""
