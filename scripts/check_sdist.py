@@ -2,9 +2,11 @@
 
 Usage: python scripts/check_sdist.py dist/*.tar.gz
 
-Exits 1, naming each problem, when an sdist has a top-level entry outside the
-allowed set, a member outside its single root directory, or a missing required
-entry. Exits 1 when given no paths. Exits 0 otherwise. Standard library only.
+Exits 1, naming each problem, when an sdist has no openpickleball_engine-<version>
+root directory, a member outside that root (including one with a '.' or '..'
+segment), a member with an empty path segment, a top-level entry outside the
+allowed set (with each offending member path), or a missing required entry.
+Exits 1 when given no paths. Exits 0 otherwise. Standard library only.
 """
 
 from __future__ import annotations
@@ -30,28 +32,56 @@ ALLOWED_TOP_LEVEL: frozenset[str] = frozenset(
     }
 )
 REQUIRED_TOP_LEVEL: frozenset[str] = frozenset({"src", "pyproject.toml", "PKG-INFO"})
+# Hatchling names the sdist root directory openpickleball_engine-<version>.
+ROOT_PREFIX = "openpickleball_engine-"
 
 
 def problems(names: list[str]) -> list[str]:
-    """Return sorted problem descriptions for tar member names, empty when clean."""
+    """Return problem descriptions for tar member names, empty when clean.
+
+    The root is the first member path component that starts with
+    ROOT_PREFIX. Path problems come first, sorted. Then each unexpected top-level
+    entry is followed by its offending member paths, sorted. Missing required
+    entries come last.
+    """
     if not names:
         return ["archive is empty"]
-    root = names[0].split("/", 1)[0]
-    found: list[str] = []
-    top_level: set[str] = set()
+    root = next(
+        (
+            first
+            for first in (name.split("/", 1)[0] for name in names)
+            if first.startswith(ROOT_PREFIX)
+        ),
+        None,
+    )
+    if root is None:
+        return [f"no root directory starting with {ROOT_PREFIX!r}"]
+    path_problems: set[str] = set()
+    members: dict[str, set[str]] = {}
     for name in names:
         parts = name.split("/")
         if parts[0] != root:
-            found.append(f"member outside root {root!r}: {name}")
+            path_problems.add(f"member outside root {root!r}: {name}")
             continue
-        if len(parts) < 2 or parts[1] == "":
+        rest = parts[1:]
+        if rest and rest[-1] == "":
+            rest = rest[:-1]  # a trailing slash marks a directory entry
+        if not rest:
+            continue  # the root directory entry itself
+        if any(part in (".", "..") for part in rest):
+            path_problems.add(f"member not under root {root!r} ('.' or '..' segment): {name}")
             continue
-        top_level.add(parts[1])
-    for entry in top_level - ALLOWED_TOP_LEVEL:
+        if "" in rest:
+            path_problems.add(f"member has an empty path segment: {name}")
+            continue
+        members.setdefault(rest[0], set()).add("/".join(rest))
+    found = sorted(path_problems)
+    for entry in sorted(set(members) - ALLOWED_TOP_LEVEL):
         found.append(f"unexpected top-level entry: {entry}")
-    for entry in REQUIRED_TOP_LEVEL - top_level:
+        found.extend(f"  unexpected member: {member}" for member in sorted(members[entry]))
+    for entry in sorted(REQUIRED_TOP_LEVEL - set(members)):
         found.append(f"missing required entry: {entry}")
-    return sorted(set(found))
+    return found
 
 
 def main(argv: list[str] | None = None) -> int:
