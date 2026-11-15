@@ -71,15 +71,14 @@ from datetime import UTC, date, datetime, timedelta
 from enum import Enum
 from typing import Literal
 
-from ._errors import (
-    ConfigError,
-    EvaluationError,
-    InvalidMatchError,
-    InvalidSeedError,
-    LedgerConflictError,
-    PlayerError,
-)
-from ._errors import OpenEngineError as OpenEngineError  # re-exported
+# Explicit re-exports, so `from open_engine.engine import X` passes mypy --strict.
+from ._errors import ConfigError as ConfigError
+from ._errors import EvaluationError as EvaluationError
+from ._errors import InvalidMatchError as InvalidMatchError
+from ._errors import InvalidSeedError as InvalidSeedError
+from ._errors import LedgerConflictError as LedgerConflictError
+from ._errors import OpenEngineError as OpenEngineError
+from ._errors import PlayerError as PlayerError
 from ._version import __version__
 from .winprob import calibrate_win_probability, match_win_probability
 

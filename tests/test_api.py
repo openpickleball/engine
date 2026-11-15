@@ -57,6 +57,11 @@ def test_error_classes_share_the_base(name: str) -> None:
     assert issubclass(cls, ValueError)
 
 
+@pytest.mark.parametrize("name", ["OpenEngineError", *ERROR_NAMES])
+def test_error_classes_are_reexported_from_engine(name: str) -> None:
+    assert getattr(engine_module, name) is getattr(open_engine, name)
+
+
 def _bad_config() -> None:
     Config(min_rating=9.0)
 

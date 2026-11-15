@@ -102,7 +102,8 @@ browser work; this is a standard-library Python package.
 - `src/open_engine/winprob.py`: raise `EvaluationError` (import it from `.engine`; check
   for an import cycle: `engine.py` already imports from `.winprob`, so define the
   exception classes in a new private module `src/open_engine/_errors.py` that both
-  import, and re-export them from `engine.py`).
+  import, and re-export them from `engine.py` with explicit `X as X` imports, so
+  `from open_engine.engine import LedgerConflictError` still passes `mypy --strict`).
 - `src/open_engine/_errors.py`: new, the six exception classes plus nothing else.
   `LedgerConflictError` moves here too.
 - `src/open_engine/__init__.py`: new `__all__` and imports; helpers removed.
