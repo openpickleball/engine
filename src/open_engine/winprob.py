@@ -3,6 +3,9 @@
 Model: points are independent and team A wins each with probability p. This is
 exact for rally scoring and an approximation for side-out scoring, where only
 the serving side can score.
+
+Demonstration only: not validated on real match data, outputs are not OPEN
+ratings, and the API may change without notice.
 """
 
 from __future__ import annotations

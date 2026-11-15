@@ -47,8 +47,9 @@ Published behavior notes:
   `PlayerError` covers player identities, `EvaluationError` covers
   evaluation, fits and win probabilities, and `LedgerConflictError` covers
   conflicting ledger rows.
-- `record` never raises on a duplicate `match_id`. It returns a result that
-  is not counted, with `RejectionReason.DUPLICATE_MATCH_ID`.
+- `record` validates every match first. A valid match whose `match_id` was
+  already processed returns a result that is not counted, with
+  `RejectionReason.DUPLICATE_MATCH_ID`, instead of raising.
 
 Production notes:
 - Persist the match ledger and player identities in a database. This module's
