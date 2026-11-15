@@ -35,11 +35,20 @@ Published behavior notes:
   first (by `sequence`, then `match_id`), then timed matches (by the UTC
   instant of `played_at`, then `sequence`, then `match_id`). Every row
   passed in is validated, including rows after `as_of`, so a naive
-  `played_at` raises ValueError wherever it sits. Rows that repeat a
+  `played_at` raises InvalidMatchError wherever it sits. Rows that repeat a
   `match_id` collapse to one only when every field matches in type and
   value, with `played_at` compared by its UTC instant and UTC offset; any
   other repeat raises `LedgerConflictError`, even after `as_of`. The
   result never depends on input order.
+- Errors: every error the engine raises on purpose is an `OpenEngineError`,
+  which is a `ValueError`. `ConfigError` covers Config and GameFormat
+  values, `InvalidMatchError` covers matches, teams, scores and
+  `played_at`, `InvalidSeedError` covers external and replay seeds,
+  `PlayerError` covers player identities, `EvaluationError` covers
+  evaluation, fits and win probabilities, and `LedgerConflictError` covers
+  conflicting ledger rows.
+- `record` never raises on a duplicate `match_id`. It returns a result that
+  is not counted, with `RejectionReason.DUPLICATE_MATCH_ID`.
 
 Production notes:
 - Persist the match ledger and player identities in a database. This module's
