@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import dataclasses
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
@@ -238,3 +239,91 @@ def test_category_parent_result_reports_the_parent_format() -> None:
     assert result.parent is not None
     assert result.parent.reason is None
     assert result.parent.rating_format is D
+
+
+# -- player summary --------------------------------------------------------------
+
+SUMMARY_FIELDS = [
+    "player_id",
+    "rating_format",
+    "rating",
+    "reliability",
+    "reliability_basis",
+    "open_reliability",
+    "rd",
+    "matches_played",
+    "last_played",
+    "initial_rating",
+    "initial_source",
+    "initial_source_reliability",
+    "initial_source_date",
+    "calculated_as_of",
+    "live_updates_since_recalculation",
+    "config_version",
+    "account_linked",
+]
+
+
+def test_reliability_basis_members() -> None:
+    basis = open_engine.ReliabilityBasis
+    assert issubclass(basis, str)
+    assert {member.name: member.value for member in basis} == {
+        "OPEN": "open",
+        "IMPORTED": "imported",
+    }
+
+
+def _imported_engine() -> RatingEngine:
+    eng = RatingEngine()
+    snap = ExternalRatingSnapshot("ext", 4.123456, date(2026, 10, 1), 85.04)
+    eng.seed_external_rating("a", D, snap)
+    eng.record(_match())
+    return eng
+
+
+def test_player_summary_is_a_frozen_dataclass() -> None:
+    summary = _imported_engine().player_summary("a", D)
+    assert type(summary) is open_engine.PlayerSummary
+    assert [f.name for f in dataclasses.fields(summary)] == SUMMARY_FIELDS
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        summary.rating = 5.0  # type: ignore[misc]
+
+
+def test_player_summary_values_for_an_imported_baseline() -> None:
+    eng = _imported_engine()
+    as_of = date(2026, 11, 5)
+    state = eng.state("a", D)
+    summary = eng.player_summary("a", D, as_of=as_of)
+    assert summary.player_id == "a"
+    assert summary.rating_format is D
+    assert summary.rating == round(state.rating, 3)
+    assert summary.reliability == 85.0
+    assert summary.reliability_basis is open_engine.ReliabilityBasis.IMPORTED
+    assert summary.open_reliability == engine_module.reliability(state, eng.cfg, as_of)
+    assert summary.rd == round(engine_module.inflated_rd(state, as_of, eng.cfg), 4)
+    assert summary.matches_played == 1
+    assert summary.last_played == ON
+    assert type(summary.last_played) is date
+    assert summary.initial_rating == 4.123456
+    assert summary.initial_source == "ext"
+    assert summary.initial_source_reliability == 85.04
+    assert summary.initial_source_date == date(2026, 10, 1)
+    assert summary.calculated_as_of is None
+    assert summary.live_updates_since_recalculation == 1
+    assert summary.config_version == eng.cfg.version
+    assert summary.account_linked is False
+
+
+def test_player_summary_for_a_provisional_player_after_replay() -> None:
+    eng = replay([_match()], as_of=date(2026, 11, 1))
+    eng.link_account("b", "account-b")
+    summary = eng.player_summary("b", D)
+    assert summary.reliability_basis is open_engine.ReliabilityBasis.OPEN
+    assert summary.reliability == summary.open_reliability
+    assert summary.initial_source == "open_provisional"
+    assert summary.initial_source_date is None
+    assert summary.initial_source_reliability is None
+    assert summary.calculated_as_of == date(2026, 11, 1)
+    assert type(summary.calculated_as_of) is date
+    assert summary.live_updates_since_recalculation == 0
+    assert summary.account_linked is True
