@@ -648,3 +648,51 @@ def test_played_at_outside_utc_range_rejected():
         m.validate()
     with pytest.raises(ValueError, match="UTC"):
         replay([m], as_of=LEDGER_AS_OF)
+
+
+# 14. Duplicate rows must match in type, not only under == ------------------------
+
+TWO_GAMES = ((11, 5), (11, 5))
+LOOSE_PAIRS = [
+    pytest.param(
+        {"best_of": 3, "games": TWO_GAMES}, {"best_of": 3.0, "games": TWO_GAMES}, id="best_of"
+    ),
+    pytest.param(
+        {"game_format": GameFormat(points_to=11)},
+        {"game_format": GameFormat(points_to=11.0)},
+        id="points_to",
+    ),
+    pytest.param(
+        {"match_type": MatchType.SELF_REPORTED},
+        {"match_type": "self_reported"},
+        id="match_type",
+    ),
+]
+
+
+def ledger_with(extra: list[Match]) -> list[Match]:
+    base = [
+        match(f"b{i}", ("a", "b"), ("c", "d"), games=((11, i % 9),), on=date(2026, 10, 1 + i % 5))
+        for i in range(12)
+    ]
+    return base + extra
+
+
+@pytest.mark.parametrize("flip", [False, True], ids=["strict_first", "loose_first"])
+@pytest.mark.parametrize(("strict", "loose"), LOOSE_PAIRS)
+def test_loosely_equal_duplicates_conflict_in_replay(strict, loose, flip: bool):
+    rows = [match("x", ("a", "b"), ("c", "d"), **kw) for kw in (strict, loose)]
+    assert rows[0] == rows[1]
+    with pytest.raises(open_engine.LedgerConflictError, match="x"):
+        replay(ledger_with(rows[::-1] if flip else rows), as_of=LEDGER_AS_OF)
+
+
+@pytest.mark.parametrize("mode", ["live", "scheduled"])
+@pytest.mark.parametrize("flip", [False, True], ids=["strict_first", "loose_first"])
+@pytest.mark.parametrize(("strict", "loose"), LOOSE_PAIRS)
+def test_loosely_equal_duplicates_conflict_in_prequential(strict, loose, flip: bool, mode):
+    rows = [match("x", ("a", "b"), ("c", "d"), **kw) for kw in (strict, loose)]
+    with pytest.raises(open_engine.LedgerConflictError, match="x"):
+        prequential_predictions(
+            ledger_with(rows[::-1] if flip else rows), burn_in_matches=0, mode=mode
+        )
