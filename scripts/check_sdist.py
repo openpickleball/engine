@@ -39,10 +39,10 @@ ROOT_PREFIX = "openpickleball_engine-"
 def problems(names: list[str]) -> list[str]:
     """Return problem descriptions for tar member names, empty when clean.
 
-    The root is the first member path component that starts with
-    ROOT_PREFIX. Path problems come first, sorted. Then each unexpected top-level
-    entry is followed by its offending member paths, sorted. Missing required
-    entries come last.
+    The root is the first first path component, in member order, that starts with
+    ROOT_PREFIX and is a directory prefix of some member. Path problems come
+    first, sorted. Then each unexpected top-level entry is followed by its
+    offending member paths, sorted. Missing required entries come last.
     """
     if not names:
         return ["archive is empty"]
@@ -50,7 +50,7 @@ def problems(names: list[str]) -> list[str]:
         (
             first
             for first in (name.split("/", 1)[0] for name in names)
-            if first.startswith(ROOT_PREFIX)
+            if first.startswith(ROOT_PREFIX) and any(name.startswith(f"{first}/") for name in names)
         ),
         None,
     )
