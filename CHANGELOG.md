@@ -6,6 +6,22 @@ The engine is a demonstration. Its outputs are not OPEN ratings.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-15
+
+### Added
+
+- `game_win_probability`, `match_win_probability` and `calibrate_win_probability` in `open_engine.winprob`, and `RatingEngine.win_probability` for a calibrated match win probability.
+- `Config.win_calibration_by_scoring`, a per-scoring-type calibration exponent that defaults to 1.0.
+- `PrequentialPrediction` and `prequential_predictions`, which predict each match from ratings that have not seen it.
+- `ScaleFit.profile` (the error at each scale searched) and `ScaleFit.at_bound` (whether the fit landed on a search edge), so an unidentified fit is visible.
+- `WinCalibrationFit` and `fit_win_calibration`, which fit the win-probability calibration per scoring type.
+
+### Changed
+
+- `evaluate` and `fit_scale` accept `mode` (`"live"` or `"scheduled"`), `score_from` and `anchor`. The defaults keep the previous behavior.
+- `match_win_probability` raises `ValueError` unless `best_of` is an odd integer of at least 1.
+- `Config.version` and `__version__` are now `0.2.0`.
+
 ## [0.1.0] - 2026-11-12
 
 ### Added
@@ -13,5 +29,6 @@ The engine is a demonstration. Its outputs are not OPEN ratings.
 - First demonstration release of the `openpickleball-engine` package (`open_engine`), with no runtime dependencies, for Python 3.10 and later.
 - A basic match example in `examples/basic_match.py`.
 
-[Unreleased]: https://github.com/openpickleball/engine/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/openpickleball/engine/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/openpickleball/engine/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/openpickleball/engine/releases/tag/v0.1.0

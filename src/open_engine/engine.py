@@ -50,6 +50,9 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
 from datetime import date, datetime, time, timedelta
 from enum import Enum
+from typing import Literal
+
+from .winprob import calibrate_win_probability, match_win_probability
 
 # ---------------------------------------------------------------------------
 # Enums and game formats
@@ -140,7 +143,7 @@ ALL_GAME_FORMATS: frozenset[tuple[ScoringType, int]] = frozenset(
 
 @dataclass(frozen=True)
 class Config:
-    version: str = "0.1.0"
+    version: str = "0.2.0"
 
     # Rating scale
     min_rating: float = 2.0
@@ -155,6 +158,15 @@ class Config:
         default_factory=lambda: {
             ScoringType.SIDE_OUT: 2.9,
             ScoringType.RALLY: 2.9,
+        }
+    )
+
+    # Win-probability calibration, one exponent per scoring type: the match win
+    # probability p becomes sigmoid(a * logit(p)). 1.0 leaves it unchanged.
+    win_calibration_by_scoring: Mapping[ScoringType, float] = field(
+        default_factory=lambda: {
+            ScoringType.SIDE_OUT: 1.0,
+            ScoringType.RALLY: 1.0,
         }
     )
 
@@ -239,6 +251,10 @@ class Config:
             raise ValueError("scale_by_scoring needs a value for every scoring type")
         if any(value <= 0 for value in self.scale_by_scoring.values()):
             raise ValueError("scales must be positive")
+        if set(self.win_calibration_by_scoring) != set(ScoringType):
+            raise ValueError("win_calibration_by_scoring needs a value for every scoring type")
+        if any(value <= 0 for value in self.win_calibration_by_scoring.values()):
+            raise ValueError("win calibration values must be positive")
         if not 0 <= self.k_min <= self.k_max:
             raise ValueError("K-factor bounds are invalid")
         if not 0 < self.rd_min <= self.rd_max:
@@ -723,6 +739,21 @@ class RatingEngine:
             self.cfg.scale_by_scoring[scoring],
         )
 
+    def win_probability(
+        self,
+        team_a: Sequence[str],
+        team_b: Sequence[str],
+        rating_format: RatingFormat,
+        game_format: GameFormat,
+        best_of: int = 1,
+    ) -> float:
+        """Calibrated probability that team A wins the match."""
+        share = self.predict(team_a, team_b, rating_format, game_format.scoring)
+        raw = match_win_probability(share, game_format, best_of)
+        return calibrate_win_probability(
+            raw, self.cfg.win_calibration_by_scoring[game_format.scoring]
+        )
+
     def _validate_teams(
         self, team_a: Sequence[str], team_b: Sequence[str], rating_format: RatingFormat
     ) -> None:
@@ -1034,6 +1065,132 @@ class EvaluationReport:
     # Each bin: (expected lower bound, mean expected, mean actual, count)
 
 
+@dataclass(frozen=True)
+class PrequentialPrediction:
+    match_id: str
+    played_on: date
+    players: tuple[str, ...]
+    expected: float  # team A's expected point share
+    actual: float  # raw points_a / total, not win_weight-adjusted
+    team_a_won: bool
+    # Win probabilities are modeled only for win_by 1 or 2. For any other
+    # win_by both are math.nan; the point-share fields are unaffected.
+    win_probability_raw: float  # before calibration
+    win_probability: float  # calibrated with cfg
+
+
+PredictionMode = Literal["live", "scheduled"]
+
+
+def _is_established(engine: RatingEngine, match: Match, burn_in_matches: int) -> bool:
+    return all(
+        (s := engine._peek_state(pid, match.rating_format)).initial_source_date is not None
+        or s.matches_played >= burn_in_matches
+        for pid in match.team_a + match.team_b
+    )
+
+
+def _predict_match(engine: RatingEngine, match: Match) -> PrequentialPrediction:
+    cfg = engine.cfg
+    scoring = match.game_format.scoring
+    expected = engine.predict(match.team_a, match.team_b, match.rating_format, scoring)
+    if match.game_format.win_by in (1, 2):
+        raw = match_win_probability(expected, match.game_format, match.best_of)
+        calibrated = calibrate_win_probability(raw, cfg.win_calibration_by_scoring[scoring])
+    else:
+        raw = calibrated = math.nan
+    points_a = sum(a for a, _ in match.games)
+    total = sum(a + b for a, b in match.games)
+    games_a = sum(a > b for a, b in match.games)
+    return PrequentialPrediction(
+        match_id=match.match_id,
+        played_on=match.played_on,
+        players=match.team_a + match.team_b,
+        expected=expected,
+        actual=points_a / total,
+        team_a_won=games_a > len(match.games) - games_a,
+        win_probability_raw=raw,
+        win_probability=calibrated,
+    )
+
+
+def prequential_predictions(
+    matches: Iterable[Match],
+    seed_players: Iterable[Player] = (),
+    *,
+    cfg: Config | None = None,
+    scoring: ScoringType | None = None,
+    burn_in_matches: int = 5,
+    mode: PredictionMode = "live",
+    score_from: date | None = None,
+    anchor: date | None = None,
+) -> list[PrequentialPrediction]:
+    """
+    Predict each eligible match from ratings that have not seen it.
+
+    A match is eligible when every participant is established in its rating
+    format (imported baseline, or at least `burn_in_matches` OPEN matches),
+    its scoring equals `scoring` when given, and it is played on or after
+    `score_from` when given. Only matches that `record` counts are kept.
+
+    "live" records every match live in one engine, in ledger order.
+    "scheduled" mirrors production: replay dates are
+    `anchor + k * cfg.replay_interval_days` (anchor defaults to the first match
+    date). A match on day d is predicted from replay(matches on or before s,
+    as_of=s) for the largest replay date s strictly before d, and matches in
+    that window are then predicted and recorded live in ledger order.
+    """
+    if mode not in ("live", "scheduled"):
+        raise ValueError(f"mode must be 'live' or 'scheduled', not {mode!r}")
+    cfg = cfg or Config()
+    ordered = sorted(matches, key=ledger_order)
+    seeds = list(seed_players)
+    predictions: list[PrequentialPrediction] = []
+
+    def step(engine: RatingEngine, match: Match) -> None:
+        match.validate()
+        eligible = (
+            (scoring is None or match.game_format.scoring is scoring)
+            and (score_from is None or match.played_on >= score_from)
+            and _is_established(engine, match, burn_in_matches)
+        )
+        prediction = _predict_match(engine, match) if eligible else None
+        if engine.record(match).counted and prediction is not None:
+            predictions.append(prediction)
+
+    if mode == "live":
+        engine = RatingEngine(cfg)
+        for player in seeds:
+            engine.add_player(player)
+        for match in ordered:
+            step(engine, match)
+        return predictions
+
+    if not ordered:
+        return predictions
+    interval = cfg.replay_interval_days
+    if anchor is None:
+        anchor = ordered[0].played_on
+    windows: dict[date, list[Match]] = {}
+    for match in ordered:
+        # Largest k with anchor + k * interval strictly before played_on.
+        k = ((match.played_on - anchor).days - 1) // interval
+        windows.setdefault(anchor + timedelta(days=k * interval), []).append(match)
+
+    for replay_date, window in sorted(windows.items()):
+        if score_from is not None and all(m.played_on < score_from for m in window):
+            continue
+        engine = replay(
+            [m for m in ordered if m.played_on <= replay_date],
+            seeds,
+            cfg=cfg,
+            as_of=replay_date,
+        )
+        for match in window:
+            step(engine, match)
+    return predictions
+
+
 def evaluate(
     matches: Iterable[Match],
     seed_players: Iterable[Player] = (),
@@ -1041,30 +1198,36 @@ def evaluate(
     cfg: Config | None = None,
     scoring: ScoringType | None = None,
     burn_in_matches: int = 5,
+    mode: PredictionMode = "live",
+    score_from: date | None = None,
+    anchor: date | None = None,
 ) -> EvaluationReport:
     """
     Prequential evaluation: each match is predicted before it updates ratings.
 
-    Only matches where every participant is established (imported baseline,
-    or at least `burn_in_matches` OPEN matches in that format) are scored.
+    Scores the matches that prequential_predictions() returns, with the same
+    eligibility, mode, score_from and anchor rules.
     """
     cfg = cfg or Config()
-    engine = RatingEngine(cfg)
-    for player in seed_players:
-        engine.add_player(player)
-
-    pairs: list[tuple[float, float]] = []
-    for match in sorted(matches, key=ledger_order):
-        scored = scoring is None or match.game_format.scoring is scoring
-        if scored:
-            scored = all(
-                (s := engine._peek_state(pid, match.rating_format)).initial_source_date is not None
-                or s.matches_played >= burn_in_matches
-                for pid in match.team_a + match.team_b
-            )
-        result = engine.record(match)
-        if scored and result.counted:
-            pairs.append((result.expected_a, result.actual_a))
+    predictions = prequential_predictions(
+        matches,
+        seed_players,
+        cfg=cfg,
+        scoring=scoring,
+        burn_in_matches=burn_in_matches,
+        mode=mode,
+        score_from=score_from,
+        anchor=anchor,
+    )
+    # Same target and 5-decimal precision as MatchResult.expected_a/actual_a.
+    w = cfg.win_weight
+    pairs = [
+        (
+            round(p.expected, 5),
+            round((1.0 - w) * p.actual + w * float(p.team_a_won), 5),
+        )
+        for p in predictions
+    ]
 
     if not pairs:
         raise ValueError("No established matches to evaluate")
@@ -1102,6 +1265,8 @@ class ScaleFit:
     default_scale: float
     fitted: EvaluationReport
     at_default: EvaluationReport
+    profile: tuple[tuple[float, float], ...] = ()  # (scale, mse), sorted by scale
+    at_bound: bool = False  # fitted scale within tolerance of low or high
 
 
 def fit_scale(
@@ -1114,6 +1279,9 @@ def fit_scale(
     high: float = 8.0,
     tolerance: float = 0.01,
     burn_in_matches: int = 5,
+    mode: PredictionMode = "live",
+    score_from: date | None = None,
+    anchor: date | None = None,
 ) -> ScaleFit:
     """
     Fit one scoring type's scale by minimizing prequential point-share MSE.
@@ -1131,7 +1299,14 @@ def fit_scale(
         if key not in cache:
             trial = replace(cfg, scale_by_scoring={**cfg.scale_by_scoring, scoring: scale})
             cache[key] = evaluate(
-                ledger, seeds, cfg=trial, scoring=scoring, burn_in_matches=burn_in_matches
+                ledger,
+                seeds,
+                cfg=trial,
+                scoring=scoring,
+                burn_in_matches=burn_in_matches,
+                mode=mode,
+                score_from=score_from,
+                anchor=anchor,
             )
         return cache[key]
 
@@ -1153,10 +1328,100 @@ def fit_scale(
     fitted_scale = round((a + b) / 2, 3)
 
     default_scale = cfg.scale_by_scoring[scoring]
+    fitted = run(fitted_scale)
+    at_default = run(default_scale)
     return ScaleFit(
         scoring=scoring.value,
         scale=fitted_scale,
         default_scale=default_scale,
-        fitted=run(fitted_scale),
-        at_default=run(default_scale),
+        fitted=fitted,
+        at_default=at_default,
+        profile=tuple((float(scale), report.mse) for scale, report in sorted(cache.items())),
+        at_bound=fitted_scale - low <= tolerance or high - fitted_scale <= tolerance,
+    )
+
+
+@dataclass(frozen=True)
+class WinCalibrationFit:
+    scoring: str
+    a: float  # exponent on the logit of the raw win probability, rounded to 3 places
+    brier: float  # at the fitted a
+    brier_uncalibrated: float  # at a = 1
+    n: int  # predictions used (those with a modeled win probability)
+    at_bound: bool = False  # fitted a within tolerance of low or high
+
+
+def fit_win_calibration(
+    matches: Iterable[Match],
+    seed_players: Iterable[Player] = (),
+    *,
+    cfg: Config | None = None,
+    scoring: ScoringType = ScoringType.SIDE_OUT,
+    low: float = 0.2,
+    high: float = 3.0,
+    tolerance: float = 0.001,
+    burn_in_matches: int = 5,
+    mode: PredictionMode = "live",
+    score_from: date | None = None,
+    anchor: date | None = None,
+) -> WinCalibrationFit:
+    """
+    Fit one scoring type's win-probability exponent by minimizing the Brier score.
+
+    Uses the raw win probabilities computed with cfg's scale, so fit the scale
+    first. Predictions without a modeled win probability (win_by not 1 or 2)
+    are skipped. Same search as fit_scale: coarse grid, then golden section.
+    Raises ValueError when no prediction remains.
+    """
+    predictions = prequential_predictions(
+        matches,
+        seed_players,
+        cfg=cfg or Config(),
+        scoring=scoring,
+        burn_in_matches=burn_in_matches,
+        mode=mode,
+        score_from=score_from,
+        anchor=anchor,
+    )
+    data = [
+        (p.win_probability_raw, 1.0 if p.team_a_won else 0.0)
+        for p in predictions
+        if not math.isnan(p.win_probability_raw)
+    ]
+    if not data:
+        raise ValueError("no predictions with a modeled win probability to fit")
+    cache: dict[float, float] = {}
+
+    def brier(a: float) -> float:
+        key = round(a, 6)
+        if key not in cache:
+            cache[key] = sum((calibrate_win_probability(r, key) - w) ** 2 for r, w in data) / len(
+                data
+            )
+        return cache[key]
+
+    steps = 14
+    grid = [low + (high - low) * i / steps for i in range(steps + 1)]
+    best = min(grid, key=brier)
+    step = (high - low) / steps
+    lo, hi = max(low, best - step), min(high, best + step)
+
+    ratio = (math.sqrt(5) - 1) / 2
+    c, d = hi - ratio * (hi - lo), lo + ratio * (hi - lo)
+    while hi - lo > tolerance:
+        if brier(c) <= brier(d):
+            hi, d = d, c
+            c = hi - ratio * (hi - lo)
+        else:
+            lo, c = c, d
+            d = lo + ratio * (hi - lo)
+    fitted = round((lo + hi) / 2, 3)
+
+    return WinCalibrationFit(
+        scoring=scoring.value,
+        a=fitted,
+        brier=brier(fitted),
+        brier_uncalibrated=brier(1.0),
+        n=len(data),
+        at_bound=fitted - low <= tolerance or high - fitted <= tolerance,
     )
