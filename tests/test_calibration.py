@@ -140,9 +140,9 @@ def test_scheduled_never_sees_own_day():
     assert set(by_id) == {"m0", "m1"}
 
     teams = (("a", "b"), ("c", "d"), D, ScoringType.RALLY)
-    before_first = replay([], seeds, as_of=anchor - timedelta(days=7)).predict(*teams)
-    with_first = replay([first], seeds, as_of=anchor).predict(*teams)
-    with_both = replay(ledger, seeds, as_of=second.played_on).predict(*teams)
+    before_first = replay([], seeds, as_of=anchor - timedelta(days=7)).predict_point_share(*teams)
+    with_first = replay([first], seeds, as_of=anchor).predict_point_share(*teams)
+    with_both = replay(ledger, seeds, as_of=second.played_on).predict_point_share(*teams)
 
     assert by_id["m0"].expected == before_first
     assert by_id["m0"].expected != with_first

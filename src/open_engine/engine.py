@@ -870,7 +870,7 @@ class RatingEngine:
 
     # -- prediction ------------------------------------------------------------
 
-    def predict(
+    def predict_point_share(
         self,
         team_a: Sequence[str],
         team_b: Sequence[str],
@@ -886,7 +886,7 @@ class RatingEngine:
             self.cfg.scale_by_scoring[scoring],
         )
 
-    def win_probability(
+    def predict_win_probability(
         self,
         team_a: Sequence[str],
         team_b: Sequence[str],
@@ -895,7 +895,7 @@ class RatingEngine:
         best_of: int = 1,
     ) -> float:
         """Calibrated probability that team A wins the match."""
-        share = self.predict(team_a, team_b, rating_format, game_format.scoring)
+        share = self.predict_point_share(team_a, team_b, rating_format, game_format.scoring)
         raw = match_win_probability(share, game_format, best_of)
         return calibrate_win_probability(
             raw, self.cfg.win_calibration_by_scoring[game_format.scoring]
@@ -1232,7 +1232,7 @@ def _is_established(engine: RatingEngine, match: Match, burn_in_matches: int) ->
 def _predict_match(engine: RatingEngine, match: Match) -> PrequentialPrediction:
     cfg = engine.cfg
     scoring = match.game_format.scoring
-    expected = engine.predict(match.team_a, match.team_b, match.rating_format, scoring)
+    expected = engine.predict_point_share(match.team_a, match.team_b, match.rating_format, scoring)
     if match.game_format.win_by in (1, 2):
         raw = match_win_probability(expected, match.game_format, match.best_of)
         calibrated = calibrate_win_probability(raw, cfg.win_calibration_by_scoring[scoring])
