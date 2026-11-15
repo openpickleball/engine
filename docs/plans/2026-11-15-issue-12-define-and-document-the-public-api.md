@@ -22,7 +22,9 @@ browser work; this is a standard-library Python package.
    - `InvalidMatchError`: `Match.validate`, `GameFormat.validate_game`, played_at checks
      (`_utc_instant`, so `ledger_order` too), team checks (`_validate_teams`, so
      `predict_point_share` and `predict_win_probability` too), `record`'s
-     "as_of cannot be earlier than the match date", `_actual_point_share`.
+     "as_of cannot be earlier than the match date", `_actual_point_share`. Also a
+     `match_id` or team player id that is not a non-empty, non-whitespace `str`
+     (criterion 11).
    - `InvalidSeedError`: `seed_external_rating`, and `replay`'s "Seed for ... already
      contains OPEN matches".
    - `PlayerError`: `RatingEngine.player`, `add_player`, `link_account`,
@@ -96,6 +98,13 @@ browser work; this is a standard-library Python package.
     `RejectionReason`, `ReliabilityBasis`) share a private `_StrEnum` base, so `str(m)`
     and `f"{m}"` give `m.value` on every supported Python. repr, pickle, `json.dumps`,
     `== "value"`, and `Config().fingerprint()` do not change (`tests/test_enum_str.py`).
+11. `Match.validate` raises `InvalidMatchError` when `match_id` or any team player id is
+    not a non-empty, non-whitespace `str`, and `RatingEngine._validate_teams` applies the
+    same id check, so `predict_point_share` and `predict_win_probability` raise too.
+    `record` with such an id raises before anything is committed: no rating moves, no
+    player is created, and a retry changes nothing (`tests/test_match_ids.py`). Before
+    this fix, `record` committed the earlier ids and then raised before marking the
+    match processed, so each retry moved ratings again.
 
 ## Files that change
 
@@ -103,7 +112,7 @@ browser work; this is a standard-library Python package.
   `RejectionReason`, `ReliabilityBasis`, `PlayerSummary`; `MatchResult` fields;
   `player_summary`; method renames and internal callers (`_predict_match`); docstrings;
   module docstring wording about exceptions.
-  Review fixes: the `_StrEnum` base (criterion 10).
+  Review fixes: the `_StrEnum` base (criterion 10); the id check (criterion 11).
 - `src/open_engine/winprob.py`: raise `EvaluationError` (import it from `.engine`; check
   for an import cycle: `engine.py` already imports from `.winprob`, so define the
   exception classes in a new private module `src/open_engine/_errors.py` that both
@@ -164,6 +173,10 @@ task with the gate green; each behavior change starts with a failing test commit
   pass with only the named mechanical edits. Any other test edit is a red flag to report.
 - **Import cycle** between `engine.py` and `winprob.py` if the exceptions live in
   `engine.py`. Mitigation: `_errors.py`.
+- **Stricter ids (criterion 11).** A ledger that replays today with a blank,
+  whitespace, or non-string id (after `as_of`, or in a row rejected before commit) now
+  raises `InvalidMatchError`. No rating changes for any ledger that replays successfully
+  today.
 - **`__all__` drift from the README.** Mitigation: the parsing test.
 - **Downstream breakage.** The evaluation repo calls `engine.predict` three times and reads
   `.reason` once; the backend does not import the engine yet. All breaks are allowed in

@@ -450,7 +450,7 @@ class Match:
 
     def validate(self) -> None:
         """Raise InvalidMatchError (or ConfigError for its game format) when not valid."""
-        if not self.match_id.strip():
+        if not _is_id(self.match_id):
             raise InvalidMatchError("match_id is required for duplicate protection")
         expected_size = self.rating_format.team_size
         if len(self.team_a) != expected_size or len(self.team_b) != expected_size:
@@ -458,6 +458,8 @@ class Match:
                 f"{self.rating_format.value} requires {expected_size} player(s) per team"
             )
         all_ids = self.team_a + self.team_b
+        if not all(_is_id(pid) for pid in all_ids):
+            raise InvalidMatchError("Player ids must be non-empty strings")
         if len(set(all_ids)) != len(all_ids):
             raise InvalidMatchError("A player cannot appear more than once in a match")
         if not set(self.confirmed_by) <= set(all_ids):
@@ -494,6 +496,11 @@ class Match:
                 break
         if running_a < wins_needed and running_b < wins_needed:
             raise InvalidMatchError("Match score does not contain a completed winner")
+
+
+def _is_id(value: object) -> bool:
+    """True for a str with at least one non-whitespace character."""
+    return isinstance(value, str) and bool(value.strip())
 
 
 _UTC_MIN = datetime.min.replace(tzinfo=UTC)
@@ -984,6 +991,8 @@ class RatingEngine:
         if len(team_a) != size or len(team_b) != size:
             raise InvalidMatchError(f"{rating_format.value} requires {size} player(s) per team")
         ids = list(team_a) + list(team_b)
+        if not all(_is_id(pid) for pid in ids):
+            raise InvalidMatchError("Player ids must be non-empty strings")
         if len(set(ids)) != len(ids):
             raise InvalidMatchError("A player cannot appear more than once in a match")
 
