@@ -1,5 +1,6 @@
 """Tests for prequential predictions, evaluation modes and the scale fit."""
 
+import math
 import random
 from datetime import date, timedelta
 
@@ -25,17 +26,22 @@ RALLY_11 = GameFormat(ScoringType.RALLY, points_to=11)
 START = date(2025, 1, 6)
 
 
-def simulate_league(
+def simulate_league_with_truth(
     true_scale: float = 2.0,
     n_players: int = 24,
     n_matches: int = 1200,
     per_day: int = 12,
     seed: int = 11,
-) -> list[Match]:
-    """Synthetic doubles league: per-point win probability from true ratings."""
+    game_format: GameFormat = RALLY_11,
+) -> tuple[list[Match], dict[str, float]]:
+    """Synthetic doubles league: per-point win probability from true ratings.
+
+    Returns the ledger and the true rating of every player.
+    """
     rng = random.Random(seed)
     true = {f"p{i:02d}": rng.uniform(2.8, 5.2) for i in range(n_players)}
     ids_pool = sorted(true)
+    target, win_by = game_format.points_to, game_format.win_by
     ledger: list[Match] = []
     for i in range(n_matches):
         ids = rng.sample(ids_pool, 4)
@@ -43,7 +49,7 @@ def simulate_league(
         rb = (true[ids[2]] + true[ids[3]]) / 2
         p = 1 / (1 + 10 ** ((rb - ra) / true_scale))
         a = b = 0
-        while not ((a >= 11 or b >= 11) and abs(a - b) >= 2):
+        while not ((a >= target or b >= target) and abs(a - b) >= win_by):
             if rng.random() < p:
                 a += 1
             else:
@@ -57,22 +63,23 @@ def simulate_league(
                 START + timedelta(days=i // per_day),
                 D,
                 match_type=MatchType.LEAGUE,
-                game_format=RALLY_11,
+                game_format=game_format,
                 sequence=i % per_day,
             )
         )
-    return ledger
+    return ledger, true
 
 
-def true_rating_seeds(n_players: int = 24, seed: int = 11) -> list:
-    """Imported baselines at simulate_league's true ratings (same RNG draws)."""
-    rng = random.Random(seed)
+def simulate_league(**kwargs: object) -> list[Match]:
+    return simulate_league_with_truth(**kwargs)[0]
+
+
+def true_rating_seeds(true: dict[str, float]) -> list:
+    """Imported baselines at the given true ratings."""
     eng = RatingEngine()
-    for i in range(n_players):
-        snap = ExternalRatingSnapshot(
-            "external_standard", rng.uniform(2.8, 5.2), date(2024, 12, 1), 80
-        )
-        eng.seed_external_rating(f"p{i:02d}", D, snap)
+    for pid, rating in true.items():
+        snap = ExternalRatingSnapshot("external_standard", rating, date(2024, 12, 1), 80)
+        eng.seed_external_rating(pid, D, snap)
     return list(eng.players.values())
 
 
@@ -82,6 +89,24 @@ def test_live_default_matches_old_evaluate():
     assert report.matches_scored == 1159
     assert report.mse == 0.01829
     assert report.bias == 0.002047
+
+
+def test_unsupported_win_by_still_scores():
+    # Win probability is only modeled for win_by 1 or 2; other formats still
+    # count and score on point share, with nan win probabilities.
+    ledger = simulate_league(
+        n_matches=300, game_format=GameFormat(ScoringType.RALLY, points_to=11, win_by=3)
+    )
+    report = evaluate(ledger)
+    # Frozen from evaluate() at commit 02063b9.
+    assert report.matches_scored == 259
+    assert report.mse == 0.023569
+    assert report.bias == 0.000251
+    preds = prequential_predictions(ledger)
+    assert len(preds) == report.matches_scored
+    assert all(math.isnan(p.win_probability_raw) for p in preds)
+    assert all(math.isnan(p.win_probability) for p in preds)
+    assert all(0 < p.expected < 1 for p in preds)
 
 
 def _seeds(ids: list[str], ratings: list[float]) -> list:
@@ -165,8 +190,8 @@ def test_unknown_mode_rejected():
 def test_fit_scale_profile_and_bound():
     # Seeding at the true ratings keeps the fit from absorbing the early
     # compression of unrated players toward the default rating.
-    ledger = simulate_league()
-    seeds = true_rating_seeds()
+    ledger, true = simulate_league_with_truth()
+    seeds = true_rating_seeds(true)
     fit = fit_scale(ledger, seeds, scoring=ScoringType.RALLY)
     scales = [s for s, _ in fit.profile]
     assert scales == sorted(scales)

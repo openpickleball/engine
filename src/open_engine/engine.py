@@ -1073,6 +1073,8 @@ class PrequentialPrediction:
     expected: float  # team A's expected point share
     actual: float  # raw points_a / total, not win_weight-adjusted
     team_a_won: bool
+    # Win probabilities are modeled only for win_by 1 or 2. For any other
+    # win_by both are math.nan; the point-share fields are unaffected.
     win_probability_raw: float  # before calibration
     win_probability: float  # calibrated with cfg
 
@@ -1092,7 +1094,11 @@ def _predict_match(engine: RatingEngine, match: Match) -> PrequentialPrediction:
     cfg = engine.cfg
     scoring = match.game_format.scoring
     expected = engine.predict(match.team_a, match.team_b, match.rating_format, scoring)
-    raw = match_win_probability(expected, match.game_format, match.best_of)
+    if match.game_format.win_by in (1, 2):
+        raw = match_win_probability(expected, match.game_format, match.best_of)
+        calibrated = calibrate_win_probability(raw, cfg.win_calibration_by_scoring[scoring])
+    else:
+        raw = calibrated = math.nan
     points_a = sum(a for a, _ in match.games)
     total = sum(a + b for a, b in match.games)
     games_a = sum(a > b for a, b in match.games)
@@ -1104,7 +1110,7 @@ def _predict_match(engine: RatingEngine, match: Match) -> PrequentialPrediction:
         actual=points_a / total,
         team_a_won=games_a > len(match.games) - games_a,
         win_probability_raw=raw,
-        win_probability=calibrate_win_probability(raw, cfg.win_calibration_by_scoring[scoring]),
+        win_probability=calibrated,
     )
 
 
