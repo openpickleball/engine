@@ -367,6 +367,41 @@ def test_internal_helpers_are_not_exported(name: str) -> None:
     assert callable(getattr(engine_module, name))
 
 
+def _own_doc(obj: object, name: str) -> str | None:
+    """obj's own docstring, ignoring generated and inherited ones."""
+    doc = obj.__dict__.get("__doc__") if isinstance(obj, type) else getattr(obj, "__doc__", None)
+    # A dataclass gets a generated "Name(field, ...)" docstring, and Python 3.10
+    # gives an Enum without one "An enumeration.".
+    if not doc or not doc.strip() or doc.startswith(f"{name}(") or doc == "An enumeration.":
+        return None
+    if isinstance(obj, type) and any(doc == base.__doc__ for base in obj.__mro__[1:]):
+        return None
+    return doc
+
+
+def _missing_docstrings() -> list[str]:
+    missing: list[str] = []
+    for name in open_engine.__all__:
+        obj = getattr(open_engine, name)
+        if _own_doc(obj, name) is None:
+            missing.append(name)
+        if not isinstance(obj, type):
+            continue
+        for attr, member in vars(obj).items():
+            if attr.startswith("_"):
+                continue
+            if isinstance(member, (staticmethod, classmethod)):
+                member = member.__func__
+            if isinstance(member, property) or callable(member) and not isinstance(member, type):
+                if _own_doc(member, attr) is None:
+                    missing.append(f"{name}.{attr}")
+    return missing
+
+
+def test_every_public_name_and_method_has_a_docstring() -> None:
+    assert _missing_docstrings() == []
+
+
 def test_prediction_methods_validate_teams() -> None:
     with pytest.raises(open_engine.InvalidMatchError, match="requires 2 player"):
         RatingEngine().predict_point_share(("a",), ("c", "d"), D)
