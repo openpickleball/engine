@@ -6,6 +6,10 @@ The engine is a demonstration. Its outputs are not OPEN ratings.
 
 ## [Unreleased]
 
+### Added
+
+- CI reports branch coverage of `src/open_engine` on every supported Python version. The `dev` extra now includes `pytest-cov`; run `pytest --cov` for the same report locally.
+
 ### Changed
 
 - fit_scale compares unrounded MSE; ScaleFit.profile reports unrounded values.
