@@ -169,3 +169,16 @@ def test_offending_member_paths_are_named(
     for name in [".superpowers", "docs", *extra]:
         assert name in err
     assert err.index("docs/plans/x.md") < err.index("docs/plans/y.md")
+
+
+def test_prefixed_stray_file_does_not_become_the_root(check_sdist: ModuleType) -> None:
+    stray = "openpickleball_engine-x.txt"
+    found = check_sdist.problems(
+        [
+            stray,
+            "openpickleball_engine-0.2.0/src/a.py",
+            "openpickleball_engine-0.2.0/pyproject.toml",
+            "openpickleball_engine-0.2.0/PKG-INFO",
+        ]
+    )
+    assert found == [f"member outside root 'openpickleball_engine-0.2.0': {stray}"]
