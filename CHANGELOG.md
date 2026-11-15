@@ -12,8 +12,8 @@ The first dev release, published to TestPyPI.
 
 ### Added
 
-- `scripts/check_wheel.py`, which fails unless a wheel holds only the `open_engine` modules, `py.typed`, and one `openpickleball_engine-<version>.dist-info` directory, with every module present. CI's `package` job and the release build run it after `check_sdist.py`.
-- A test that runs the README quick start.
+- `scripts/check_wheel.py`, which fails unless a wheel holds only the `open_engine` modules, `py.typed`, and one `openpickleball_engine-<version>.dist-info` directory, which must contain `METADATA`, `WHEEL`, and `RECORD`. Every module and `py.typed` must be present, and repeated names and other directory entries fail. CI's `package` job and the release build run it after `check_sdist.py`.
+- Tests that the README quick start runs and that the README install line pins the package version.
 - `twine` in the `dev` extra, so contributors can run `twine check --strict` as CI does.
 - `LedgerConflictError`, a `ValueError` raised by `replay` and `prequential_predictions` (and so by `evaluate` and `fit_scale`) when ledger rows share a `match_id` but differ. Its `match_ids` attribute is the sorted tuple of every conflicting id.
 - CI builds the package and runs `scripts/check_sdist.py`, which fails when the source distribution has an unexpected top-level entry.
