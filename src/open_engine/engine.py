@@ -1222,9 +1222,15 @@ def evaluate(
         score_from=score_from,
         anchor=anchor,
     )
+    return _report_from_predictions(predictions, cfg, scoring)[0]
+
+
+def _scored_pairs(
+    predictions: list[PrequentialPrediction], cfg: Config
+) -> list[tuple[float, float]]:
     # Same target and 5-decimal precision as MatchResult.expected_a/actual_a.
     w = cfg.win_weight
-    pairs = [
+    return [
         (
             round(p.expected, 5),
             round((1.0 - w) * p.actual + w * float(p.team_a_won), 5),
@@ -1232,6 +1238,12 @@ def evaluate(
         for p in predictions
     ]
 
+
+def _report_from_predictions(
+    predictions: list[PrequentialPrediction], cfg: Config, scoring: ScoringType | None
+) -> tuple[EvaluationReport, float]:
+    """The rounded report plus the unrounded mean squared error."""
+    pairs = _scored_pairs(predictions, cfg)
     if not pairs:
         raise ValueError("No established matches to evaluate")
     errors = [actual - expected for expected, actual in pairs]
@@ -1250,15 +1262,17 @@ def evaluate(
                     len(members),
                 )
             )
-    return EvaluationReport(
+    mse = sum(e * e for e in errors) / len(errors)
+    report = EvaluationReport(
         scoring=scoring.value if scoring else None,
         scale=cfg.scale_by_scoring[scoring] if scoring else None,
         matches_scored=len(pairs),
-        mse=round(sum(e * e for e in errors) / len(errors), 6),
+        mse=round(mse, 6),
         mae=round(sum(abs(e) for e in errors) / len(errors), 6),
         bias=round(sum(errors) / len(errors), 6),
         calibration=tuple(bins),
     )
+    return report, mse
 
 
 @dataclass(frozen=True)
@@ -1268,7 +1282,7 @@ class ScaleFit:
     default_scale: float
     fitted: EvaluationReport
     at_default: EvaluationReport
-    profile: tuple[tuple[float, float], ...] = ()  # (scale, mse), sorted by scale
+    profile: tuple[tuple[float, float], ...] = ()  # (scale, unrounded mse), sorted by scale
     at_bound: bool = False  # fitted scale within tolerance of low or high
 
 
@@ -1289,19 +1303,22 @@ def fit_scale(
     """
     Fit one scoring type's scale by minimizing prequential point-share MSE.
 
+    The search compares unrounded MSE, so ties at the 6-decimal precision of
+    EvaluationReport.mse do not decide the fit.
+
     Coarse grid first, then golden-section search around the best grid point.
     Publish the returned ScaleFit alongside the config that adopts it.
     """
     cfg = cfg or Config()
     ledger = list(matches)
     seeds = list(seed_players)
-    cache: dict[float, EvaluationReport] = {}
+    cache: dict[float, tuple[EvaluationReport, float]] = {}
 
-    def run(scale: float) -> EvaluationReport:
+    def run(scale: float) -> tuple[EvaluationReport, float]:
         key = round(scale, 6)
         if key not in cache:
             trial = replace(cfg, scale_by_scoring={**cfg.scale_by_scoring, scoring: scale})
-            cache[key] = evaluate(
+            predictions = prequential_predictions(
                 ledger,
                 seeds,
                 cfg=trial,
@@ -1311,18 +1328,19 @@ def fit_scale(
                 score_from=score_from,
                 anchor=anchor,
             )
+            cache[key] = _report_from_predictions(predictions, trial, scoring)
         return cache[key]
 
     steps = 14
     grid = [low + (high - low) * i / steps for i in range(steps + 1)]
-    best = min(grid, key=lambda s: run(s).mse)
+    best = min(grid, key=lambda s: run(s)[1])
     step = (high - low) / steps
     a, b = max(low, best - step), min(high, best + step)
 
     ratio = (math.sqrt(5) - 1) / 2
     c, d = b - ratio * (b - a), a + ratio * (b - a)
     while b - a > tolerance:
-        if run(c).mse <= run(d).mse:
+        if run(c)[1] <= run(d)[1]:
             b, d = d, c
             c = b - ratio * (b - a)
         else:
@@ -1331,15 +1349,15 @@ def fit_scale(
     fitted_scale = round((a + b) / 2, 3)
 
     default_scale = cfg.scale_by_scoring[scoring]
-    fitted = run(fitted_scale)
-    at_default = run(default_scale)
+    fitted = run(fitted_scale)[0]
+    at_default = run(default_scale)[0]
     return ScaleFit(
         scoring=scoring.value,
         scale=fitted_scale,
         default_scale=default_scale,
         fitted=fitted,
         at_default=at_default,
-        profile=tuple((float(scale), report.mse) for scale, report in sorted(cache.items())),
+        profile=tuple((float(scale), mse) for scale, (_, mse) in sorted(cache.items())),
         at_bound=fitted_scale - low <= tolerance or high - fitted_scale <= tolerance,
     )
 
