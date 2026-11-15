@@ -14,26 +14,28 @@ The engine is a demonstration. Its methods have not been validated on real match
 
 - `src/open_engine/engine.py`: enums and game formats, `Config`, `Match`, `Player`, `RatingEngine`, `replay`, evaluation and calibration. Its module docstring lists the published behavior notes and the production requirements the backend must meet.
 - `src/open_engine/winprob.py`: game and match win probability and its calibration.
-- `src/open_engine/__init__.py`: the public API (`__all__`) and `__version__`.
+- `src/open_engine/__init__.py`: the public API (`__all__`). It re-exports `__version__`.
+- `src/open_engine/_version.py`: `__version__`, the one place a release sets the version.
 - `tests/`: pytest suite. `tests/fixtures/` holds synthetic fixtures only (see its README).
 - `examples/basic_match.py`: a runnable example, linted with the rest of the code.
 - `scripts/check_sdist.py`: checks a built source distribution's layout: one `openpickleball_engine-<version>` root, clean member paths, only allowed top-level entries, and the required ones present. CI runs it in the `package` job.
+- `scripts/check_wheel.py`: checks a built wheel's members: only the `open_engine` modules in `PACKAGE_FILES`, all of them present (`py.typed` included), and one `openpickleball_engine-<version>.dist-info` directory. CI's `package` job and the release build run it. A new module in `src/open_engine/` goes in `PACKAGE_FILES`.
 - `scripts/check_release.py`: checks that a release tag is `v` plus the version of the built sdist and wheel, and that `dist/` holds nothing else. The release workflow runs it.
 - `docs/releasing.md`: the release workflow, its one-time setup, and the steps for each release.
 - `docs/plans/`: plans recorded for issues before their work lands.
 
 ## Stack
 
-- Python 3.10 or later (`requires-python = ">=3.10"`, ruff `target-version = "py310"`). CI tests 3.10, 3.11, 3.12, and 3.13, so do not use syntax or standard library features newer than 3.10. Modules use `from __future__ import annotations`.
+- Python 3.11 or later (`requires-python = ">=3.11"`, ruff `target-version = "py311"`). CI tests 3.11, 3.12, and 3.13, so do not use syntax or standard library features newer than 3.11. Ruff ignores UP042: the enums stay `str, Enum`, because `StrEnum` changes their `str()` output. Modules use `from __future__ import annotations`.
 - No runtime dependencies (`dependencies = []`). Keep it that way: the standard library only.
-- Build backend hatchling. The version is read from `__version__` in `src/open_engine/__init__.py`. The package ships `py.typed`.
+- Build backend hatchling. The version is read from `__version__` in `src/open_engine/_version.py`. The package ships `py.typed`.
 - Dev tools: pytest, ruff (lint rules `E`, `F`, `W`, `I`, `B`, `UP`, line length 100), mypy in strict mode, build.
 
 ## Engine rules
 
 - **Determinism.** `replay(ledger, as_of=...)` must give the same result for the same ledger, config, and date, whatever order the matches arrive in. A code path that consumes a ledger goes through `_ledger`. It validates every row, collapses or rejects repeated `match_id`s, and sorts by `ledger_order`. Sorting by `ledger_order` alone skips validation and the duplicate check. Rows that repeat a `match_id` collapse only when they are interchangeable for replay (`_canonical`). Any other repeat raises `LedgerConflictError`. Never compare repeated rows with `Match` equality (`==`). Never add randomness, wall-clock reads, or iteration over unordered sets or dicts to a code path that affects ratings.
 - **Config provenance.** `Config.fingerprint()` hashes every parameter, and each replay's `ReplayInfo` stores `as_of`, the config version, and the fingerprint. The fingerprint walks every dataclass field, so a new `Config` field is included automatically, but its value must be a type that `norm()` turns into stable JSON (add a case there if not). Validate a new field in `__post_init__` when it has a valid range. A change to a default value or to rating behavior changes published ratings: record it in `CHANGELOG.md`.
-- **Versions.** `Config.version` and `__version__` move together, and only in a release. A dev release such as `0.3.0.dev1` counts as a release. A test fails if the two differ. The backend pins the engine as a git dependency on a release tag.
+- **Versions.** `Config.version` and `__version__` move together, and only in a release. Both come from `src/open_engine/_version.py`, so set the version there only. A dev release such as `0.3.0.dev1` counts as a release. A test fails if the two differ. The backend pins the engine as a git dependency on a release tag.
 - **Zero-sum exceptions.** Team average movement is zero-sum except for the two documented cases, `clamped` and `frozen`, both reported on every `MatchResult`. A change that adds another exception must report it the same way and document it in the module docstring.
 - **Provisional versus authoritative.** Authoritative ratings come from scheduled replays. Live updates between replays are provisional and labeled with the count since the last recalculation. Keep that labeling.
 - **External ratings are a seed only.** An imported rating initializes a player. It can never overwrite an OPEN-earned rating once OPEN matches exist. Imported reliability is shown separately from OPEN-earned reliability, and `reliability` is never a conversion of an external score.
@@ -65,6 +67,8 @@ ruff format .                # apply formatting
 python examples/basic_match.py
 python -m build              # wheel and source distribution
 python scripts/check_sdist.py dist/*.tar.gz   # CI's package job; clear dist/ first
+python scripts/check_wheel.py dist/*.whl
+twine check --strict dist/*
 ```
 
 The sdist ships only the paths in `only-include` under `[tool.hatch.build.targets.sdist]` in `pyproject.toml`, plus the `PKG-INFO` and `.gitignore` that hatchling adds. A new top-level path that must ship goes in that list and in `ALLOWED_TOP_LEVEL` in `scripts/check_sdist.py`. If it is in `only-include` but not in `ALLOWED_TOP_LEVEL`, the `package` job fails.

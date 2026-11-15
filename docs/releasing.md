@@ -38,7 +38,7 @@ GitHub runs the `release.yml` from the tagged commit. Someone who can push a tag
 
 ## Making a release
 
-1. In a pull request, set `__version__` in `src/open_engine/__init__.py` and `Config.version` in `src/open_engine/engine.py` to the new version. They move together, and a test fails if they differ. A dev release such as `0.3.0.dev1` counts as a release. Use the canonical version form (`0.3.0.dev1`, not `0.3.0-dev1`). For a final release, move the `## [Unreleased]` entries in `CHANGELOG.md` under the new version.
+1. In a pull request, set `__version__` in `src/open_engine/_version.py` to the new version. It is the one place the version is set: `open_engine.__version__`, the `Config.version` default, and the build all read it. A dev release such as `0.3.0.dev1` counts as a release. Use the canonical version form (`0.3.0.dev1`, not `0.3.0-dev1`). For a final release, move the `## [Unreleased]` entries in `CHANGELOG.md` under the new version.
 2. Merge it, then tag the commit on `main` and push the tag:
 
    ```bash

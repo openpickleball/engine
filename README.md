@@ -8,11 +8,21 @@ The reference rating engine for [OPEN](https://github.com/openpickleball), the O
 
 ## Technology
 
-The engine is a Python package (`openpickleball-engine`, imported as `open_engine`) with no runtime dependencies. It requires Python 3.10 or later.
+The engine is a Python package (`openpickleball-engine`, imported as `open_engine`) with no runtime dependencies. It requires Python 3.11 or later.
+
+## Install
+
+A dev release is on TestPyPI, the Python test index. It is not on PyPI. Install it with:
+
+```bash
+pip install -i https://test.pypi.org/simple/ openpickleball-engine==0.3.0.dev0
+```
+
+A dev release is for trying the package. The engine is still a demonstration, and its outputs are not OPEN ratings.
 
 ## Setup and tests
 
-The package is not published to PyPI yet. Install it from a local checkout:
+To work on the engine, install it from a local checkout:
 
 ```bash
 python -m venv .venv
