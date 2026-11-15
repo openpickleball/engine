@@ -1,4 +1,6 @@
-# Tools for the release workflow. Compile release.txt with:
+# Build backend and tools for the release workflow and test.yml's package job.
+# Compile release.txt with:
 # uv pip compile .github/requirements/release.in --generate-hashes --python-version 3.12 -o .github/requirements/release.txt
 build
 twine
+hatchling

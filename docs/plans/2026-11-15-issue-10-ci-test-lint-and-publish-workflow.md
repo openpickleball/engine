@@ -19,7 +19,8 @@ Measured on `origin/main` at 942ad85:
 - Every `uses:` in `.github/workflows/` is pinned to a commit SHA with a version comment.
 - There is no release workflow, no GitHub environment, and no TestPyPI project.
 
-So this work adds the release workflow and leaves `test.yml` unchanged.
+So this work adds the release workflow. After review, it also changes `test.yml`: the
+`package` job now installs and builds from the release lock file (criterion 7).
 
 ## Acceptance criteria
 
@@ -45,10 +46,14 @@ So this work adds the release workflow and leaves `test.yml` unchanged.
    variable, never by `${{ }}` interpolation inside `run:`.
 6. Every `uses:` in `.github/workflows/` (new ones included) is pinned to a full 40-char
    commit SHA with the version in a trailing comment.
-7. The release build installs its tools (`build`, `twine`) with `pip install
-   --require-hashes` from a committed, hash-pinned lock file
-   (`.github/requirements/release.txt`, compiled from `.github/requirements/release.in`),
-   and Dependabot covers that directory.
+7. The release build installs its build backend and tools (`hatchling`, `build`,
+   `twine`) with `pip install --only-binary :all: --require-hashes` from a committed,
+   hash-pinned lock file (`.github/requirements/release.txt`, compiled from
+   `.github/requirements/release.in`), and builds with `python -m build --no-isolation`,
+   so no build dependency is fetched unpinned. `test.yml`'s `package` job uses the same
+   install and build commands and adds `twine check --strict dist/*`, so a broken lock
+   fails on a pull request, not at tag time. Both `test.yml` checkouts set
+   `persist-credentials: false`. Dependabot covers that directory.
 8. A test asserts `Config().version == open_engine.__version__`, so a release cannot tag
    a package whose config version lags.
 9. Docs: a `CHANGELOG.md` entry under `[Unreleased]`; `docs/releasing.md` with the
@@ -61,12 +66,15 @@ So this work adds the release workflow and leaves `test.yml` unchanged.
 ## Files that change
 
 - `.github/workflows/release.yml` (new).
-- `.github/requirements/release.in` (new): `build` and `twine`, unpinned.
+- `.github/requirements/release.in` (new): `build`, `twine`, and `hatchling`, unpinned.
 - `.github/requirements/release.txt` (new): generated with
   `uv pip compile .github/requirements/release.in --generate-hashes --python-version 3.12 -o .github/requirements/release.txt`.
   Never edited by hand.
 - `.github/dependabot.yml`: add a `pip` entry for `directory: /.github/requirements`,
   weekly, grouped like the existing one.
+- `.github/workflows/test.yml`: the `package` job installs from the lock with
+  `--only-binary :all: --require-hashes`, builds with `--no-isolation`, and runs
+  `twine check --strict`; both checkouts set `persist-credentials: false`.
 - `scripts/check_release.py` (new).
 - `tests/test_check_release.py` (new): loads the script the way
   `tests/test_check_sdist.py` loads `check_sdist.py`.
@@ -168,8 +176,12 @@ needs no packaging change. `.github/` does not ship.
   deployment rule to `v*` tags, add a required reviewer, and protect `v*` tags with a
   ruleset. `docs/releasing.md` recommends all three.
 - **Build tool supply chain.** Unpinned `pip install build twine` would let a compromised
-  release of either tool alter the published artifact. Hash pinning closes that; the cost
-  is a lock file Dependabot must keep current.
+  release of either tool alter the published artifact. Hash pinning closes that, and it
+  now covers the build backend too: `hatchling` is in the lock and the build runs with
+  `--no-isolation`, and `--only-binary :all:` stops a missing wheel from building from
+  source with unpinned build dependencies. pip itself and the interpreter that
+  `setup-python` installs remain unpinned. The cost is a lock file Dependabot must keep
+  current.
 - **Version drift.** A tag that does not match `__version__` would publish under the
   file's version, not the tag's. `check_release.py` blocks that; criterion 8 blocks
   `Config.version` lagging `__version__`.
@@ -179,7 +191,7 @@ needs no packaging change. `.github/` does not ship.
 Chosen not to do: publishing to the real PyPI (a later issue); running the test suite again
 in the release workflow (the tagged commit already passed CI on `main`); creating the
 GitHub environment or the TestPyPI publisher from this run (external, done by a
-maintainer); changing `test.yml`.
+maintainer).
 
 ## Proof
 

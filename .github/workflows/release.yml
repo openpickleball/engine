@@ -19,9 +19,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install build tools
-        run: pip install --require-hashes -r .github/requirements/release.txt
+        run: pip install --only-binary ':all:' --require-hashes -r .github/requirements/release.txt
       - name: Build
-        run: python -m build
+        run: python -m build --no-isolation
       - name: Check sdist contents
         run: python scripts/check_sdist.py dist/*.tar.gz
       - name: Check tag matches version
