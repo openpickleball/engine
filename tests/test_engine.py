@@ -3,6 +3,7 @@
 import random
 import re
 from datetime import date, datetime, timedelta, timezone, tzinfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytest
 
@@ -545,3 +546,105 @@ def test_prequential_conflict_raises(mode, flip: bool):
     rows = [loss, win] if flip else [win, loss]
     with pytest.raises(open_engine.LedgerConflictError, match="dup"):
         prequential_predictions(rows, mode=mode)
+
+
+# 13. Duplicate rows must be interchangeable, whatever the input order ------------
+
+FOLD_DAY = date(2026, 11, 1)  # New York clocks fall back at 02:00 local time
+
+
+def new_york(cache: bool = True) -> ZoneInfo:
+    try:
+        return ZoneInfo("America/New_York") if cache else ZoneInfo.no_cache("America/New_York")
+    except ZoneInfoNotFoundError:
+        pytest.skip("tzdata for America/New_York is not installed")
+
+
+def outcome(rows: list[Match]) -> object:
+    """What replay gives: a snapshot, or the error type and message."""
+    try:
+        return replay_snapshot(replay(rows, as_of=LEDGER_AS_OF))
+    except ValueError as err:
+        return type(err), str(err)
+
+
+@pytest.mark.parametrize("flip", [False, True], ids=["valid_first", "invalid_first"])
+def test_duplicate_with_played_at_off_played_on_raises(flip: bool):
+    # Same instant, so the rows compare equal, but only A falls on played_on.
+    a = match("m", ("a", "b"), ("c", "d"), played_at=datetime(2026, 10, 29, 23, tzinfo=EST))
+    b = match("m", ("a", "b"), ("c", "d"), played_at=datetime(2026, 10, 30, 4, tzinfo=UTC))
+    with pytest.raises(ValueError, match="played_at must fall on played_on"):
+        replay([b, a] if flip else [a, b], as_of=LEDGER_AS_OF)
+
+
+@pytest.mark.parametrize("flip", [False, True], ids=["int_first", "float_first"])
+def test_duplicate_with_float_score_raises(flip: bool):
+    whole = match("m", ("a", "b"), ("c", "d"), games=((11, 3),))
+    floaty = match("m", ("a", "b"), ("c", "d"), games=((11.0, 3),))
+    with pytest.raises(ValueError, match="Game scores must be integers"):
+        replay([floaty, whole] if flip else [whole, floaty], as_of=LEDGER_AS_OF)
+
+
+def test_invalid_row_after_as_of_raises():
+    late = match("late", ("a", "b"), ("c", "d"), games=((11.0, 3),), on=date(2026, 12, 15))
+    with pytest.raises(ValueError, match="Game scores must be integers"):
+        replay([late], as_of=LEDGER_AS_OF)
+
+
+def test_fold_duplicates_conflict_in_both_orders():
+    # 01:30 happens twice on FOLD_DAY: fold=0 is 05:30Z, fold=1 is 06:30Z.
+    zone = new_york()
+    kw = {"on": FOLD_DAY, "games": ((11, 3),)}
+    first = match(
+        "m", ("p1", "p2"), ("p3", "p4"), played_at=datetime(2026, 11, 1, 1, 30, tzinfo=zone), **kw
+    )
+    second = match(
+        "m",
+        ("p1", "p2"),
+        ("p3", "p4"),
+        played_at=datetime(2026, 11, 1, 1, 30, tzinfo=zone, fold=1),
+        **kw,
+    )
+    between = match(
+        "t",
+        ("p1", "p3"),
+        ("p2", "p4"),
+        games=((3, 11),),
+        on=FOLD_DAY,
+        played_at=datetime(2026, 11, 1, 6, tzinfo=UTC),
+    )
+    one = outcome([first, second, between])
+    two = outcome([second, first, between])
+    assert one == two
+    assert one == (open_engine.LedgerConflictError, "Conflicting ledger rows for match_id: m")
+
+
+def test_identical_fold_rows_with_distinct_zone_objects_collapse():
+    rows = [
+        match(
+            "m",
+            ("a", "b"),
+            ("c", "d"),
+            on=FOLD_DAY,
+            played_at=datetime(2026, 11, 1, 1, 30, tzinfo=new_york(cache=False)),
+        )
+        for _ in range(2)
+    ]
+    for order in (rows, list(reversed(rows))):
+        engine = replay(order, as_of=LEDGER_AS_OF)
+        assert engine.replay_info is not None
+        assert engine.replay_info.matches_considered == 1
+
+
+def test_played_at_outside_utc_range_rejected():
+    m = match(
+        "early",
+        ("a", "b"),
+        ("c", "d"),
+        on=date(1, 1, 1),
+        played_at=datetime(1, 1, 1, 0, 30, tzinfo=timezone(timedelta(hours=1))),
+    )
+    with pytest.raises(ValueError, match="UTC"):
+        m.validate()
+    with pytest.raises(ValueError, match="UTC"):
+        replay([m], as_of=LEDGER_AS_OF)
