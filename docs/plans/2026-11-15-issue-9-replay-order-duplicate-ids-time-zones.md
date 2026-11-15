@@ -14,7 +14,7 @@ Decisions taken with the maintainer before planning:
 
 1. `replay(ledger)` equals `replay(shuffled(ledger))` for any permutation, including ledgers with duplicate IDs (property test). "Equals" means the same rating state for every player and format (rating, rd, matches played) and the same `ReplayInfo`.
 2. Conflicting duplicate IDs raise a clear, typed exception: `LedgerConflictError`, a subclass of `ValueError`, exported from `open_engine`. Its message names the conflicting `match_id` values, and its `match_ids` attribute is the sorted tuple of every conflicting ID, so the error is the same whatever the input order.
-3. Rows with the same `match_id` that compare equal (`Match.__eq__`) are collapsed to one row. `ReplayInfo.matches_considered` counts the collapsed row once.
+3. Rows sharing a `match_id` collapse to one row only when every field matches in type and value, with `played_at` compared by its UTC instant and UTC offset. `ReplayInfo.matches_considered` counts the collapsed row once. Any other rows sharing a `match_id` raise `LedgerConflictError`.
 4. Ordering across time zones follows the UTC instant: of two matches on the same `played_on`, one at 21:00 UTC-5 (02:00Z the next day) sorts after one at 22:00 UTC.
 5. A naive `played_at` (no tzinfo, or a tzinfo whose `utcoffset()` is None) is rejected with `ValueError` by `Match.validate()` and by `ledger_order()`. `ledger_order` must never call `astimezone()` on a naive value, since that reads the host's local time zone.
 6. Within one `played_on`, untimed matches sort before timed ones; untimed by `sequence` then `match_id`; timed by UTC instant, then `sequence`, then `match_id`.
@@ -30,6 +30,7 @@ Decisions taken with the maintainer before planning:
   - `ledger_order()`: return `tuple[date, int, datetime, int, str]`: `(played_on, 0, _UTC_MIN, sequence, match_id)` for an untimed match, `(played_on, 1, played_at.astimezone(timezone.utc), sequence, match_id)` for a timed one, where `_UTC_MIN = datetime.min.replace(tzinfo=timezone.utc)`. Call `_require_aware` first. Update the docstring to state the rule. Drop the `time` import if it becomes unused.
   - Add a private helper `_ledger(matches: Iterable[Match]) -> list[Match]`: group rows by `match_id` in a dict, keep one row per id when all rows for it compare equal, collect every id whose rows differ, raise `LedgerConflictError` with the sorted ids if any, otherwise return the unique rows sorted by `ledger_order`.
   - Review round 1 change: `_ledger` calls `validate()` on every row before grouping, including rows after `as_of`, so an invalid row raises wherever it sits in the input. Rows sharing a `match_id` collapse only when a canonical form is equal: the row with `played_at` replaced by None (via `dataclasses.replace`), plus the UTC instant and the `utcoffset()` of `played_at` (both None when untimed). `Match.__eq__` is not used, because it is looser than "interchangeable for replay" (see Risks).
+  - Review round 2 change: the canonical form is type-strict. `_strict` pairs every value with its exact type, recursing into dataclasses (by field), tuples, and frozensets, so `3` and `3.0`, or a `str` and an `Enum` member, no longer match. `played_at` keeps the UTC instant plus `utcoffset()` treatment.
   - Review round 1 change: `_require_aware` becomes `_utc_instant(played_at) -> datetime`, which also converts to UTC and turns an `OverflowError` into `ValueError`. `Match.validate()` and `ledger_order()` both call it.
   - `replay()`: iterate `_ledger(matches)` instead of `sorted(matches, key=ledger_order)`. Update its docstring: identical duplicate rows are collapsed, conflicting ones raise `LedgerConflictError`.
   - `prequential_predictions()`: `ordered = _ledger(matches)`. The scheduled mode's inner `replay(...)` call receives already unique rows, so it does no extra harm.
@@ -41,7 +42,8 @@ Decisions taken with the maintainer before planning:
 - `CHANGELOG.md`, under `## [Unreleased]`:
   - Added: `LedgerConflictError`.
   - Changed (breaking): `Match.played_at` must be timezone-aware; `ledger_order` orders timed matches by UTC instant, places untimed matches first within a day, and returns `tuple[date, int, datetime, int, str]`.
-  - Fixed: `replay` and `prequential_predictions` no longer depend on input order when the ledger repeats a `match_id`; identical rows are collapsed (so `matches_considered` counts them once) and conflicting rows raise `LedgerConflictError`.
+  - Changed (breaking, review round 1): `replay` and `prequential_predictions` validate every ledger row, including rows after `as_of`.
+  - Fixed: `replay` and `prequential_predictions` no longer depend on input order when the ledger repeats a `match_id`; rows that match in every field, in type and value, are collapsed (so `matches_considered` counts them once) and any other repeat raises `LedgerConflictError`.
 
 ## Order of work
 
@@ -54,6 +56,7 @@ Decisions taken with the maintainer before planning:
 
 - Riskiest step: the new `ledger_order` key. A wrong tuple position silently changes rating order. The tests pin the issue's exact example, the untimed-first rule, and the `sequence` and `match_id` tie breaks.
 - Comparing an aware datetime with a naive one raises `TypeError`. `_require_aware` runs inside `ledger_order`, so a naive row raises a clear `ValueError` before any comparison.
+- Review round 2 confirmed that dataclass `==` is not type-strict either: `best_of` 3 equals 3.0, `points_to` 11 equals 11.0, and a plain `"self_reported"` string equals `MatchType.SELF_REPORTED`, though `record` checks the enum with `is`. The kept row changed predictions, or raised in one order only. The canonical form now pairs every value with its exact type.
 - `Match.__eq__` is looser than "interchangeable for replay", which review round 1 confirmed. Rows equal under `==` can differ in validity (same instant but only one `played_at` falls on `played_on`; an int score versus a float one) or in UTC instant (the two readings of a DST fold wall time compare equal within one zone). And two identical rows in a fold with distinct zone objects compare unequal. So `_ledger` validates every row and compares the canonical form instead.
 - Validating every row in `_ledger` extends the maintainer's "check every row passed in" decision: a row after `as_of` that is invalid now raises. Recorded in the README, docstrings, and changelog.
 - A `played_at` near `datetime.min` or `datetime.max` can pass a local date check but overflow on conversion to UTC. `_utc_instant` reports it as `ValueError`.
@@ -80,6 +83,7 @@ Tests in `tests/test_engine.py`, all on synthetic players:
 | Review round 1: `test_fold_duplicates_conflict_in_both_orders` (fold=0 versus fold=1 in `America/New_York`, plus a 06:00Z match sharing players: the same `LedgerConflictError` in both orders) | 1, 2 |
 | Review round 1: `test_identical_fold_rows_with_distinct_zone_objects_collapse` (`ZoneInfo.no_cache` twice: `matches_considered == 1` in both orders) | 3 |
 | Review round 1: `test_played_at_outside_utc_range_rejected` (`ValueError` from `validate()` and `replay`) | 5 |
+| Review round 2: `test_loosely_equal_duplicates_conflict_in_replay` and `test_loosely_equal_duplicates_conflict_in_prequential` (`best_of` 3 versus 3.0, `points_to` 11 versus 11.0, `match_type` str versus enum: `LedgerConflictError` in both input orders, and in both prequential modes) | 1, 3 |
 
 The fold tests use `zoneinfo` and skip only when tzdata for `America/New_York` is missing on the host.
 
@@ -98,6 +102,8 @@ naive allowed: True
 So on main a duplicate id depends on input order, the UTC-5 match sorts before the earlier UTC match, an untimed match already sorts before a timed one on the same day (criterion 6 keeps that), and a naive `played_at` validates.
 
 Implementation notes:
+
+- Review round 2: the maintainer approved rewording acceptance criterion 3 from "compare equal (`Match.__eq__`)" to "every field matches in type and value, with `played_at` compared by its UTC instant and UTC offset".
 
 - The two-conflicting-ids check of criterion 2 is its own test, `test_conflict_ids_sorted_whatever_the_input_order`, so each test exercises one input shape.
 - The untimed-first rule was not fully in place on main: a timed match at local midnight had the same time key as an untimed one (`time.min`), so it could sort before untimed matches with a higher `sequence`. `test_untimed_before_timed_same_day` uses a 00:00 UTC match and failed on main for that reason. The changelog records it.

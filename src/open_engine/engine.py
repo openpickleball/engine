@@ -36,9 +36,9 @@ Published behavior notes:
   instant of `played_at`, then `sequence`, then `match_id`). Every row
   passed in is validated, including rows after `as_of`, so a naive
   `played_at` raises ValueError wherever it sits. Rows that repeat a
-  `match_id` collapse to one only when they are interchangeable for replay
-  (equal apart from `played_at`, with the same UTC instant and offset);
-  any other repeat raises `LedgerConflictError`, even after `as_of`. The
+  `match_id` collapse to one only when every field matches in type and
+  value, with `played_at` compared by its UTC instant and UTC offset; any
+  other repeat raises `LedgerConflictError`, even after `as_of`. The
   result never depends on input order.
 
 Production notes:
@@ -57,7 +57,7 @@ import hashlib
 import json
 import math
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Literal
@@ -484,9 +484,9 @@ def _ledger(matches: Iterable[Match]) -> list[Match]:
 
     Every row is validated first, including rows after a replay's as_of, so
     an invalid row raises wherever it sits in the input. Rows that repeat a
-    match_id collapse to one only when they are interchangeable for replay:
-    equal in every field once played_at is set aside, and with the same UTC
-    instant and UTC offset for played_at. Any other repeat raises
+    match_id collapse to one only when every field matches in type and
+    value, with played_at compared by its UTC instant and UTC offset (see
+    _canonical). Any other repeat raises
     LedgerConflictError naming every conflicting id, so the result never
     depends on input order.
     """
@@ -507,18 +507,33 @@ def _canonical(match: Match) -> tuple[object, ...]:
     """
     A form of a validated row that is equal only for interchangeable rows.
 
-    Match equality compares played_at by instant, which ignores the offset
-    and treats the two readings of a repeated wall time (a DST fold) as
-    equal, and it compares rows in distinct zone objects as unequal inside a
-    fold. This form compares the UTC instant and the offset directly.
+    Every field is paired with its exact type, recursively, so values that
+    are equal under == but differ in type (3 and 3.0, a str and an Enum
+    member) do not match. played_at is compared by its UTC instant and its
+    UTC offset instead: Match equality ignores the offset, treats the two
+    readings of a repeated wall time (a DST fold) as equal, and treats rows
+    with distinct zone objects inside a fold as unequal.
     """
-    if match.played_at is None:
-        return (match, None, None)
-    return (
-        replace(match, played_at=None),
-        _utc_instant(match.played_at),
-        match.played_at.utcoffset(),
+    others = tuple(
+        (f.name, _strict(getattr(match, f.name))) for f in fields(match) if f.name != "played_at"
     )
+    if match.played_at is None:
+        return (others, None, None)
+    return (others, _utc_instant(match.played_at), match.played_at.utcoffset())
+
+
+def _strict(value: object) -> object:
+    """value paired with its exact type, recursing into dataclasses and collections."""
+    if is_dataclass(value) and not isinstance(value, type):
+        return (
+            type(value),
+            tuple((f.name, _strict(getattr(value, f.name))) for f in fields(value)),
+        )
+    if isinstance(value, tuple):
+        return (type(value), tuple(_strict(item) for item in value))
+    if isinstance(value, frozenset):
+        return (type(value), frozenset(_strict(item) for item in value))
+    return (type(value), value)
 
 
 @dataclass
@@ -1112,8 +1127,8 @@ def replay(
     Run on the published schedule (Config.replay_interval_days). Same ledger,
     seeds, config and as_of always produce the same result, whatever order
     the ledger rows arrive in. Every row is validated, even after as_of.
-    Rows that repeat a match_id and are interchangeable for replay are
-    counted once; any other repeat raises LedgerConflictError, even when it
+    Rows that repeat a match_id and match in every field, in type and
+    value, are counted once; any other repeat raises LedgerConflictError, even when it
     falls after as_of. Seeds must be
     unplayed: imported or provisional states only.
     """

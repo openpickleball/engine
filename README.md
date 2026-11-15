@@ -71,7 +71,7 @@ See [`examples/`](examples) for a fuller example.
 - Matches with a `played_at` follow, by the moment they were played in UTC, then `sequence`, then `match_id`. A match at 21:00 at UTC-5 comes after one at 22:00 UTC on the same day.
 - `played_at` must include a time zone and fall on `played_on` in that zone.
 - Every row passed in is validated, including rows after `as_of`. An invalid row, such as one with a `played_at` without a time zone, raises `ValueError`.
-- Rows that repeat a `match_id` count once when they are the same match: equal in every field, with `played_at` at the same moment and the same UTC offset. Any other repeat raises `LedgerConflictError`, a `ValueError` whose `match_ids` lists every conflicting id. This covers rows after `as_of` too.
+- Rows that repeat a `match_id` count once when they are the same match: every field matches in type and value (so `3` and `3.0` differ), with `played_at` at the same moment and the same UTC offset. Any other repeat raises `LedgerConflictError`, a `ValueError` whose `match_ids` lists every conflicting id. This covers rows after `as_of` too.
 
 ## Test data
 
