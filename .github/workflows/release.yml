@@ -39,6 +39,8 @@ jobs:
         run: python -m build --no-isolation
       - name: Check sdist contents
         run: python scripts/check_sdist.py dist/*.tar.gz
+      - name: Check wheel contents
+        run: python scripts/check_wheel.py dist/*.whl
       - name: Check tag matches version
         env:
           TAG: ${{ github.ref_name }}
