@@ -59,7 +59,9 @@ So this work adds the release workflow. After review, it also changes `test.yml`
    so no build dependency is fetched unpinned. `test.yml`'s `package` job uses the same
    install and build commands and adds `twine check --strict dist/*`, so a broken lock
    fails on a pull request, not at tag time. Both `test.yml` checkouts set
-   `persist-credentials: false`. Dependabot covers that directory.
+   `persist-credentials: false`. Dependabot covers that directory with the `uv`
+   ecosystem, which regenerates the lock with uv and keeps `--generate-hashes` and
+   `--python-version` from the header (the `pip` ecosystem would rerun pip-compile).
 8. A test asserts `Config().version == open_engine.__version__`, so a release cannot tag
    a package whose config version lags.
 9. Docs: a `CHANGELOG.md` entry under `[Unreleased]`; `docs/releasing.md` with the
@@ -76,7 +78,7 @@ So this work adds the release workflow. After review, it also changes `test.yml`
 - `.github/requirements/release.txt` (new): generated with
   `uv pip compile .github/requirements/release.in --generate-hashes --python-version 3.12 -o .github/requirements/release.txt`.
   Never edited by hand.
-- `.github/dependabot.yml`: add a `pip` entry for `directory: /.github/requirements`,
+- `.github/dependabot.yml`: add a `uv` entry for `directory: /.github/requirements`,
   weekly, grouped like the existing one.
 - `.github/workflows/test.yml`: gains a `workflow_call:` trigger so `release.yml` can
   call it as its `gate` job. The `package` job installs from the lock with
