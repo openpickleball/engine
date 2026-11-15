@@ -80,6 +80,8 @@ from .winprob import calibrate_win_probability, match_win_probability
 
 
 class RatingFormat(str, Enum):
+    """A rating pool. Each player has a separate rating in each format."""
+
     SINGLES = "singles"
     DOUBLES = "doubles"
     MIXED_DOUBLES = "mixed_doubles"
@@ -88,6 +90,7 @@ class RatingFormat(str, Enum):
 
     @property
     def team_size(self) -> int:
+        """Players per team: 1 for singles, 2 for every doubles format."""
         return 1 if self is RatingFormat.SINGLES else 2
 
     @property
@@ -103,6 +106,8 @@ class RatingFormat(str, Enum):
 
 
 class MatchType(str, Enum):
+    """How a match was organized and verified. Sets its evidence weight."""
+
     TOURNAMENT = "tournament"
     LEAGUE = "league"
     REC_VERIFIED = "rec_verified"
@@ -110,6 +115,8 @@ class MatchType(str, Enum):
 
 
 class ScoringType(str, Enum):
+    """Side-out scoring (only the serving side scores) or rally scoring."""
+
     SIDE_OUT = "side_out"
     RALLY = "rally"
 
@@ -124,6 +131,7 @@ class GameFormat:
     cap: int | None = None  # optional hard cap where win-by-1 ends the game
 
     def validate(self) -> None:
+        """Raise ConfigError when the format itself is not valid."""
         if self.points_to < 1:
             raise ConfigError("points_to must be positive")
         if self.win_by < 1:
@@ -132,6 +140,7 @@ class GameFormat:
             raise ConfigError("cap must be greater than points_to")
 
     def validate_game(self, score_a: int, score_b: int) -> None:
+        """Raise InvalidMatchError when a game score cannot end a game in this format."""
         high, low = max(score_a, score_b), min(score_a, score_b)
         if high < self.points_to:
             raise InvalidMatchError("A game must reach its target score")
@@ -163,6 +172,13 @@ ALL_GAME_FORMATS: frozenset[tuple[ScoringType, int]] = frozenset(
 
 @dataclass(frozen=True)
 class Config:
+    """
+    Every rating parameter. Frozen, so a config cannot change during a replay.
+
+    The defaults are uncalibrated placeholders. fingerprint() identifies the
+    exact parameter set behind published ratings.
+    """
+
     version: str = __version__
 
     # Rating scale
@@ -330,6 +346,8 @@ class Config:
 
 @dataclass(frozen=True)
 class ExternalRatingSnapshot:
+    """A verified external rating captured on a date. Used only as a seed."""
+
     source: str
     rating: float
     captured_on: date
@@ -340,6 +358,8 @@ class ExternalRatingSnapshot:
 
 @dataclass
 class RatingState:
+    """One player's rating in one format, with its uncertainty and provenance."""
+
     rating: float
     rd: float
     matches_played: int = 0
@@ -368,6 +388,8 @@ class RatingState:
 
 @dataclass
 class Player:
+    """A player record: ratings by format, external identities, and account link."""
+
     id: str
     ratings: dict[RatingFormat, RatingState] = field(default_factory=dict)
 
@@ -384,6 +406,8 @@ class Player:
 
 @dataclass(frozen=True)
 class Match:
+    """One completed match: teams, game scores, date, format, and provenance."""
+
     match_id: str
     team_a: tuple[str, ...]
     team_b: tuple[str, ...]
@@ -407,6 +431,7 @@ class Match:
     confirmed_by: frozenset[str] = frozenset()
 
     def validate(self) -> None:
+        """Raise InvalidMatchError (or ConfigError for its game format) when not valid."""
         if not self.match_id.strip():
             raise InvalidMatchError("match_id is required for duplicate protection")
         expected_size = self.rating_format.team_size
@@ -552,6 +577,14 @@ class RejectionReason(str, Enum):
 
 @dataclass
 class MatchResult:
+    """
+    What record() did with one match in one rating format.
+
+    reason is None when the match counted. deltas, frozen, and clamped list
+    the rating changes and the two documented zero-sum exceptions. parent
+    holds the overall doubles update for a category match.
+    """
+
     counted: bool
     rating_format: RatingFormat
     reason: RejectionReason | None = None  # None when the match counted
@@ -574,6 +607,13 @@ class ReliabilityBasis(str, Enum):
 
 @dataclass(frozen=True)
 class PlayerSummary:
+    """
+    A player's published rating in one format, with reliability and provenance.
+
+    reliability is the displayed value: imported reliability while it is
+    carried (reliability_basis is IMPORTED), otherwise open_reliability.
+    """
+
     player_id: str
     rating_format: RatingFormat
     rating: float  # rounded to 3 places
@@ -595,6 +635,8 @@ class PlayerSummary:
 
 @dataclass(frozen=True)
 class ReplayInfo:
+    """Provenance of one replay: as_of date, config version and fingerprint, counts."""
+
     as_of: date
     config_version: str
     config_fingerprint: str
@@ -712,6 +754,12 @@ def _matchup_key(match: Match) -> MatchupKey:
 
 
 class RatingEngine:
+    """
+    Holds players and processed matches, and records matches one at a time.
+
+    Ratings recorded live are provisional. Use replay() for authoritative ratings.
+    """
+
     def __init__(self, cfg: Config | None = None):
         self.cfg = cfg or Config()
         self.players: dict[str, Player] = {}
@@ -723,6 +771,7 @@ class RatingEngine:
     # -- players and identity ------------------------------------------------
 
     def player(self, player_id: str) -> Player:
+        """The player record for player_id, created empty if it does not exist."""
         if not player_id or not player_id.strip():
             raise PlayerError("player_id is required")
         if player_id not in self.players:
@@ -730,6 +779,7 @@ class RatingEngine:
         return self.players[player_id]
 
     def add_player(self, player: Player) -> None:
+        """Add a copy of a player record. Raises PlayerError if the id exists."""
         if player.id in self.players:
             raise PlayerError(f"Player already exists: {player.id}")
         self.players[player.id] = clone_player(player)
@@ -749,6 +799,7 @@ class RatingEngine:
         player.account_user_id = account_user_id
 
     def attach_external_id(self, player_id: str, source: str, external_player_id: str) -> None:
+        """Link an external identity to a player. Each identity links to one player."""
         if not source or not external_player_id:
             raise PlayerError("source and external_player_id are required")
         player = self.player(player_id)
@@ -825,6 +876,7 @@ class RatingEngine:
         return state
 
     def seed_provisional_rating(self, player_id: str, rating_format: RatingFormat) -> RatingState:
+        """The player's state in a format. Creates a new unplayed state if it is missing."""
         player = self.player(player_id)
         if rating_format not in player.ratings:
             player.ratings[rating_format] = self._new_state(player_id, rating_format)
@@ -866,6 +918,7 @@ class RatingEngine:
         return self._new_state(player_id, rating_format)
 
     def state(self, player_id: str, rating_format: RatingFormat) -> RatingState:
+        """The player's current state in a format. Same as seed_provisional_rating."""
         return self.seed_provisional_rating(player_id, rating_format)
 
     # -- prediction ------------------------------------------------------------
@@ -877,6 +930,7 @@ class RatingEngine:
         rating_format: RatingFormat,
         scoring: ScoringType = ScoringType.SIDE_OUT,
     ) -> float:
+        """Expected share of points won by team A, from current team-average ratings."""
         self._validate_teams(team_a, team_b, rating_format)
         ratings_a = [self._peek_state(pid, rating_format).rating for pid in team_a]
         ratings_b = [self._peek_state(pid, rating_format).rating for pid in team_b]
@@ -1099,6 +1153,12 @@ class RatingEngine:
     def player_summary(
         self, player_id: str, rating_format: RatingFormat, as_of: date | None = None
     ) -> PlayerSummary:
+        """
+        The player's rating, reliability, and provenance in one format.
+
+        as_of sets the date that inactivity and reliability are measured at.
+        It defaults to the date of the player's last RD update, or today.
+        """
         cfg = self.cfg
         player = self.player(player_id)
         state = self.state(player_id, rating_format)
@@ -1194,6 +1254,8 @@ def replay(
 
 @dataclass(frozen=True)
 class EvaluationReport:
+    """Point-share error and calibration bins for a set of prequential predictions."""
+
     scoring: str | None
     scale: float | None
     matches_scored: int
@@ -1206,6 +1268,8 @@ class EvaluationReport:
 
 @dataclass(frozen=True)
 class PrequentialPrediction:
+    """One match predicted from ratings that had not yet seen it."""
+
     match_id: str
     played_on: date
     players: tuple[str, ...]
@@ -1413,6 +1477,12 @@ def _report_from_predictions(
 
 @dataclass(frozen=True)
 class ScaleFit:
+    """
+    Result of fit_scale for one scoring type.
+
+    A fit with at_bound set, or with a flat profile, is not identified.
+    """
+
     scoring: str
     scale: float
     default_scale: float
@@ -1500,6 +1570,12 @@ def fit_scale(
 
 @dataclass(frozen=True)
 class WinCalibrationFit:
+    """
+    Result of fit_win_calibration for one scoring type.
+
+    A fit with at_bound set is not identified.
+    """
+
     scoring: str
     a: float  # exponent on the logit of the raw win probability, rounded to 3 places
     brier: float  # at the fitted a
