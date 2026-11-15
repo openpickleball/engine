@@ -2,10 +2,12 @@
 
 import random
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone, tzinfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytest
 
+import open_engine
 from open_engine import (
     Config,
     ExternalRatingSnapshot,
@@ -18,6 +20,7 @@ from open_engine import (
     fit_scale,
     inflated_rd,
     ledger_order,
+    prequential_predictions,
     replay,
 )
 
@@ -211,8 +214,12 @@ def test_live_updates_labeled_and_replay_resets():
 
 def test_same_day_order_uses_time_not_id():
     day = date(2026, 10, 29)
-    late = match("aaa", ("a", "b"), ("c", "d"), on=day, played_at=datetime(2026, 10, 29, 20))
-    early = match("zzz", ("a", "b"), ("c", "d"), on=day, played_at=datetime(2026, 10, 29, 18))
+    late = match(
+        "aaa", ("a", "b"), ("c", "d"), on=day, played_at=datetime(2026, 10, 29, 20, tzinfo=UTC)
+    )
+    early = match(
+        "zzz", ("a", "b"), ("c", "d"), on=day, played_at=datetime(2026, 10, 29, 18, tzinfo=UTC)
+    )
     assert sorted([late, early], key=ledger_order) == [early, late]
 
 
@@ -351,3 +358,341 @@ def test_validate_game_rejects_impossible_scores(
     score_a, score_b = (loser, winner) if swap else (winner, loser)
     with pytest.raises(ValueError, match=re.escape(message)):
         fmt.validate_game(score_a, score_b)
+
+
+# 12. Ledger order, duplicate IDs, and time zones (issue 9) ----------------------
+
+UTC = timezone.utc
+EST = timezone(timedelta(hours=-5))
+JST = timezone(timedelta(hours=9))
+LEDGER_DAY = date(2026, 10, 29)
+LEDGER_AS_OF = date(2026, 11, 30)
+
+
+def replay_snapshot(engine: RatingEngine) -> tuple[object, ...]:
+    states = tuple(
+        (pid, fmt.value, state.rating, state.rd, state.matches_played)
+        for pid in sorted(engine.players)
+        for fmt, state in sorted(engine.player(pid).ratings.items(), key=lambda kv: kv[0].value)
+    )
+    return states, engine.replay_info
+
+
+def mixed_ledger(seed: int = 11) -> list[Match]:
+    """Synthetic ledger: doubles and singles, untimed and timed rows, three offsets."""
+    rng = random.Random(seed)
+    pool = [f"q{i}" for i in range(12)]
+    zones = (UTC, EST, JST)
+    rows: list[Match] = []
+    for i in range(40):
+        day = LEDGER_DAY + timedelta(days=i % 4)
+        singles = i % 5 == 0
+        ids = rng.sample(pool, 2 if singles else 4)
+        half = len(ids) // 2
+        played_at = None
+        if i % 3:
+            zone = zones[(i // 3) % 3]
+            played_at = datetime(day.year, day.month, day.day, 8 + i % 12, tzinfo=zone)
+        loser = rng.randint(0, 9)
+        games = ((11, loser),) if i % 2 else ((loser, 11),)
+        rows.append(
+            match(
+                f"x{i:02d}",
+                tuple(ids[:half]),
+                tuple(ids[half:]),
+                games=games,
+                on=day,
+                fmt=RatingFormat.SINGLES if singles else D,
+                played_at=played_at,
+                sequence=i % 3,
+            )
+        )
+    # Identical duplicate rows, as a platform might resend them.
+    return rows + [rows[1], rows[7], rows[7], rows[20]]
+
+
+def test_replay_is_permutation_invariant():
+    ledger = mixed_ledger()
+    unique = len({m.match_id for m in ledger})
+    base = replay(ledger, as_of=LEDGER_AS_OF)
+    expected = replay_snapshot(base)
+    assert base.replay_info is not None
+    assert base.replay_info.matches_considered == unique
+    for seed in range(50):
+        shuffled = list(ledger)
+        random.Random(seed).shuffle(shuffled)
+        assert replay_snapshot(replay(shuffled, as_of=LEDGER_AS_OF)) == expected
+
+
+def dup_rows() -> tuple[Match, Match]:
+    win = match("dup", ("a", "b"), ("c", "d"), games=((11, 0),))
+    loss = match("dup", ("a", "b"), ("c", "d"), games=((0, 11),))
+    return win, loss
+
+
+@pytest.mark.parametrize("flip", [False, True], ids=["win_first", "loss_first"])
+def test_conflicting_duplicate_ids_raise(flip: bool):
+    win, loss = dup_rows()
+    rows = [loss, win] if flip else [win, loss]
+    with pytest.raises(open_engine.LedgerConflictError, match="dup") as info:
+        replay(rows, as_of=LEDGER_AS_OF)
+    assert isinstance(info.value, ValueError)
+    assert info.value.match_ids == ("dup",)
+
+
+def test_conflict_ids_sorted_whatever_the_input_order():
+    win, loss = dup_rows()
+    other = match("alpha", ("e", "f"), ("g", "h"), games=((11, 3),))
+    other_changed = match("alpha", ("e", "f"), ("g", "h"), games=((11, 4),))
+    rows = [win, other, loss, other_changed]
+    seen = set()
+    for order in (rows, list(reversed(rows))):
+        with pytest.raises(open_engine.LedgerConflictError, match="alpha") as info:
+            replay(order, as_of=LEDGER_AS_OF)
+        seen.add(info.value.match_ids)
+    assert seen == {("alpha", "dup")}
+
+
+def test_conflicting_duplicate_after_as_of_raises():
+    late = date(2026, 12, 15)
+    first = match("later", ("a", "b"), ("c", "d"), games=((11, 2),), on=late)
+    second = match("later", ("a", "b"), ("c", "d"), games=((2, 11),), on=late)
+    with pytest.raises(open_engine.LedgerConflictError, match="later"):
+        replay([first, second], as_of=LEDGER_AS_OF)
+
+
+def test_identical_duplicates_collapse():
+    m = match("same", ("a", "b"), ("c", "d"), games=((11, 6),))
+    once = replay([m], as_of=LEDGER_AS_OF)
+    twice = replay([m, m], as_of=LEDGER_AS_OF)
+    assert replay_snapshot(twice) == replay_snapshot(once)
+    assert twice.replay_info is not None
+    assert twice.replay_info.matches_considered == 1
+
+
+def test_order_follows_utc_instant():
+    # 21:00 at UTC-5 is 02:00Z the next day, so it follows 22:00Z.
+    m1 = match("m1", ("a", "b"), ("c", "d"), played_at=datetime(2026, 10, 29, 21, tzinfo=EST))
+    m2 = match("m2", ("a", "b"), ("c", "d"), played_at=datetime(2026, 10, 29, 22, tzinfo=UTC))
+    assert sorted([m1, m2], key=ledger_order) == [m2, m1]
+    assert sorted([m2, m1], key=ledger_order) == [m2, m1]
+
+
+class NoOffset(tzinfo):
+    """A tzinfo that does not know its offset, so the datetime is naive."""
+
+    def utcoffset(self, dt: datetime | None) -> timedelta | None:
+        return None
+
+    def dst(self, dt: datetime | None) -> timedelta | None:
+        return None
+
+    def tzname(self, dt: datetime | None) -> str | None:
+        return None
+
+
+@pytest.mark.parametrize(
+    "played_at",
+    [datetime(2026, 10, 29, 19), datetime(2026, 10, 29, 19, tzinfo=NoOffset())],
+    ids=["no_tzinfo", "no_offset"],
+)
+@pytest.mark.parametrize("check", [Match.validate, ledger_order], ids=["validate", "ledger_order"])
+def test_naive_played_at_rejected(played_at: datetime, check):
+    m = match("naive", ("a", "b"), ("c", "d"), played_at=played_at)
+    with pytest.raises(ValueError, match="timezone-aware"):
+        check(m)
+
+
+def test_untimed_before_timed_same_day():
+    timed = match("a", ("a", "b"), ("c", "d"), played_at=datetime(2026, 10, 29, 0, tzinfo=UTC))
+    untimed_late = match("y", ("a", "b"), ("c", "d"), sequence=5)
+    untimed_z = match("z", ("a", "b"), ("c", "d"), sequence=1)
+    untimed_b = match("b", ("a", "b"), ("c", "d"), sequence=1)
+    rows = [timed, untimed_late, untimed_z, untimed_b]
+    expected = [untimed_b, untimed_z, untimed_late, timed]
+    assert sorted(rows, key=ledger_order) == expected
+    assert sorted(reversed(rows), key=ledger_order) == expected
+
+
+def test_equal_instants_break_ties_by_sequence_then_id():
+    # All three are 20:00Z. The offsets differ, so the local clock times differ.
+    first = datetime(2026, 10, 29, 20, tzinfo=UTC)
+    by_seq = match("z", ("a", "b"), ("c", "d"), played_at=first, sequence=0)
+    by_id_a = match("a", ("a", "b"), ("c", "d"), played_at=first, sequence=2)
+    by_id_b = match(
+        "b", ("a", "b"), ("c", "d"), played_at=datetime(2026, 10, 29, 15, tzinfo=EST), sequence=2
+    )
+    rows = [by_id_b, by_id_a, by_seq]
+    expected = [by_seq, by_id_a, by_id_b]
+    assert sorted(rows, key=ledger_order) == expected
+    assert sorted(reversed(rows), key=ledger_order) == expected
+
+
+@pytest.mark.parametrize("mode", ["live", "scheduled"])
+def test_prequential_is_permutation_invariant(mode):
+    ledger = mixed_ledger()
+    base = prequential_predictions(ledger, burn_in_matches=1, mode=mode)
+    assert base
+    for seed in range(20):
+        shuffled = list(ledger)
+        random.Random(seed).shuffle(shuffled)
+        assert prequential_predictions(shuffled, burn_in_matches=1, mode=mode) == base
+
+
+@pytest.mark.parametrize("mode", ["live", "scheduled"])
+@pytest.mark.parametrize("flip", [False, True], ids=["win_first", "loss_first"])
+def test_prequential_conflict_raises(mode, flip: bool):
+    win, loss = dup_rows()
+    rows = [loss, win] if flip else [win, loss]
+    with pytest.raises(open_engine.LedgerConflictError, match="dup"):
+        prequential_predictions(rows, mode=mode)
+
+
+# 13. Duplicate rows must be interchangeable, whatever the input order ------------
+
+FOLD_DAY = date(2026, 11, 1)  # New York clocks fall back at 02:00 local time
+
+
+def new_york(cache: bool = True) -> ZoneInfo:
+    try:
+        return ZoneInfo("America/New_York") if cache else ZoneInfo.no_cache("America/New_York")
+    except ZoneInfoNotFoundError:
+        pytest.skip("tzdata for America/New_York is not installed")
+
+
+def outcome(rows: list[Match]) -> object:
+    """What replay gives: a snapshot, or the error type and message."""
+    try:
+        return replay_snapshot(replay(rows, as_of=LEDGER_AS_OF))
+    except ValueError as err:
+        return type(err), str(err)
+
+
+@pytest.mark.parametrize("flip", [False, True], ids=["valid_first", "invalid_first"])
+def test_duplicate_with_played_at_off_played_on_raises(flip: bool):
+    # Same instant, so the rows compare equal, but only A falls on played_on.
+    a = match("m", ("a", "b"), ("c", "d"), played_at=datetime(2026, 10, 29, 23, tzinfo=EST))
+    b = match("m", ("a", "b"), ("c", "d"), played_at=datetime(2026, 10, 30, 4, tzinfo=UTC))
+    with pytest.raises(ValueError, match="played_at must fall on played_on"):
+        replay([b, a] if flip else [a, b], as_of=LEDGER_AS_OF)
+
+
+@pytest.mark.parametrize("flip", [False, True], ids=["int_first", "float_first"])
+def test_duplicate_with_float_score_raises(flip: bool):
+    whole = match("m", ("a", "b"), ("c", "d"), games=((11, 3),))
+    floaty = match("m", ("a", "b"), ("c", "d"), games=((11.0, 3),))
+    with pytest.raises(ValueError, match="Game scores must be integers"):
+        replay([floaty, whole] if flip else [whole, floaty], as_of=LEDGER_AS_OF)
+
+
+def test_invalid_row_after_as_of_raises():
+    late = match("late", ("a", "b"), ("c", "d"), games=((11.0, 3),), on=date(2026, 12, 15))
+    with pytest.raises(ValueError, match="Game scores must be integers"):
+        replay([late], as_of=LEDGER_AS_OF)
+
+
+def test_fold_duplicates_conflict_in_both_orders():
+    # 01:30 happens twice on FOLD_DAY: fold=0 is 05:30Z, fold=1 is 06:30Z.
+    zone = new_york()
+    kw = {"on": FOLD_DAY, "games": ((11, 3),)}
+    first = match(
+        "m", ("p1", "p2"), ("p3", "p4"), played_at=datetime(2026, 11, 1, 1, 30, tzinfo=zone), **kw
+    )
+    second = match(
+        "m",
+        ("p1", "p2"),
+        ("p3", "p4"),
+        played_at=datetime(2026, 11, 1, 1, 30, tzinfo=zone, fold=1),
+        **kw,
+    )
+    between = match(
+        "t",
+        ("p1", "p3"),
+        ("p2", "p4"),
+        games=((3, 11),),
+        on=FOLD_DAY,
+        played_at=datetime(2026, 11, 1, 6, tzinfo=UTC),
+    )
+    one = outcome([first, second, between])
+    two = outcome([second, first, between])
+    assert one == two
+    assert one == (open_engine.LedgerConflictError, "Conflicting ledger rows for match_id: m")
+
+
+def test_identical_fold_rows_with_distinct_zone_objects_collapse():
+    rows = [
+        match(
+            "m",
+            ("a", "b"),
+            ("c", "d"),
+            on=FOLD_DAY,
+            played_at=datetime(2026, 11, 1, 1, 30, tzinfo=new_york(cache=False)),
+        )
+        for _ in range(2)
+    ]
+    for order in (rows, list(reversed(rows))):
+        engine = replay(order, as_of=LEDGER_AS_OF)
+        assert engine.replay_info is not None
+        assert engine.replay_info.matches_considered == 1
+
+
+def test_played_at_outside_utc_range_rejected():
+    m = match(
+        "early",
+        ("a", "b"),
+        ("c", "d"),
+        on=date(1, 1, 1),
+        played_at=datetime(1, 1, 1, 0, 30, tzinfo=timezone(timedelta(hours=1))),
+    )
+    with pytest.raises(ValueError, match="UTC"):
+        m.validate()
+    with pytest.raises(ValueError, match="UTC"):
+        replay([m], as_of=LEDGER_AS_OF)
+
+
+# 14. Duplicate rows must match in type, not only under == ------------------------
+
+TWO_GAMES = ((11, 5), (11, 5))
+LOOSE_PAIRS = [
+    pytest.param(
+        {"best_of": 3, "games": TWO_GAMES}, {"best_of": 3.0, "games": TWO_GAMES}, id="best_of"
+    ),
+    pytest.param(
+        {"game_format": GameFormat(points_to=11)},
+        {"game_format": GameFormat(points_to=11.0)},
+        id="points_to",
+    ),
+    pytest.param(
+        {"match_type": MatchType.SELF_REPORTED},
+        {"match_type": "self_reported"},
+        id="match_type",
+    ),
+]
+
+
+def ledger_with(extra: list[Match]) -> list[Match]:
+    base = [
+        match(f"b{i}", ("a", "b"), ("c", "d"), games=((11, i % 9),), on=date(2026, 10, 1 + i % 5))
+        for i in range(12)
+    ]
+    return base + extra
+
+
+@pytest.mark.parametrize("flip", [False, True], ids=["strict_first", "loose_first"])
+@pytest.mark.parametrize(("strict", "loose"), LOOSE_PAIRS)
+def test_loosely_equal_duplicates_conflict_in_replay(strict, loose, flip: bool):
+    rows = [match("x", ("a", "b"), ("c", "d"), **kw) for kw in (strict, loose)]
+    assert rows[0] == rows[1]
+    with pytest.raises(open_engine.LedgerConflictError, match="x"):
+        replay(ledger_with(rows[::-1] if flip else rows), as_of=LEDGER_AS_OF)
+
+
+@pytest.mark.parametrize("mode", ["live", "scheduled"])
+@pytest.mark.parametrize("flip", [False, True], ids=["strict_first", "loose_first"])
+@pytest.mark.parametrize(("strict", "loose"), LOOSE_PAIRS)
+def test_loosely_equal_duplicates_conflict_in_prequential(strict, loose, flip: bool, mode):
+    rows = [match("x", ("a", "b"), ("c", "d"), **kw) for kw in (strict, loose)]
+    with pytest.raises(open_engine.LedgerConflictError, match="x"):
+        prequential_predictions(
+            ledger_with(rows[::-1] if flip else rows), burn_in_matches=0, mode=mode
+        )

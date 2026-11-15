@@ -30,6 +30,16 @@ Published behavior notes:
 - An imported external reliability is shown separately from OPEN-earned
   reliability. It is carried, clearly labeled, only until OPEN-earned
   reliability exceeds it or the carry limits in Config are reached.
+- Ledger order: `replay` and `prequential_predictions` sort matches by
+  `played_on` first. Within one `played_on` date, untimed matches come
+  first (by `sequence`, then `match_id`), then timed matches (by the UTC
+  instant of `played_at`, then `sequence`, then `match_id`). Every row
+  passed in is validated, including rows after `as_of`, so a naive
+  `played_at` raises ValueError wherever it sits. Rows that repeat a
+  `match_id` collapse to one only when every field matches in type and
+  value, with `played_at` compared by its UTC instant and UTC offset; any
+  other repeat raises `LedgerConflictError`, even after `as_of`. The
+  result never depends on input order.
 
 Production notes:
 - Persist the match ledger and player identities in a database. This module's
@@ -47,8 +57,8 @@ import hashlib
 import json
 import math
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, fields, replace
-from datetime import date, datetime, time, timedelta
+from dataclasses import dataclass, field, fields, is_dataclass, replace
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Literal
 
@@ -374,8 +384,11 @@ class Match:
     best_of: int = 1
     game_format: GameFormat = GameFormat()
 
-    # Order of play within a day. Platforms should send played_at when they
-    # have it; sequence breaks ties (for example, round number).
+    # Order of play within a day. played_on is the calendar date at the
+    # venue. played_at must be timezone-aware and fall on played_on; send it
+    # when known. Within one played_on, untimed matches come first, then
+    # timed ones by UTC instant; sequence (for example, round number) and
+    # then match_id break ties.
     played_at: datetime | None = None
     sequence: int = 0
 
@@ -396,6 +409,8 @@ class Match:
             raise ValueError("A player cannot appear more than once in a match")
         if not set(self.confirmed_by) <= set(all_ids):
             raise ValueError("confirmed_by may only contain match participants")
+        if self.played_at is not None:
+            _utc_instant(self.played_at)
         if self.played_at is not None and self.played_at.date() != self.played_on:
             raise ValueError("played_at must fall on played_on")
         if self.sequence < 0:
@@ -428,10 +443,97 @@ class Match:
             raise ValueError("Match score does not contain a completed winner")
 
 
-def ledger_order(match: Match) -> tuple[date, time, int, str]:
-    """Deterministic order of play: date, time, sequence, then match_id."""
-    played_time = match.played_at.replace(tzinfo=None).time() if match.played_at else time.min
-    return (match.played_on, played_time, match.sequence, match.match_id)
+_UTC_MIN = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _utc_instant(played_at: datetime) -> datetime:
+    """The UTC instant of an aware played_at; ValueError when there is none."""
+    if played_at.tzinfo is None or played_at.utcoffset() is None:
+        raise ValueError("played_at must be timezone-aware")
+    try:
+        return played_at.astimezone(timezone.utc)
+    except OverflowError:
+        raise ValueError("played_at is outside the range that UTC can represent") from None
+
+
+class LedgerConflictError(ValueError):
+    """Two or more ledger rows share a match_id but differ."""
+
+    def __init__(self, match_ids: Iterable[str]) -> None:
+        self.match_ids: tuple[str, ...] = tuple(sorted(set(match_ids)))
+        super().__init__("Conflicting ledger rows for match_id: " + ", ".join(self.match_ids))
+
+
+def ledger_order(match: Match) -> tuple[date, int, datetime, int, str]:
+    """
+    Deterministic order of play.
+
+    Matches sort by played_on. Within one day, untimed matches come first,
+    by sequence then match_id. Timed matches follow, by the UTC instant of
+    played_at, then sequence, then match_id. played_at must be
+    timezone-aware; a naive value raises ValueError.
+    """
+    if match.played_at is None:
+        return (match.played_on, 0, _UTC_MIN, match.sequence, match.match_id)
+    return (match.played_on, 1, _utc_instant(match.played_at), match.sequence, match.match_id)
+
+
+def _ledger(matches: Iterable[Match]) -> list[Match]:
+    """
+    Unique ledger rows in ledger order.
+
+    Every row is validated first, including rows after a replay's as_of, so
+    an invalid row raises wherever it sits in the input. Rows that repeat a
+    match_id collapse to one only when every field matches in type and
+    value, with played_at compared by its UTC instant and UTC offset (see
+    _canonical). Any other repeat raises
+    LedgerConflictError naming every conflicting id, so the result never
+    depends on input order.
+    """
+    by_id: dict[str, tuple[Match, tuple[object, ...]]] = {}
+    conflicts: set[str] = set()
+    for match in matches:
+        match.validate()
+        key = _canonical(match)
+        _, kept_key = by_id.setdefault(match.match_id, (match, key))
+        if kept_key != key:
+            conflicts.add(match.match_id)
+    if conflicts:
+        raise LedgerConflictError(conflicts)
+    return sorted((match for match, _ in by_id.values()), key=ledger_order)
+
+
+def _canonical(match: Match) -> tuple[object, ...]:
+    """
+    A form of a validated row that is equal only for interchangeable rows.
+
+    Every field is paired with its exact type, recursively, so values that
+    are equal under == but differ in type (3 and 3.0, a str and an Enum
+    member) do not match. played_at is compared by its UTC instant and its
+    UTC offset instead: Match equality ignores the offset, treats the two
+    readings of a repeated wall time (a DST fold) as equal, and treats rows
+    with distinct zone objects inside a fold as unequal.
+    """
+    others = tuple(
+        (f.name, _strict(getattr(match, f.name))) for f in fields(match) if f.name != "played_at"
+    )
+    if match.played_at is None:
+        return (others, None, None)
+    return (others, _utc_instant(match.played_at), match.played_at.utcoffset())
+
+
+def _strict(value: object) -> object:
+    """value paired with its exact type, recursing into dataclasses and collections."""
+    if is_dataclass(value) and not isinstance(value, type):
+        return (
+            type(value),
+            tuple((f.name, _strict(getattr(value, f.name))) for f in fields(value)),
+        )
+    if isinstance(value, tuple):
+        return (type(value), tuple(_strict(item) for item in value))
+    if isinstance(value, frozenset):
+        return (type(value), frozenset(_strict(item) for item in value))
+    return (type(value), value)
 
 
 @dataclass
@@ -1023,7 +1125,11 @@ def replay(
     Rebuild authoritative ratings from seeds plus the immutable match ledger.
 
     Run on the published schedule (Config.replay_interval_days). Same ledger,
-    seeds, config and as_of always produce the same result. Seeds must be
+    seeds, config and as_of always produce the same result, whatever order
+    the ledger rows arrive in. Every row is validated, even after as_of.
+    Rows that repeat a match_id and match in every field, in type and
+    value, are counted once; any other repeat raises LedgerConflictError, even when it
+    falls after as_of. Seeds must be
     unplayed: imported or provisional states only.
     """
     engine = RatingEngine(cfg)
@@ -1033,7 +1139,7 @@ def replay(
         engine.add_player(player)
 
     considered = counted = 0
-    for match in sorted(matches, key=ledger_order):
+    for match in _ledger(matches):
         if match.played_on > as_of:
             continue
         considered += 1
@@ -1146,7 +1252,7 @@ def prequential_predictions(
     if mode not in ("live", "scheduled"):
         raise ValueError(f"mode must be 'live' or 'scheduled', not {mode!r}")
     cfg = cfg or Config()
-    ordered = sorted(matches, key=ledger_order)
+    ordered = _ledger(matches)
     seeds = list(seed_players)
     predictions: list[PrequentialPrediction] = []
 
