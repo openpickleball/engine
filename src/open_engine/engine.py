@@ -889,15 +889,31 @@ def _check_seed_date(player: Player, latest: date, limit: str) -> None:
             )
 
 
+def _check_seed_identity(player: object) -> None:
+    """Raise InvalidSeedError unless the seed is a Player with a str id."""
+    if not isinstance(player, Player):
+        raise InvalidSeedError(f"Seed must be a Player, not {type(player).__name__}")
+    if not isinstance(player.id, str):
+        raise InvalidSeedError(f"Seed player id must be a str, not {type(player.id).__name__}")
+
+
 def _validate_seed(player: Player, cfg: Config) -> None:
-    """Raise InvalidSeedError unless every seed state follows the seed rules."""
+    """Raise InvalidSeedError unless the seed and every seed state follow the seed rules."""
+    _check_seed_identity(player)
+    if not isinstance(player.ratings, dict):
+        raise InvalidSeedError(f"Seed for {player.id}: ratings must be a dict")
     for key in player.ratings:
         if not isinstance(key, RatingFormat):
             raise InvalidSeedError(
                 f"Seed for {player.id}: ratings key {key!r} is not a RatingFormat"
             )
     for fmt in sorted(player.ratings):
-        rule = _seed_rule_broken(player.ratings[fmt], cfg)
+        state = player.ratings[fmt]
+        if not isinstance(state, RatingState):
+            raise InvalidSeedError(
+                f"Seed for {player.id} in {fmt}: rating state must be a RatingState"
+            )
+        rule = _seed_rule_broken(state, cfg)
         if rule is not None:
             raise InvalidSeedError(f"Seed for {player.id} in {fmt}: {rule}")
 
@@ -936,10 +952,12 @@ class RatingEngine:
         """
         Add a copy of a player record as a seed.
 
-        Seed rules, checked for every rating state:
-        - Every ratings key is a RatingFormat. rating, rd, and an imported
-          reliability are finite ints or floats (not bool), the counts are
-          ints, partners and opponents are dicts, and dates are dates.
+        Seed rules, checked for the seed and every rating state:
+        - The seed is a Player with a str id, its ratings are a dict, every
+          key is a RatingFormat, and every value is a RatingState.
+        - rating, rd, and an imported reliability are ints or finite floats
+          (not bool), the counts are ints, partners and opponents are
+          dicts, and dates are dates.
         - No matches, last_played, partners, opponents, or live updates.
         - rating is within Config.min_rating and Config.max_rating.
         - A provisional state (no initial_source_date) has RD new_player_rd,
@@ -953,9 +971,12 @@ class RatingEngine:
         initial_source_date is in the past: replay rejects a seed dated after
         its as_of, and prequential_predictions one dated after its last match.
 
-        Raises PlayerError if the id exists and InvalidSeedError for a state
-        that breaks these rules. Nothing changes when either is raised.
+        Raises InvalidSeedError for a seed that breaks these rules (a seed
+        that is not a Player, or has a non-str id, is checked before the
+        duplicate id) and PlayerError if the id exists. Nothing changes when
+        either is raised.
         """
+        _check_seed_identity(player)
         if player.id in self.players:
             raise PlayerError(f"Player already exists: {player.id}")
         _validate_seed(player, self.cfg)
