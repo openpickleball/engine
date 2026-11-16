@@ -46,6 +46,13 @@ Published behavior notes:
   ledger live in ledger order: the replay date labels the result but never
   changes an update. Inactivity widens RD (`inflated_rd`) but never shrinks
   or discounts an old match's update.
+- Live recording applies matches in arrival order. Only a replay gives play
+  order. A live match dated before a player's last match in its format
+  still counts, but it never moves last_played, rd_as_of, or a partner or
+  opponent date back, and its MatchResult has `late` set to True. The
+  backend should schedule a replay when it sees one. The engine stores
+  dates, not times, so two matches on the same date that arrive out of
+  played_at order are not flagged.
 - PlayerSummary.reliability is always OPEN-earned. An imported external
   reliability is shown separately, in PlayerSummary.imported_reliability,
   only until OPEN-earned reliability exceeds it or the carry limits in
@@ -807,6 +814,14 @@ class MatchResult:
     frozen. A value of 0.0 does not mean nothing was clamped or frozen: read
     clamped and frozen for that. parent holds the overall doubles update for
     a category match, with its own imbalance.
+
+    late is True for a counted match dated before the last match of any of
+    its players (frozen ones included) in this rating format. Live
+    recording applies matches in arrival order, so the backend should
+    schedule a replay when it sees one. It compares dates only, so a match
+    on the same date as a player's last match is not late. It is False for
+    a match that did not count. parent has its own value, measured against
+    the overall doubles dates.
     """
 
     counted: bool
@@ -2064,7 +2079,9 @@ class RatingEngine:
         next replay). replay() passes a fixed as_of for authoritative rebuilds.
         `as_of` only labels the update as part of a replay and must not be
         earlier than the match date; the update itself does not depend on it.
-        Nothing is changed unless the match counts.
+        Nothing is changed unless the match counts. Live results apply in
+        arrival order: MatchResult.late flags a match dated before a
+        player's last match, and stored dates never move back.
         """
         match.validate()
         if match.match_id in self.processed_match_ids:
@@ -2257,8 +2274,8 @@ class RatingEngine:
         last replay date) and the player's last_played. So a stale player is
         measured at the replay date, and a player with live matches since at
         their last match. Players in one engine can be measured at different
-        dates by default. A backdated live match moves last_played back, and
-        so the default date with it. The engine never reads the wall clock.
+        dates by default. A late live match never moves last_played back.
+        The engine never reads the wall clock.
 
         An as_of earlier than the player's last match does not rebuild past
         state: RD and partner variety stay as of the stored state.
