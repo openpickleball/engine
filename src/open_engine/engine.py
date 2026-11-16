@@ -803,8 +803,17 @@ def _matchup_key(match: Match) -> MatchupKey:
 
 
 def _is_finite_number(value: object) -> bool:
-    """True for an int or float (not bool) that is finite."""
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    """
+    True for an int (not bool) or a finite float.
+
+    Every int is finite. math.isfinite would overflow on a huge int, so ints
+    skip it and the seed rules' bounds reject out-of-range values instead.
+    """
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    return isinstance(value, float) and math.isfinite(value)
 
 
 def _is_plain_date(value: object) -> bool:
