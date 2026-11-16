@@ -112,8 +112,10 @@ so the issue stays open until that backtest is done.
   category match's parent.
 - Criterion 5: a frozen-teammate test.
 - Live drive: run the measurement script below after the change. It must show singles
-  est +0.02856 against both the new and the established opponent, new player -0.05049 (within
-  rounding), and the equal-K rows unchanged.
+  est +0.02856 against both the new and the established opponent, new player -0.05000, and the
+  equal-K rows unchanged. (An earlier draft said -0.05049. That used the established player's K
+  before inactivity inflation, 0.3394. The K the update uses is the inflated one, about 0.3427,
+  so a K 0.6 player moves 0.05000, the same step as in the all-new doubles row.)
 
 Measured on `origin/main` (f6d57f3). Players seeded at 4.0 with `seed_external_rating`
 (snapshot 2026-10-01, reliability 85; K 0.3394) or `seed_provisional_rating` (K 0.6), all
