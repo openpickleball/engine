@@ -65,9 +65,13 @@ Published behavior notes:
 - Errors: every error the engine raises on purpose is an `OpenEngineError`,
   which is a `ValueError`. `ConfigError` covers Config and GameFormat
   values, `InvalidMatchError` covers matches, teams, scores and
-  `played_at`, `InvalidSeedError` covers external and replay seeds
-  (including a seed state the engine could not have produced before any
-  match, see `RatingEngine.add_player`),
+  `played_at`, `InvalidSeedError` covers external and replay seeds (a
+  seed state that breaks the seed rules in `RatingEngine.add_player`,
+  including a field of the wrong type or a rating outside the bounds,
+  raised by `add_player`, `replay`, and `prequential_predictions`, and so
+  by `evaluate`, `fit_scale`, and `fit_win_calibration`; `replay` also
+  rejects a seed dated after `as_of`, and `prequential_predictions` one
+  dated after its last ledger match),
   `PlayerError` covers player identities, `EvaluationError` covers
   evaluation, fits and win probabilities, and `LedgerConflictError` covers
   conflicting ledger rows.
@@ -1382,7 +1386,8 @@ def replay(
     Rows that repeat a match_id and match in every field, in type and
     value, are counted once; any other repeat raises LedgerConflictError, even when it
     falls after as_of. Seeds must be
-    unplayed: imported or provisional states only.
+    unplayed imported or provisional states that follow the seed rules (see
+    RatingEngine.add_player), dated on or before as_of.
 
     Raises InvalidSeedError for a seed state that breaks the seed rules (see
     add_player) or whose initial_source_date is after as_of, and PlayerError

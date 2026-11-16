@@ -51,6 +51,11 @@ Decisions approved by the maintainer before this plan was committed:
   - New `tests/test_seed_validation.py`: criteria 1 to 3 and 5.
   - New `tests/test_future_seed.py`: criterion 7.
   - New `tests/test_seed_types.py` and `tests/test_seed_rating_bounds.py`: criterion 8.
+  - New `tests/test_seed_rd.py`: criterion 1's removed `rd_override` and Config field, and seed RD whatever the snapshot's reliability.
+  - New `tests/test_imported_reliability.py` and `tests/test_imported_reliability_rounding.py`: criterion 4 (the second compares the rounded imported value with earned).
+  - New `tests/test_prequential_seed_validation.py`: scheduled `prequential_predictions` validates seeds with an empty ledger or every window skipped.
+  - New `tests/test_seed_replay_pinned.py`: criterion 3, replayed ratings and RDs pinned from origin/main.
+  - `tests/test_enum_str.py`: drop `ReliabilityBasis`.
   - `tests/test_engine.py` (lines 59 to 78), `tests/test_summary_reliability.py`, `tests/test_api.py` (`SUMMARY_FIELDS`, `test_reliability_basis_members` removed, the summary value tests): move to `imported_reliability` and the always-earned `reliability`.
 
 ## Order of work

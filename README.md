@@ -129,7 +129,7 @@ Errors (every class is a `ValueError`):
 - `OpenEngineError`: base class for every error the engine raises on purpose.
 - `ConfigError`: a `Config` or `GameFormat` value is not valid.
 - `InvalidMatchError`: a match, its teams, its scores, or its `played_at` is not valid.
-- `InvalidSeedError`: an external or replay seed cannot initialize a rating. `add_player` and `replay` raise it for a seed state the engine could not have produced before any match.
+- `InvalidSeedError`: an external or replay seed cannot initialize a rating. `RatingEngine.add_player`, `replay`, and `prequential_predictions` (and so `evaluate`, `fit_scale`, and `fit_win_calibration`) raise it for a seed state that breaks the seed rules in `add_player`'s docstring, including a field of the wrong type or a rating outside the rating bounds. `replay` also raises it for a seed dated after `as_of`, and `prequential_predictions` for one dated after its last ledger match.
 - `PlayerError`: a player identity, account link, or external identity is not valid. `seed_external_rating` raises it for a blank player id or when the snapshot's external identity cannot be linked (it names no source, it is already linked to another player, or the player already has a different id from that source), and `replay` raises it when two seeds share a player id.
 - `EvaluationError`: an evaluation, fit, or win probability cannot be computed.
 - `LedgerConflictError`: ledger rows share a `match_id` but differ. Its `match_ids` lists them.
