@@ -67,6 +67,21 @@ Published behavior notes:
   state: RD and partner variety stay as of the stored state. `reliability`
   takes as_of as a required argument. The engine never reads the wall
   clock.
+- PlayerSummary.established is True when OPEN-earned reliability, as
+  displayed (rounded to 1 place), is at least
+  Config.established_reliability_threshold (60 by default). Imported
+  reliability never counts, and it is measured at the same reference date
+  as reliability, so it lapses with inactivity. Under the defaults, a new
+  player needs about 10 matches with varied partners and opponents (11
+  league matches, 8 to 13 depending on match type and games), and about
+  twice as many against the same players. A rating that is not
+  established is what external rating systems usually call provisional.
+  That is different from OPEN's provisional live updates between replays
+  and from the open_provisional initial source. The threshold is a label
+  for display and eligibility only: it changes no rating, prediction,
+  evaluate, prequential_predictions, fit_scale, or fit_win_calibration
+  output. evaluate leaves out each player's early matches through
+  burn_in_matches instead.
 - Ledger order: `replay` and `prequential_predictions` sort matches by
   `played_on` first. Within one `played_on` date, untimed matches come
   first (by `sequence`, then `match_id`), then timed matches (by the UTC
