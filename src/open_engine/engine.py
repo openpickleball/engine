@@ -63,7 +63,9 @@ Published behavior notes:
   passed in is validated, including rows after `as_of`, so a naive
   `played_at` raises InvalidMatchError wherever it sits. Rows that repeat a
   `match_id` collapse to one only when every field matches in type and
-  value, with `played_at` compared by its UTC instant and UTC offset; any
+  value (recursively, so each member of a tuple, list, set, or frozenset
+  must match in type too), with `played_at` compared by its UTC instant
+  and UTC offset; any
   other repeat raises `LedgerConflictError`, even after `as_of`. The
   result never depends on input order.
 - Errors: every error the engine raises on purpose is an `OpenEngineError`,
@@ -633,15 +635,21 @@ def _canonical(match: Match) -> tuple[object, ...]:
 
 
 def _strict(value: object) -> object:
-    """value paired with its exact type, recursing into dataclasses and collections."""
+    """
+    value paired with its exact type, recursing into dataclasses and collections.
+
+    Tuples and lists recurse member by member, and so do sets and
+    frozensets, so a member's type counts wherever it sits. _json_form
+    mirrors this; change both together.
+    """
     if is_dataclass(value) and not isinstance(value, type):
         return (
             type(value),
             tuple((f.name, _strict(getattr(value, f.name))) for f in fields(value)),
         )
-    if isinstance(value, tuple):
+    if isinstance(value, (tuple, list)):
         return (type(value), tuple(_strict(item) for item in value))
-    if isinstance(value, frozenset):
+    if isinstance(value, (frozenset, set)):
         return (type(value), frozenset(_strict(item) for item in value))
     return (type(value), value)
 
@@ -677,15 +685,16 @@ def _json_form(value: object) -> object:
 
     Ints are written in hex, which has no digit limit. A float is written as
     a number with negative zero folded into zero (as == does), or as its
-    repr when it is not finite. A frozenset's members are sorted by their
-    JSON text, so the form never depends on set order.
+    repr when it is not finite. Set and frozenset members are sorted by
+    their JSON text, so the form never depends on set order or the hash
+    seed.
     """
     tag = f"{type(value).__module__}.{type(value).__qualname__}"
     if is_dataclass(value) and not isinstance(value, type):
         return [tag, [[f.name, _json_form(getattr(value, f.name))] for f in fields(value)]]
     if isinstance(value, (tuple, list)):
         return [tag, [_json_form(item) for item in value]]
-    if isinstance(value, frozenset):
+    if isinstance(value, (frozenset, set)):
         return [tag, sorted((_json_form(item) for item in value), key=_json_text)]
     if isinstance(value, Enum):
         return [tag, _json_form(value.value)]

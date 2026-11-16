@@ -40,6 +40,7 @@ The engine is a demonstration. Its outputs are not OPEN ratings.
 
 ### Fixed
 
+- Rows that repeat a `match_id` and differ only in the type of a member inside a list or set field (for example a game written as `[11, 1]` in one row and `[11, True]` in the other) now raise `LedgerConflictError` in `replay` and `prequential_predictions`, as the rule that every field matches in type and value says. They used to collapse to one row, because list and set fields were compared with `==` only (issue #16).
 - Replay no longer shrinks old matches' updates. Recency decay scaled each update by the match's age at the replay date, so a replay disagreed with live recording of the same ledger, `evaluate(mode="live")` and `evaluate(mode="scheduled")` disagreed, a player whose matches were all long ago drifted back toward the default rating, and every recalculation shifted ratings even with no new matches (issue #13).
 - `record` with a blank or whitespace-only player id, or one that is not a string (such as an int), no longer changes any rating. It used to update the players before the bad id, then raise before marking the match processed, so every retry moved those ratings again. It now raises `InvalidMatchError` before anything changes.
 - `LedgerConflictError` survives pickling and copying with its message and `match_ids` intact. The message used to come back garbled.
