@@ -72,16 +72,22 @@ Published behavior notes:
   Config.established_reliability_threshold (60 by default). Imported
   reliability never counts, and it is measured at the same reference date
   as reliability, so it lapses with inactivity. Under the defaults, a new
-  player needs about 10 matches with varied partners and opponents (11
-  league matches, 8 to 13 depending on match type and games), and about
-  twice as many against the same players. A rating that is not
+  player playing one match a week with varied partners and opponents
+  becomes established after about 10 tournament, league, or recreational
+  verified matches (11 league matches of one game), and after about twice
+  as many against the same players. Self-reported matches need about 20
+  to 25 with varied players and never get there against the same
+  players, because repeat matches are discounted and then rejected. A
+  rating that is not
   established is what external rating systems usually call provisional.
   That is different from OPEN's provisional live updates between replays
   and from the open_provisional initial source. The threshold is a label
   for display and eligibility only: it changes no rating, prediction,
   evaluate, prequential_predictions, fit_scale, or fit_win_calibration
-  output. evaluate leaves out each player's early matches through
-  burn_in_matches instead.
+  output. Evaluation has its own eligibility rule: it scores a match only
+  when every participant has an imported baseline or at least
+  burn_in_matches OPEN matches. That rule is separate from
+  PlayerSummary.established.
 - Ledger order: `replay` and `prequential_predictions` sort matches by
   `played_on` first. Within one `played_on` date, untimed matches come
   first (by `sequence`, then `match_id`), then timed matches (by the UTC
@@ -834,7 +840,9 @@ class PlayerSummary:
     label only and changes no rating. A rating that is not established is
     what external rating systems usually call provisional. That is different
     from OPEN's provisional live updates between replays and from the
-    open_provisional initial source.
+    open_provisional initial source. Evaluation's eligibility rule (an
+    imported baseline or at least burn_in_matches OPEN matches) is a
+    separate rule from established.
     """
 
     player_id: str
@@ -2612,6 +2620,7 @@ def prequential_predictions(
     format (imported baseline, or at least `burn_in_matches` OPEN matches),
     its scoring equals `scoring` when given, and it is played on or after
     `score_from` when given. Only matches that `record` counts are kept.
+    This "established" is not `PlayerSummary.established`.
 
     "live" records every match live in one engine, in ledger order.
     "scheduled" mirrors production: replay dates are

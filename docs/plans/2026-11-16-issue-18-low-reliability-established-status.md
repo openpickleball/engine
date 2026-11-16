@@ -7,7 +7,7 @@ Domain skills: none apply. This is a standard-library Python package, so django,
 ## Decisions taken with the maintainer
 
 - **Name: "established", not "provisional".** "Provisional" already means two other things here: a live rating between replays (CLAUDE.md, "Provisional versus authoritative") and the `open_provisional` initial source. The new names are `Config.established_reliability_threshold` and `PlayerSummary.established`. The docs say that a rating that is not established is what external rating systems usually call provisional.
-- **`evaluate()` does not change.** The threshold is a label for display and eligibility only. It does not change ratings, predictions, `evaluate`, `prequential_predictions`, `fit_scale`, or `fit_win_calibration`. `evaluate` already leaves out each player's early matches through `burn_in_matches`. The docs say so.
+- **`evaluate()` does not change.** The threshold is a label for display and eligibility only. It does not change ratings, predictions, `evaluate`, `prequential_predictions`, `fit_scale`, or `fit_win_calibration`. `evaluate` has its own eligibility rule: every participant has an imported baseline or at least `burn_in_matches` OPEN matches. The code calls that "established" too (`_is_established`), so the docs say it is a separate rule from `PlayerSummary.established`.
 
 ## Acceptance criteria
 
@@ -25,7 +25,7 @@ Domain skills: none apply. This is a standard-library Python package, so django,
   - `Config`: add `established_reliability_threshold: float = 60.0` next to the imported reliability fields, under a comment `# Reliability label.` that explains it. In `__post_init__`, add `if not 0.0 <= self.established_reliability_threshold <= 100.0: raise ConfigError("established_reliability_threshold must be between 0 and 100")`. NaN fails the chained comparison, so it raises. `norm()` needs no new case for a float.
   - `PlayerSummary`: add `established: bool` directly after `imported_reliability`, with an inline comment. Extend the docstring: established is True when `reliability` (as displayed, rounded to 1 place) is at least `Config.established_reliability_threshold`; imported reliability never counts; it is measured at the same reference date; it is a label only and changes no rating; a rating that is not established is what external rating systems usually call provisional, which is different from OPEN's live-versus-authoritative "provisional" and from the `open_provisional` source.
   - `player_summary`: pass `established=earned >= cfg.established_reliability_threshold`.
-  - Module docstring: add a published behavior note after the `player_summary` reference date note. It covers the threshold, the comparison with the displayed earned reliability, that imported reliability does not count, the vocabulary point above, that `evaluate` and the fits ignore it (burn-in is `burn_in_matches`), and the match counts in "Expected match count" below.
+  - Module docstring: add a published behavior note after the `player_summary` reference date note. It covers the threshold, the comparison with the displayed earned reliability, that imported reliability does not count, the vocabulary point above, that `evaluate` and the fits ignore it (evaluation's eligibility rule is an imported baseline or `burn_in_matches` OPEN matches, a separate rule), and the match counts in "Expected match count" below.
 - `tests/test_established.py` (new): the tests in Proof.
 - `tests/test_api.py`: add `established` after `imported_reliability` in `SUMMARY_FIELDS` (the test pins the field order) and assert `established is False` for the imported baseline. Added during implementation: the existing field list test failed on the new field.
 - `README.md`: in the paragraph after the quick start, one or two sentences on `established` with the default threshold and the expected match count. On the `PlayerSummary` Public API line, mention the established flag if that line lists fields. Do not add a field list it does not already have.
@@ -50,7 +50,7 @@ Matches needed to reach 60, by match type, for the same weekly schedule:
 | Recreational verified | 13 | 10 | 24 |
 | Self-reported | 25 | 20 | never (repeat matches are discounted, then rejected) |
 
-The docs state the headline: "about 10 matches with varied partners and opponents (11 league matches, 8 to 13 depending on match type and games), and about twice as many against the same players". They do not paste the whole table.
+The docs state the headline: "Under the defaults, a new player playing one match a week with varied partners and opponents becomes established after about 10 tournament, league, or recreational verified matches (11 league matches of one game), and after about twice as many against the same players. Self-reported matches need about 20 to 25 with varied players and never get there against the same players, because repeat matches are discounted and then rejected." They do not paste the whole table. (Corrected in review: an earlier headline gave a range of 8 to 13 that was false for self-reported matches.)
 
 After the 11th league match, measured at a later date with no new matches: 60.6 at 90 days, 59.7 at 120 days, 58.1 at 180 days.
 
