@@ -864,6 +864,16 @@ def _seed_rule_broken(state: RatingState, cfg: Config) -> str | None:
     return None
 
 
+def _check_seed_date(player: Player, latest: date, limit: str) -> None:
+    """Raise InvalidSeedError for a validated seed state dated after latest."""
+    for fmt in sorted(player.ratings):
+        source_date = player.ratings[fmt].initial_source_date
+        if source_date is not None and source_date > latest:
+            raise InvalidSeedError(
+                f"Seed for {player.id} in {fmt}: initial_source_date must not be after {limit}"
+            )
+
+
 def _validate_seed(player: Player, cfg: Config) -> None:
     """Raise InvalidSeedError unless every seed state follows the seed rules."""
     for key in player.ratings:
@@ -919,6 +929,9 @@ class RatingEngine:
         or max(external_seed_rd, category_seed_rd), rd_as_of equal to
         initial_source_date, and an imported reliability that is None or
         between 0 and 100. Played states are rebuilt through replay instead.
+        add_player has no reference date, so it does not check that
+        initial_source_date is in the past: replay rejects a seed dated after
+        its as_of, and prequential_predictions one dated after its last match.
 
         Raises PlayerError if the id exists and InvalidSeedError for a state
         that breaks these rules. Nothing changes when either is raised.
@@ -972,7 +985,9 @@ class RatingEngine:
         Once OPEN matches exist, external refreshes cannot overwrite the rating.
         The seed's RD is always Config.external_seed_rd: an external
         reliability is kept for display (imported_reliability), never turned
-        into OPEN RD.
+        into OPEN RD. There is no reference date here, so a snapshot captured
+        in the future is accepted; the next replay with an earlier as_of
+        rejects the seed.
 
         Raises InvalidSeedError when the snapshot or the existing rating does
         not allow the seed, and PlayerError when player_id is blank or the
@@ -1312,7 +1327,9 @@ class RatingEngine:
             seed_reliability is not None
             and state.initial_source_date is not None
             and state.matches_played < cfg.import_reliability_carry_matches
-            and (reference - state.initial_source_date).days <= cfg.import_reliability_max_age_days
+            and 0
+            <= (reference - state.initial_source_date).days
+            <= cfg.import_reliability_max_age_days
             and round(float(seed_reliability), 1) > earned
         ):
             imported = round(float(seed_reliability), 1)
@@ -1360,13 +1377,33 @@ def replay(
     falls after as_of. Seeds must be
     unplayed: imported or provisional states only.
 
-    Raises InvalidSeedError for a seed state the engine could not have
-    produced before any match (see add_player), and PlayerError when two
-    seeds share a player id.
+    Raises InvalidSeedError for a seed state that breaks the seed rules (see
+    add_player) or whose initial_source_date is after as_of, and PlayerError
+    when two seeds share a player id.
+    """
+    return _replay(matches, seed_players, cfg=cfg, as_of=as_of, check_seed_dates=True)
+
+
+def _replay(
+    matches: Iterable[Match],
+    seed_players: Iterable[Player],
+    *,
+    cfg: Config | None,
+    as_of: date,
+    check_seed_dates: bool,
+) -> RatingEngine:
+    """
+    replay, with the seed date check optional.
+
+    Scheduled prequential windows replay to dates before a seed captured
+    mid-ledger, which is legitimate there (earlier matches are frozen for
+    that player), so they skip the check.
     """
     engine = RatingEngine(cfg)
     for player in seed_players:
         engine.add_player(player)
+        if check_seed_dates:
+            _check_seed_date(player, as_of, "as_of")
 
     considered = counted = 0
     for match in _ledger(matches):
@@ -1482,6 +1519,11 @@ def prequential_predictions(
     date). A match on day d is predicted from replay(matches on or before s,
     as_of=s) for the largest replay date s strictly before d, and matches in
     that window are then predicted and recorded live in ledger order.
+
+    Every seed is validated up front, in both modes, by the seed rules (see
+    RatingEngine.add_player), and a seed whose initial_source_date is after
+    the last ledger match raises InvalidSeedError. A seed captured mid-ledger
+    is accepted: scheduled replays before its date freeze it as usual.
     """
     if mode not in ("live", "scheduled"):
         raise EvaluationError(f"mode must be 'live' or 'scheduled', not {mode!r}")
@@ -1490,6 +1532,8 @@ def prequential_predictions(
     seeds = list(seed_players)
     for player in seeds:
         _validate_seed(player, cfg)
+        if ordered:
+            _check_seed_date(player, ordered[-1].played_on, "the last ledger match")
     predictions: list[PrequentialPrediction] = []
 
     def step(engine: RatingEngine, match: Match) -> None:
@@ -1525,11 +1569,12 @@ def prequential_predictions(
     for replay_date, window in sorted(windows.items()):
         if score_from is not None and all(m.played_on < score_from for m in window):
             continue
-        engine = replay(
+        engine = _replay(
             [m for m in ordered if m.played_on <= replay_date],
             seeds,
             cfg=cfg,
             as_of=replay_date,
+            check_seed_dates=False,
         )
         for match in window:
             step(engine, match)
