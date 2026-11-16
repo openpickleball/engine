@@ -2063,7 +2063,9 @@ def replay(
     start = None
     if from_snapshot is not None:
         start = _resume_start(from_snapshot, cfg, as_of)
-    return _replay(matches, seed_players, cfg=cfg, as_of=as_of, check_seed_dates=True, start=start)
+    return _replay(
+        matches, seed_players, cfg=cfg, as_of=as_of, check_seed_dates=True, track=True, start=start
+    )
 
 
 def _resume_start(snapshot: Mapping[str, object], cfg: Config | None, as_of: date) -> RatingEngine:
@@ -2094,6 +2096,7 @@ def _replay(
     cfg: Config | None,
     as_of: date,
     check_seed_dates: bool,
+    track: bool,
     start: RatingEngine | None = None,
 ) -> RatingEngine:
     """
@@ -2101,7 +2104,9 @@ def _replay(
 
     Scheduled prequential windows replay to dates before a seed captured
     mid-ledger, which is legitimate there (earlier matches are frozen for
-    that player), so they skip the check.
+    that player), so they skip the check. They also pass track=False: only
+    replay records what a checkpoint needs (row digests), since hashing
+    every row in every window would slow evaluation for nothing.
 
     start is a checked checkpoint engine (see _resume_start). Every row is
     checked against its digests before any row is recorded, and only rows
@@ -2118,10 +2123,12 @@ def _replay(
     checkpoint: date | None = None
     if start is not None:
         checkpoint = start.calculated_as_of
-        assert checkpoint is not None and start.replay_info is not None
+        info = start.replay_info
+        if checkpoint is None or info is None:
+            raise SnapshotError("Cannot resume: the snapshot is not from a replay")
         _check_resume_rows(rows, checkpoint, start._ledger_digests)
-        considered = start.replay_info.matches_considered
-        counted = start.replay_info.matches_counted
+        considered = info.matches_considered
+        counted = info.matches_counted
 
     for match in rows:
         if match.played_on > as_of:
@@ -2129,7 +2136,8 @@ def _replay(
         if checkpoint is not None and match.played_on <= checkpoint:
             continue
         considered += 1
-        engine._ledger_digests[match.match_id] = _match_digest(match)
+        if track:
+            engine._ledger_digests[match.match_id] = _match_digest(match)
         if engine.record(match, as_of=as_of).counted:
             counted += 1
 
@@ -2331,6 +2339,7 @@ def prequential_predictions(
             cfg=cfg,
             as_of=replay_date,
             check_seed_dates=False,
+            track=False,
         )
         for match in window:
             step(engine, match)

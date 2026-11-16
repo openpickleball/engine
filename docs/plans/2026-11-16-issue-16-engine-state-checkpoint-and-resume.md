@@ -85,7 +85,7 @@ Then builds `Player`/`RatingState` objects, sets `processed_match_ids`, `self_re
 
 A seed check order note: seeds are added before the ledger pre-pass, matching full replay, where seeds are checked before the ledger.
 
-The full replay path also fills `_ledger_digests`, so a full replay's snapshot and a resumed one are byte-identical (criterion 5). `prequential_predictions` is unchanged in behavior.
+The full replay path also fills `_ledger_digests`, so a full replay's snapshot and a resumed one are byte-identical (criterion 5). `prequential_predictions` is unchanged in behavior. Fix round 1 (T6): only the `replay` path computes digests (`_replay(track=True)`); scheduled prequential windows pass `track=False`, so evaluation does no hashing. `_replay` checks resume state with an explicit `if` and `SnapshotError`, not `assert`, which `python -O` removes.
 
 ## Files that change
 
