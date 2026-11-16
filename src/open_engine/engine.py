@@ -47,12 +47,17 @@ Published behavior notes:
   changes an update. Inactivity widens RD (`inflated_rd`) but never shrinks
   or discounts an old match's update.
 - Live recording applies matches in arrival order. Only a replay gives play
-  order. A live match dated before a player's last match in its format
-  still counts, but it never moves last_played, rd_as_of, or a partner or
-  opponent date back, and its MatchResult has `late` set to True. The
-  backend should schedule a replay when it sees one. The engine stores
-  dates, not times, so two matches on the same date that arrive out of
-  played_at order are not flagged.
+  order. A live match is late when it is dated before a player's last
+  match in its format, or before the date that player's rating in that
+  format already reflects (for a category rating copied from overall
+  doubles). It still counts, but it never moves last_played, rd_as_of, or
+  a partner or opponent date back, and its MatchResult has `late` set to
+  True. The backend should check `late` and, for a category match,
+  `parent.late`, and schedule a replay when either is True. The engine
+  stores dates, not times, so two matches on the same date that arrive
+  out of played_at order are not flagged. Because dates never move back,
+  a future-dated live match holds every date of its players at that
+  future date until the next replay (see the production notes).
 - PlayerSummary.reliability is always OPEN-earned. An imported external
   reliability is shown separately, in PlayerSummary.imported_reliability,
   only until OPEN-earned reliability exceeds it or the carry limits in
@@ -164,6 +169,13 @@ Production notes:
   rating once OPEN matches have been processed.
 - Store each replay's `ReplayInfo` (as_of date, config version, config
   fingerprint) for auditability.
+- Reject a match whose `played_on` is after the date it was submitted.
+  The engine never reads the clock, so it cannot tell. A future-dated
+  live match, by typo or on purpose, holds last_played, rd_as_of, and
+  partner and opponent dates at that future date for every player in it
+  until the next replay: RD stops growing, reliability is held up, and
+  player_summary's default reference date jumps ahead. Every later honest
+  match with those players comes back with `late` set to True.
 - To avoid replaying the whole ledger every time, persist the snapshot of
   each scheduled replay and resume the next one from it. Take the
   snapshot right after the replay, before any other call on the engine.
@@ -815,13 +827,15 @@ class MatchResult:
     clamped and frozen for that. parent holds the overall doubles update for
     a category match, with its own imbalance.
 
-    late is True for a counted match dated before the last match of any of
-    its players (frozen ones included) in this rating format. Live
-    recording applies matches in arrival order, so the backend should
-    schedule a replay when it sees one. It compares dates only, so a match
-    on the same date as a player's last match is not late. It is False for
-    a match that did not count. parent has its own value, measured against
-    the overall doubles dates.
+    late is True for a counted match dated before a player's last match in
+    this rating format, or before the date that player's rating in this
+    format already reflects (for a category rating copied from overall
+    doubles). Frozen players count. Live recording applies matches in
+    arrival order, so the backend should check late and, for a category
+    match, parent.late, and schedule a replay when either is True. It
+    compares dates only, so a match on the same date as a player's last
+    match is not late. It is False for a match that did not count. parent
+    has its own value, measured against the overall doubles dates.
     """
 
     counted: bool
@@ -2097,8 +2111,9 @@ class RatingEngine:
         `as_of` only labels the update as part of a replay and must not be
         earlier than the match date; the update itself does not depend on it.
         Nothing is changed unless the match counts. Live results apply in
-        arrival order: MatchResult.late flags a match dated before a
-        player's last match, and stored dates never move back.
+        arrival order: MatchResult.late (and parent.late, for a category
+        match) flags a match dated before a player's last match in that
+        format, and stored dates never move back.
         """
         match.validate()
         if match.match_id in self.processed_match_ids:
