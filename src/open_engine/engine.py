@@ -67,6 +67,32 @@ Published behavior notes:
   state: RD and partner variety stay as of the stored state. `reliability`
   takes as_of as a required argument. The engine never reads the wall
   clock.
+- PlayerSummary.established is True when OPEN-earned reliability, as
+  displayed (rounded to 1 place), is at least
+  Config.established_reliability_threshold (60 by default). Imported
+  reliability never counts, and it is measured at the same reference date
+  as reliability, so it lapses with inactivity. Under the defaults, a new
+  player with no imported rating, playing one match a week with varied
+  partners and opponents, becomes established after about 10 to 13
+  tournament, league, or recreational verified matches (10 tournament, 11
+  league, or 13 recreational verified matches of one game, fewer for best
+  of 3), and after about twice as many against the same players.
+  Self-reported matches need about 20 to 25 with varied players and never
+  get there against the same players, because repeat matches are
+  discounted and then rejected. A player seeded from a recently captured
+  imported rating starts at a lower RD (Config.external_seed_rd) and is
+  established after about 3 to 4 tournament, league, or recreational
+  verified matches. RD grows from the capture date, so an older import
+  gives less of a head start, and a very old one none. The imported rating
+  and its reliability value do not change the count. A rating that is not
+  established is what external rating systems usually call provisional.
+  That is different from OPEN's provisional live updates between replays
+  and from the open_provisional initial source. The threshold is a label
+  only: it changes no rating, prediction, evaluate,
+  prequential_predictions, fit_scale, or fit_win_calibration output.
+  Evaluation has its own eligibility rule: it scores a match only when
+  every participant has an imported baseline or at least burn_in_matches
+  OPEN matches. That rule is separate from PlayerSummary.established.
 - Ledger order: `replay` and `prequential_predictions` sort matches by
   `played_on` first. Within one `played_on` date, untimed matches come
   first (by `sequence`, then `match_id`), then timed matches (by the UTC
@@ -382,6 +408,11 @@ class Config:
     import_reliability_carry_matches: int = 10
     import_reliability_max_age_days: int = 365
 
+    # Reliability label. PlayerSummary.established is True when OPEN-earned
+    # reliability, as displayed, is at least this value (0-100). A label
+    # only: it changes no rating, prediction, or evaluation.
+    established_reliability_threshold: float = 60.0
+
     # Category doubles matches also update overall doubles.
     category_feeds_parent: bool = True
 
@@ -428,6 +459,8 @@ class Config:
             raise ConfigError("self-reported repeat limits must be positive")
         if self.import_reliability_carry_matches < 0 or self.import_reliability_max_age_days < 0:
             raise ConfigError("import reliability limits must be nonnegative")
+        if not 0.0 <= self.established_reliability_threshold <= 100.0:
+            raise ConfigError("established_reliability_threshold must be between 0 and 100")
 
     def fingerprint(self) -> str:
         """Stable hash of every parameter, stored with each replay."""
@@ -803,6 +836,19 @@ class PlayerSummary:
     fresh, is within the carry match limit, and is higher than the earned
     value. It is shown separately and never replaces or converts into
     reliability.
+
+    established is True when reliability (as displayed, rounded to 1 place)
+    is at least Config.established_reliability_threshold. Imported
+    reliability never counts toward it, and it is measured at the same
+    reference date as reliability, so it lapses with inactivity. A recently
+    captured imported rating can reach the threshold in fewer OPEN matches
+    because of its lower starting RD; see the module docstring for counts.
+    It is a label only and changes no rating. A rating that is not
+    established is what external rating systems usually call provisional.
+    That is different from OPEN's provisional live updates between replays
+    and from the open_provisional initial source. Evaluation's eligibility
+    rule (an imported baseline or at least burn_in_matches OPEN matches) is
+    a separate rule from established.
     """
 
     player_id: str
@@ -810,6 +856,7 @@ class PlayerSummary:
     rating: float  # rounded to 3 places
     reliability: float  # OPEN-earned reliability, 0-100
     imported_reliability: float | None  # carried imported reliability, 0-100
+    established: bool  # reliability >= Config.established_reliability_threshold
     rd: float  # inflated to the reference date, rounded to 4 places
     matches_played: int
     last_played: date | None
@@ -2244,6 +2291,7 @@ class RatingEngine:
             rating=round(state.rating, 3),
             reliability=earned,
             imported_reliability=imported,
+            established=earned >= cfg.established_reliability_threshold,
             rd=round(inflated_rd(state, reference, cfg), 4),
             matches_played=state.matches_played,
             last_played=state.last_played,
@@ -2578,6 +2626,7 @@ def prequential_predictions(
     format (imported baseline, or at least `burn_in_matches` OPEN matches),
     its scoring equals `scoring` when given, and it is played on or after
     `score_from` when given. Only matches that `record` counts are kept.
+    This "established" is not `PlayerSummary.established`.
 
     "live" records every match live in one engine, in ledger order.
     "scheduled" mirrors production: replay dates are
