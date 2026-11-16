@@ -1037,6 +1037,7 @@ _TOP_KEYS = frozenset(
         "processed_match_ids",
         "self_reported_log",
         "ledger_digests",
+        "ledger_player_ids",
     }
 )
 _REPLAY_INFO_KEYS = frozenset(
@@ -1075,6 +1076,7 @@ class _Snapshot:
     calculated_as_of: date | None
     replay_info: ReplayInfo | None
     ledger_digests: dict[str, str]
+    ledger_player_ids: set[str]
 
 
 def _iso(value: object) -> object:
@@ -1415,7 +1417,18 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
             )
         digests[key] = digest
 
-    return _Snapshot(players, processed, log, calculated_as_of, replay_info, digests)
+    ledger_player_ids: set[str] = set()
+    named = _snap_list(raw["ledger_player_ids"], "snapshot.ledger_player_ids")
+    for index, value in enumerate(named):
+        path = f"snapshot.ledger_player_ids[{index}]"
+        player_id = _snap_id(value, path)
+        if player_id in ledger_player_ids:
+            raise SnapshotError(f"{path}: duplicate player id {player_id!r}")
+        ledger_player_ids.add(player_id)
+
+    return _Snapshot(
+        players, processed, log, calculated_as_of, replay_info, digests, ledger_player_ids
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1440,6 +1453,9 @@ class RatingEngine:
         # Digest of each ledger row a replay considered, by match_id. Only
         # replay fills it; resume compares rows against it.
         self._ledger_digests: dict[str, str] = {}
+        # Every player id named in a row a replay considered, counted or
+        # not. Resume refuses a seed for one of them.
+        self._ledger_player_ids: set[str] = set()
 
     # -- snapshots -------------------------------------------------------------
 
@@ -1480,6 +1496,7 @@ class RatingEngine:
             "config_version": self.cfg.version,
             "engine_version": __version__,
             "ledger_digests": _sorted_dict(self._ledger_digests.items()),
+            "ledger_player_ids": sorted(self._ledger_player_ids, key=str),
             "players": [
                 _player_form(player)
                 for player in sorted(self.players.values(), key=lambda p: str(p.id))
@@ -1521,6 +1538,7 @@ class RatingEngine:
         engine.calculated_as_of = state.calculated_as_of
         engine.replay_info = state.replay_info
         engine._ledger_digests = state.ledger_digests
+        engine._ledger_player_ids = state.ledger_player_ids
         return engine
 
     # -- players and identity ------------------------------------------------
@@ -2113,8 +2131,14 @@ def _replay(
     dated after its checkpoint are recorded.
     """
     engine = RatingEngine(cfg) if start is None else start
+    named_before = frozenset(engine._ledger_player_ids)
     for player in seed_players:
         engine.add_player(player)
+        if player.id in named_before:
+            raise SnapshotError(
+                f"Cannot resume: the seed for {player.id} names a player in rows the "
+                "checkpoint considered; a new seed for that player needs a full replay"
+            )
         if check_seed_dates:
             _check_seed_date(player, as_of, "as_of")
 
@@ -2138,6 +2162,7 @@ def _replay(
         considered += 1
         if track:
             engine._ledger_digests[match.match_id] = _match_digest(match)
+            engine._ledger_player_ids.update(match.team_a + match.team_b)
         if engine.record(match, as_of=as_of).counted:
             counted += 1
 
