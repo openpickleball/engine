@@ -1042,11 +1042,32 @@ class RatingEngine:
         in the future is accepted; the next replay with an earlier as_of
         rejects the seed.
 
+        The snapshot is checked before anything changes: captured_on is a
+        date (not a datetime), source is a str, external_player_id is a str
+        or None, rating is an int or finite float (not bool) within the
+        rating bounds, and reliability is None or an int or finite float
+        (not bool) between 0 and 100. So every state seeded here passes the
+        seed rules in add_player.
+
         Raises InvalidSeedError when the snapshot or the existing rating does
         not allow the seed, and PlayerError when player_id is blank or the
         snapshot's external identity cannot be linked (see attach_external_id).
         """
         cfg = self.cfg
+        # The same type rules the seed check applies, so every state seeded
+        # here is one add_player and replay accept.
+        if not _is_plain_date(snapshot.captured_on):
+            raise InvalidSeedError("External snapshot captured_on must be a date")
+        if not isinstance(snapshot.source, str):
+            raise InvalidSeedError("External snapshot source must be a str")
+        if snapshot.external_player_id is not None and not isinstance(
+            snapshot.external_player_id, str
+        ):
+            raise InvalidSeedError("External snapshot external_player_id must be a str or None")
+        if not _is_finite_number(snapshot.rating):
+            raise InvalidSeedError("External rating must be a finite number")
+        if snapshot.reliability is not None and not _is_finite_number(snapshot.reliability):
+            raise InvalidSeedError("External reliability must be a finite number")
         if not cfg.min_rating <= snapshot.rating <= cfg.max_rating:
             raise InvalidSeedError("External rating is outside the configured scale")
         if snapshot.reliability is not None and not 0 <= snapshot.reliability <= 100:
