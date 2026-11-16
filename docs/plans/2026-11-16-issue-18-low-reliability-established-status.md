@@ -52,7 +52,19 @@ Matches needed to reach 60, by match type, for the same weekly schedule:
 
 The docs state the headline: "Under the defaults, a new player with no imported rating, playing one match a week with varied partners and opponents, becomes established after about 10 to 13 tournament, league, or recreational verified matches (10 tournament, 11 league, or 13 recreational verified matches of one game, fewer for best of 3), and after about twice as many against the same players. Self-reported matches need about 20 to 25 with varied players and never get there against the same players, because repeat matches are discounted and then rejected." They do not paste the whole table. (Corrected in review: an earlier headline gave a range of 8 to 13 that was false for self-reported matches.)
 
-A player seeded with `seed_external_rating` (rating 3.5, captured 2026-01-01) starts at RD `external_seed_rd` (0.42), not `new_player_rd` (0.80). On the same weekly schedule, single game, varied players, they reach 60 after 3 tournament matches (60.4), 4 league matches (69.2), or 4 recreational verified matches (66.9). The counts are the same with an imported reliability of 95.0 or None. Measured during review on this branch. The docs say the headline counts are for a player with no imported rating and give the 3 to 4 for a seeded player. (Added in review: the earlier headline did not say it covered only unseeded players.)
+A player seeded with `seed_external_rating` (rating 3.5, captured 2026-01-01) starts at RD `external_seed_rd` (0.42), not `new_player_rd` (0.80). On the same weekly schedule, single game, varied players, they reach 60 after 3 tournament matches (60.4), 4 league matches (69.2), or 4 recreational verified matches (66.9). The counts are the same with an imported reliability of 95.0 or None. Measured during review on this branch. The docs say the headline counts are for a player with no imported rating and give the 3 to 4 for a recently captured seed. (Added in review: the earlier headline did not say it covered only unseeded players.)
+
+`seed_external_rating` sets `rd_as_of` to the capture date, and `inflated_rd` grows RD from that date up to `rd_max`. So an older import gives less of a head start. Matches needed to reach 60 by the snapshot's age at the first match (weekly, varied players, single game; measured by the reviewer):
+
+| Capture age at first match | Tournament | League | Recreational verified |
+| --- | --- | --- | --- |
+| 4 days | 3 | 4 | 4 |
+| 3 months | 4 | 4 | 4 |
+| 2 years | 5 | 5 | 6 |
+| 4 years | 7 | 7 | 9 |
+| 10 years (RD capped at `rd_max`) | 10 | 11 | 13 |
+
+The docs make the claim conditional: a recently captured import is established after about 3 to 4 matches, an older one gets less of a head start, and a very old one none. The imported rating and its reliability value do not change the count. (Added in review: the earlier claim ignored the snapshot's age.)
 
 After the 11th league match, measured at a later date with no new matches: 60.6 at 90 days, 59.7 at 120 days, 58.1 at 180 days.
 
