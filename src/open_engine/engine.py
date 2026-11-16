@@ -50,12 +50,23 @@ Published behavior notes:
   reliability is shown separately, in PlayerSummary.imported_reliability,
   only until OPEN-earned reliability exceeds it or the carry limits in
   Config are reached; otherwise that field is None. It is not carried
-  before its capture date, but with no as_of, player_summary measures from
-  the state's own rd_as_of, which for an unplayed import is its capture
-  date. So a future-dated import is still shown unless the caller passes
-  as_of (for example today); replay rejects such seeds. An external
-  reliability never sets OPEN RD: an imported seed's RD is always
+  before its capture date, measured at the same reference date as
+  reliability (see the next note), so an unplayed import captured after
+  the last replay is not shown by default; replay rejects such seeds. An
+  external reliability never sets OPEN RD: an imported seed's RD is always
   Config.external_seed_rd.
+- player_summary measures inactivity, RD, and reliability at a reference
+  date. With no as_of, it is the later of the last replay date
+  (calculated_as_of) and the player's last match. So a stale player is
+  measured at the replay date and loses reliability as replays move
+  forward, and a player with live matches since is measured at their last
+  match. Players in one engine can be measured at different dates. With no
+  as_of on an engine that was never replayed, it raises
+  ReferenceDateError, as it does for an as_of that is not a plain date.
+  An as_of earlier than the player's last match does not rebuild past
+  state: RD and partner variety stay as of the stored state. `reliability`
+  takes as_of as a required argument. The engine never reads the wall
+  clock.
 - Ledger order: `replay` and `prequential_predictions` sort matches by
   `played_on` first. Within one `played_on` date, untimed matches come
   first (by `sequence`, then `match_id`), then timed matches (by the UTC
@@ -80,8 +91,10 @@ Published behavior notes:
   dated after its last ledger match),
   `PlayerError` covers player identities, `EvaluationError` covers
   evaluation, fits and win probabilities, `LedgerConflictError` covers
-  conflicting ledger rows, and `SnapshotError` covers snapshots that cannot
-  be loaded or resumed from.
+  conflicting ledger rows, `SnapshotError` covers snapshots that cannot
+  be loaded or resumed from, and `ReferenceDateError` covers a
+  `player_summary` call with no date to measure at or with an as_of that
+  is not a plain date.
 - Snapshots and checkpoints: `RatingEngine.to_snapshot()` gives the whole
   engine state as JSON-safe data (schema version 1) with sorted keys and
   lists, and `RatingEngine.from_snapshot` loads it back after validating
@@ -155,6 +168,7 @@ from ._errors import InvalidSeedError as InvalidSeedError
 from ._errors import LedgerConflictError as LedgerConflictError
 from ._errors import OpenEngineError as OpenEngineError
 from ._errors import PlayerError as PlayerError
+from ._errors import ReferenceDateError as ReferenceDateError
 from ._errors import SnapshotError as SnapshotError
 from ._version import __version__
 from .winprob import calibrate_win_probability, match_win_probability
@@ -784,7 +798,8 @@ class PlayerSummary:
     reliability is always OPEN-earned. imported_reliability is the imported
     external reliability, rounded to 1 place, while it is carried, otherwise
     None. It is carried when it was captured on or before the reference date
-    (player_summary's as_of, else the state's rd_as_of, else today), is
+    (player_summary's as_of, else the later of the engine's calculated_as_of
+    and the player's last_played), is
     fresh, is within the carry match limit, and is higher than the earned
     value. It is shown separately and never replaces or converts into
     reliability.
@@ -870,15 +885,14 @@ def _rolling_unique_count(interactions: dict[str, date], on: date, window_days: 
     return sum(1 for last_seen in interactions.values() if last_seen >= cutoff)
 
 
-def reliability(state: RatingState, cfg: Config, as_of: date | None = None) -> float:
+def reliability(state: RatingState, cfg: Config, as_of: date) -> float:
     """
     OPEN-earned reliability (0-100). Never a conversion of an external score.
 
     Combines rating certainty (from RD, inflated for inactivity) with rolling
-    partner/opponent variety.
+    partner/opponent variety. as_of is the date inactivity and variety are
+    measured at.
     """
-    if as_of is None:
-        as_of = state.rd_as_of or date.today()
     rd = inflated_rd(state, as_of, cfg)
     certainty = 1.0 - (rd - cfg.rd_min) / (cfg.rd_max - cfg.rd_min)
     variety_count = _rolling_unique_count(
@@ -2170,19 +2184,42 @@ class RatingEngine:
         """
         The player's rating, reliability, and provenance in one format.
 
-        as_of sets the date that inactivity and reliability are measured at.
-        It defaults to the date of the player's last RD update, or today.
+        as_of sets the reference date that inactivity and reliability are
+        measured at. With no as_of, it is the later of calculated_as_of (the
+        last replay date) and the player's last_played. So a stale player is
+        measured at the replay date, and a player with live matches since at
+        their last match. Players in one engine can be measured at different
+        dates by default. A backdated live match moves last_played back, and
+        so the default date with it. The engine never reads the wall clock.
+
+        An as_of earlier than the player's last match does not rebuild past
+        state: RD and partner variety stay as of the stored state.
 
         imported_reliability is not carried when the import's capture date is
-        after the reference date. Without as_of, the reference for an unplayed
-        imported state is its own rd_as_of (its capture date), so a
-        future-dated import is shown. Pass as_of (for example today) on the
-        live path to stop that; replay rejects such seeds.
+        after the reference date. So an unplayed import captured after the
+        last replay is not shown by default until the next replay or an
+        explicit as_of.
+
+        Raises ReferenceDateError when as_of is None and the engine was never
+        replayed, or when as_of is not a plain date (a datetime is not one).
+        These checks come first, so a failed call creates no player or rating
+        state.
         """
+        if as_of is not None and not _is_plain_date(as_of):
+            raise ReferenceDateError(
+                "player_summary as_of must be a date, not a str, datetime, or other type"
+            )
+        reference = as_of if as_of is not None else self.calculated_as_of
+        if reference is None:
+            raise ReferenceDateError(
+                "player_summary needs as_of when the engine has not been replayed:"
+                " pass as_of or replay first"
+            )
         cfg = self.cfg
         player = self.player(player_id)
         state = self.state(player_id, rating_format)
-        reference = as_of or state.rd_as_of or date.today()
+        if as_of is None and state.last_played is not None:
+            reference = max(reference, state.last_played)
         earned = reliability(state, cfg, reference)
 
         # Imported reliability is shown, separately, only while it is fresh,

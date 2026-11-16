@@ -64,7 +64,7 @@ def main() -> None:
     print("Match counted:", result.counted, "| format:", result.rating_format.value)
     print("Rating changes:", result.deltas)
     for player_id in ("player_a", "player_b", "player_c", "player_d"):
-        summary = engine.player_summary(player_id, RatingFormat.DOUBLES)
+        summary = engine.player_summary(player_id, RatingFormat.DOUBLES, as_of=match.played_on)
         print(
             f"{summary.player_id}: rating {summary.rating},"
             f" reliability {summary.reliability},"

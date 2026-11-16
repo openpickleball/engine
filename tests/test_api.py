@@ -320,7 +320,7 @@ def _imported_engine() -> RatingEngine:
 
 
 def test_player_summary_is_a_frozen_dataclass() -> None:
-    summary = _imported_engine().player_summary("a", D)
+    summary = _imported_engine().player_summary("a", D, as_of=ON)
     assert type(summary) is open_engine.PlayerSummary
     assert [f.name for f in dataclasses.fields(summary)] == SUMMARY_FIELDS
     with pytest.raises(dataclasses.FrozenInstanceError):
@@ -356,8 +356,9 @@ def test_player_summary_for_a_provisional_player_after_replay() -> None:
     eng.link_account("b", "account-b")
     summary = eng.player_summary("b", D)
     state = eng.state("b", D)
-    assert state.rd_as_of is not None
-    assert summary.reliability == engine_module.reliability(state, eng.cfg, state.rd_as_of)
+    as_of = date(2026, 11, 1)
+    assert summary.reliability == engine_module.reliability(state, eng.cfg, as_of)
+    assert summary.rd == round(engine_module.inflated_rd(state, as_of, eng.cfg), 4)
     assert summary.imported_reliability is None
     assert summary.initial_source == "open_provisional"
     assert summary.initial_source_date is None
@@ -427,6 +428,7 @@ PUBLIC_API = [
     "RatingEngine",
     "RatingFormat",
     "RatingState",
+    "ReferenceDateError",
     "RejectionReason",
     "ReplayInfo",
     "ScaleFit",
