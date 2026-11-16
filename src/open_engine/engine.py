@@ -906,6 +906,12 @@ def _validate_seed(player: Player, cfg: Config) -> None:
     _check_seed_identity(player)
     if not isinstance(player.ratings, dict):
         raise InvalidSeedError(f"Seed for {player.id}: ratings must be a dict")
+    if not isinstance(player.external_ids, dict):
+        raise InvalidSeedError(f"Seed for {player.id}: external_ids must be a dict")
+    if not all(isinstance(k, str) and isinstance(v, str) for k, v in player.external_ids.items()):
+        raise InvalidSeedError(f"Seed for {player.id}: external_ids must map str to str")
+    if player.account_user_id is not None and not isinstance(player.account_user_id, str):
+        raise InvalidSeedError(f"Seed for {player.id}: account_user_id must be a str or None")
     for key in player.ratings:
         if not isinstance(key, RatingFormat):
             raise InvalidSeedError(
@@ -958,7 +964,9 @@ class RatingEngine:
 
         Seed rules, checked for the seed and every rating state:
         - The seed is a Player with a str id, its ratings are a dict, every
-          key is a RatingFormat, and every value is a RatingState.
+          key is a RatingFormat, and every value is a RatingState. Its
+          external_ids are a dict of str to str, and its account_user_id is
+          a str or None.
         - rating, rd, and an imported reliability are ints or finite floats
           (not bool), the counts are ints, partners and opponents are
           dicts, and dates are dates.
