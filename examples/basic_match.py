@@ -67,8 +67,8 @@ def main() -> None:
         summary = engine.player_summary(player_id, RatingFormat.DOUBLES)
         print(
             f"{summary.player_id}: rating {summary.rating},"
-            f" reliability {summary.reliability} ({summary.reliability_basis.value}),"
-            f" OPEN reliability {summary.open_reliability},"
+            f" reliability {summary.reliability},"
+            f" imported reliability {summary.imported_reliability},"
             f" matches {summary.matches_played}, last played {summary.last_played},"
             f" seeded from {summary.initial_source}"
         )

@@ -656,28 +656,22 @@ class MatchResult:
     parent: MatchResult | None = None  # overall doubles update for categories
 
 
-class ReliabilityBasis(_StrEnum):
-    """Where a displayed reliability comes from."""
-
-    OPEN = "open"
-    IMPORTED = "imported"
-
-
 @dataclass(frozen=True)
 class PlayerSummary:
     """
     A player's published rating in one format, with reliability and provenance.
 
-    reliability is the displayed value: imported reliability while it is
-    carried (reliability_basis is IMPORTED), otherwise open_reliability.
+    reliability is always OPEN-earned. imported_reliability is the imported
+    external reliability while it is carried (fresh, within the carry match
+    limit, and higher than the earned value), otherwise None. It is shown
+    separately and never replaces or converts into reliability.
     """
 
     player_id: str
     rating_format: RatingFormat
     rating: float  # rounded to 3 places
-    reliability: float  # displayed reliability, 0-100
-    reliability_basis: ReliabilityBasis
-    open_reliability: float  # OPEN-earned reliability, 0-100
+    reliability: float  # OPEN-earned reliability, 0-100
+    imported_reliability: float | None  # carried imported reliability, 0-100
     rd: float  # inflated to the reference date, rounded to 4 places
     matches_played: int
     last_played: date | None
@@ -1264,9 +1258,9 @@ class RatingEngine:
         reference = as_of or state.rd_as_of or date.today()
         earned = reliability(state, cfg, reference)
 
-        # Imported reliability is shown, labeled, only while it is fresh,
+        # Imported reliability is shown, separately, only while it is fresh,
         # higher than what OPEN has earned, and within the carry match limit.
-        displayed, basis = earned, ReliabilityBasis.OPEN
+        imported: float | None = None
         seed_reliability = state.initial_source_reliability
         if (
             seed_reliability is not None
@@ -1275,15 +1269,14 @@ class RatingEngine:
             and (reference - state.initial_source_date).days <= cfg.import_reliability_max_age_days
             and seed_reliability > earned
         ):
-            displayed, basis = round(float(seed_reliability), 1), ReliabilityBasis.IMPORTED
+            imported = round(float(seed_reliability), 1)
 
         return PlayerSummary(
             player_id=player.id,
             rating_format=rating_format,
             rating=round(state.rating, 3),
-            reliability=displayed,
-            reliability_basis=basis,
-            open_reliability=earned,
+            reliability=earned,
+            imported_reliability=imported,
             rd=round(inflated_rd(state, reference, cfg), 4),
             matches_played=state.matches_played,
             last_played=state.last_played,

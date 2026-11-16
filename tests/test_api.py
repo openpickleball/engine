@@ -290,8 +290,7 @@ SUMMARY_FIELDS = [
     "rating_format",
     "rating",
     "reliability",
-    "reliability_basis",
-    "open_reliability",
+    "imported_reliability",
     "rd",
     "matches_played",
     "last_played",
@@ -304,15 +303,6 @@ SUMMARY_FIELDS = [
     "config_version",
     "account_linked",
 ]
-
-
-def test_reliability_basis_members() -> None:
-    basis = open_engine.ReliabilityBasis
-    assert issubclass(basis, str)
-    assert {member.name: member.value for member in basis} == {
-        "OPEN": "open",
-        "IMPORTED": "imported",
-    }
 
 
 def _imported_engine() -> RatingEngine:
@@ -339,9 +329,8 @@ def test_player_summary_values_for_an_imported_baseline() -> None:
     assert summary.player_id == "a"
     assert summary.rating_format is D
     assert summary.rating == round(state.rating, 3)
-    assert summary.reliability == 85.0
-    assert summary.reliability_basis is open_engine.ReliabilityBasis.IMPORTED
-    assert summary.open_reliability == engine_module.reliability(state, eng.cfg, as_of)
+    assert summary.reliability == engine_module.reliability(state, eng.cfg, as_of)
+    assert summary.imported_reliability == 85.0
     assert summary.rd == round(engine_module.inflated_rd(state, as_of, eng.cfg), 4)
     assert summary.matches_played == 1
     assert summary.last_played == ON
@@ -360,8 +349,10 @@ def test_player_summary_for_a_provisional_player_after_replay() -> None:
     eng = replay([_match()], as_of=date(2026, 11, 1))
     eng.link_account("b", "account-b")
     summary = eng.player_summary("b", D)
-    assert summary.reliability_basis is open_engine.ReliabilityBasis.OPEN
-    assert summary.reliability == summary.open_reliability
+    state = eng.state("b", D)
+    assert state.rd_as_of is not None
+    assert summary.reliability == engine_module.reliability(state, eng.cfg, state.rd_as_of)
+    assert summary.imported_reliability is None
     assert summary.initial_source == "open_provisional"
     assert summary.initial_source_date is None
     assert summary.initial_source_reliability is None
@@ -431,7 +422,6 @@ PUBLIC_API = [
     "RatingFormat",
     "RatingState",
     "RejectionReason",
-    "ReliabilityBasis",
     "ReplayInfo",
     "ScaleFit",
     "ScoringType",

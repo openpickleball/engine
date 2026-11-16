@@ -50,7 +50,7 @@ Decisions approved by the maintainer before this plan was committed:
 
 1. Red tests for seed validation (add_player, replay, prequential), then `_validate_seed` and the wiring.
 2. Red tests for `rd_override` and the Config field, then remove them.
-3. Red tests for the summary fields, then change `PlayerSummary`, `player_summary`, remove `ReliabilityBasis`, update existing tests.
+3. Red tests for the summary fields, then change `PlayerSummary`, `player_summary`, remove `ReliabilityBasis`, update existing tests. The README quick start line and Public API list and `examples/basic_match.py` change in this step too, because `tests/test_readme.py` runs the quick start and `tests/test_api.py` checks the README API list; the suite is red without them.
 4. Docs, example, changelog. Full gate.
 
 ## Risks
