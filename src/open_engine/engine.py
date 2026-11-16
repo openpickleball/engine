@@ -91,11 +91,15 @@ Published behavior notes:
   checkpoint date and equals a full replay of the same ledger, given the
   whole ledger or only the newer rows. It checks every row first and
   raises instead of differing: SnapshotError for a snapshot not from a
-  replay or with live updates, an as_of before the checkpoint, or a row on
-  or before the checkpoint date that the checkpoint did not consider
-  (compared by a digest that mirrors the ledger's duplicate rule), and
-  LedgerConflictError for such a row that changed or a later row that
-  reuses its id.
+  replay, with live updates, or changed in any other way after its replay
+  (the snapshot's `resumable` mark, which replay sets and every other
+  state change clears), an as_of before the checkpoint, a row on or
+  before the checkpoint date that the checkpoint did not consider
+  (compared by a digest that mirrors the ledger's duplicate rule), or a
+  seed for a player the checkpoint's rows named; LedgerConflictError for
+  such a row that changed or a later row that reuses its id. Resume
+  cannot see a voided row on or before the checkpoint, or a backdated row
+  when given only the newer rows: those need a full replay.
 - `record` validates every match first. A valid match whose `match_id` was
   already processed returns a result that is not counted, with
   `RejectionReason.DUPLICATE_MATCH_ID`, instead of raising.
@@ -109,12 +113,16 @@ Production notes:
 - Store each replay's `ReplayInfo` (as_of date, config version, config
   fingerprint) for auditability.
 - To avoid replaying the whole ledger every time, persist the snapshot of
-  each scheduled replay and resume the next one from it. Take checkpoints
-  from replays only, never from an engine with live updates. Store a match
-  before the replay that covers its date; a match that arrives for a
-  checkpointed date makes resume raise, and needs a full replay. A
-  snapshot does not replace the ledger: keep the ledger as the source of
-  truth and run a full replay when in doubt.
+  each scheduled replay and resume the next one from it. Take the
+  snapshot right after the replay, before any other call on the engine.
+  Store a match before the replay that covers its date. A void, an edit,
+  or a backdated row on or before a checkpoint date needs a full replay:
+  resume cannot see a removed row, nor a late row when given only the
+  newer rows. A snapshot does not replace the ledger: keep the ledger as
+  the source of truth and run a full replay when in doubt.
+- A stored snapshot sets every rating when it is loaded, so give it the
+  same write protection as the ratings themselves. from_snapshot checks
+  its shape and the engine's invariants, not that it is authentic.
 """
 
 from __future__ import annotations
@@ -1639,9 +1647,22 @@ class RatingEngine:
         state with every RatingState field, dates as ISO text, and partners
         and opponents as id to ISO date), processed_match_ids (sorted),
         self_reported_log (sorted by format then teams: rating_format,
-        teams as two sorted id lists, and dates in stored order), and
-        ledger_digests (match_id to the SHA-256 digest of each row the last
-        replay or resume considered). The README lists the schema in full.
+        teams as two sorted id lists, and dates in stored order),
+        ledger_digests (match_id to the SHA-256 digest of every row any
+        replay behind this engine considered, cumulative across resumes),
+        ledger_player_ids (sorted ids of every player named in those rows,
+        counted or not), and resumable (true only while the engine is
+        exactly what a replay produced). The README lists the schema in
+        full.
+
+        To use the snapshot as a checkpoint, take it right after replay,
+        before any other call on the engine: any change after the replay
+        (a new player or rating state, including one player_summary or
+        state() creates, a seed, an identity link, a live match) sets
+        resumable to false, and resume refuses it. A stored snapshot sets
+        every rating when loaded, so protect it from writes as you protect
+        the ratings themselves: from_snapshot checks its shape and the
+        engine's invariants, not that it is authentic.
 
         The snapshot is checked with the rules from_snapshot applies, so
         state that could not load back (a value of the wrong type, a
@@ -1686,12 +1707,24 @@ class RatingEngine:
         YYYY-MM-DD text, non-blank str ids with no repeated player or match
         id, RatingFormat values as format keys, ratings within min_rating
         and max_rating, RD within rd_min and rd_max, an imported
-        reliability between 0 and 100, nonnegative int counts, replay_info
-        present exactly when calculated_as_of is and consistent with it,
-        self-reported matchups of two disjoint teams of the format's size,
-        and ledger digests of 64 lowercase hex characters. Raises
-        SnapshotError naming the first bad value. The engine shares no
-        state with the snapshot.
+        reliability between 0 and 100, nonnegative int counts no larger
+        than 2**63 - 1, replay_info present exactly when calculated_as_of
+        is and consistent with it, self-reported matchups of two disjoint
+        teams of the format's size, ledger digests of 64 lowercase hex
+        characters, and a bool resumable that is false without a replay.
+        Every state must be one the engine can produce: initial_rating
+        within the rating bounds; an unplayed state with RD new_player_rd,
+        external_seed_rd, or at least category_seed_rd, and no partners,
+        opponents, or live updates; matches_played 0 exactly when
+        last_played is null; live updates no more than matches played; no
+        player their own partner or opponent; an imported reliability only
+        with an initial_source_date. Account and external ids are non-blank
+        and each links to one player. A resumable snapshot also holds no
+        date after calculated_as_of, and its replay_info counts equal the
+        number of ledger digests and processed match ids. These checks
+        cover shape and invariants, not authenticity. Raises SnapshotError
+        naming the first bad value. The engine shares no state with the
+        snapshot.
         """
         engine = cls(cfg)
         state = _read_snapshot(snapshot, engine.cfg)
@@ -2233,16 +2266,23 @@ def replay(
     checkpoint date. Rows dated on or before the checkpoint date are not
     recorded again: each must be a row the checkpoint considered,
     unchanged. seed_players then holds only seeds not in the checkpoint.
-    Resume raises instead of giving a different result:
+    Take the checkpoint snapshot right after its replay, before any other
+    call on the engine. Resume raises instead of giving a different result:
     - SnapshotError for a malformed snapshot or one taken under another
       Config (see RatingEngine.from_snapshot), a snapshot not from a
-      replay, one with live updates since its replay, an as_of before the
-      checkpoint date, or a row dated on or before the checkpoint date that
-      the checkpoint did not consider.
+      replay, one with live updates or any other change since its replay
+      (resumable is false), an as_of before the checkpoint date, a row
+      dated on or before the checkpoint date that the checkpoint did not
+      consider, or a seed for a player named in a row the checkpoint
+      considered (even if every such row was rejected).
     - LedgerConflictError for a row dated on or before the checkpoint date
       that differs from the row the checkpoint considered under its
       match_id, or a row dated after it that reuses one of those ids.
     - PlayerError for a seed whose player is already in the snapshot.
+    Resume cannot see a row removed (voided) from the ledger on or before
+    the checkpoint date, nor, when given only the newer rows, a late row
+    added on or before it. A void, an edit, or a backdated row needs a
+    full replay.
     """
     start = None
     if from_snapshot is not None:

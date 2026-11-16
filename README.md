@@ -130,10 +130,10 @@ Errors (every class is a `ValueError`):
 - `ConfigError`: a `Config` or `GameFormat` value is not valid.
 - `InvalidMatchError`: a match, its teams, its scores, or its `played_at` is not valid.
 - `InvalidSeedError`: an external or replay seed cannot initialize a rating. `RatingEngine.add_player`, `replay`, and `prequential_predictions` (and so `evaluate`, `fit_scale`, and `fit_win_calibration`) raise it for a seed that breaks the seed rules in `add_player`'s docstring, including a seed that is not a `Player`, a field of the wrong type, or a rating outside the rating bounds. `replay` also raises it for a seed dated after `as_of`, and `prequential_predictions` for one dated after its last ledger match. `RatingEngine.seed_external_rating` raises it for a rating format of the wrong type, a snapshot whose captured date, source, or external id has the wrong type, or whose rating or reliability has the wrong type or is out of range, or an existing rating it may not replace.
-- `PlayerError`: a player identity, account link, or external identity is not valid. `seed_external_rating` raises it for a blank player id or when the snapshot's external identity cannot be linked (it names no source, it is already linked to another player, or the player already has a different id from that source), and `replay` and `prequential_predictions` raise it when two seeds share a player id.
+- `PlayerError`: a player identity, account link, or external identity is not valid. `seed_external_rating` raises it for a blank player id or when the snapshot's external identity cannot be linked (it names no source, it is already linked to another player, or the player already has a different id from that source), and `replay` and `prequential_predictions` raise it when two seeds share a player id. `replay(from_snapshot=...)` raises it for a seed whose player is already in the snapshot.
 - `EvaluationError`: an evaluation, fit, or win probability cannot be computed.
 - `LedgerConflictError`: ledger rows share a `match_id` but differ. Its `match_ids` lists them.
-- `SnapshotError`: a snapshot cannot be loaded or resumed from. `RatingEngine.from_snapshot` raises it for a malformed snapshot or one taken under another `Config`, `RatingEngine.to_snapshot` for state that could not load back, and `replay(from_snapshot=...)` for a checkpoint it cannot resume from.
+- `SnapshotError`: a snapshot cannot be loaded or resumed from. `RatingEngine.from_snapshot` raises it for a malformed snapshot, one taken under another `Config`, or one holding a state the engine cannot produce, and `RatingEngine.to_snapshot` for state that could not load back. `replay(from_snapshot=...)` raises it for a snapshot not from a replay, one with live updates or any other change since its replay, an `as_of` before the checkpoint date, a row on or before the checkpoint date that the checkpoint did not see, or a seed for a player named in a row the checkpoint saw.
 <!-- public-api:end -->
 
 ## Ledger order
@@ -153,15 +153,19 @@ Errors (every class is a `ValueError`):
 
 A snapshot of a replay is a checkpoint. `replay(matches, seeds, cfg=cfg, as_of=later, from_snapshot=snapshot)` resumes from it and gives the same result as a full replay to `later`. You can pass the whole ledger or only the rows dated after the checkpoint. Pass only seeds that are not in the checkpoint.
 
+Take the checkpoint snapshot right after the replay, before any other call on the engine. Any change after the replay makes the snapshot one resume refuses: a live match, a seed, an account or external id link, a new player, or a new rating state (`player_summary` and `state` create one for a format the player has no rating in).
+
 Resume raises instead of giving a different result:
 
-- `SnapshotError` for a malformed snapshot, a snapshot taken under another `Config`, a snapshot that is not from a replay, a snapshot with live updates since its replay, an `as_of` before the checkpoint date, or a row dated on or before the checkpoint date that the checkpoint did not see.
+- `SnapshotError` for a malformed snapshot, a snapshot taken under another `Config`, a snapshot that is not from a replay, a snapshot with live updates or any other change since its replay, an `as_of` before the checkpoint date, a row dated on or before the checkpoint date that the checkpoint did not see, or a seed for a player named in a row the checkpoint saw (even when every such row was rejected, so the player is not in the snapshot).
 - `LedgerConflictError` for a row dated on or before the checkpoint date that differs from the row the checkpoint saw under that `match_id`, or a later row that reuses one of those ids.
 - `PlayerError` for a seed whose player is already in the snapshot.
 
-So take checkpoints from replays only, and store a match before the replay that covers its date. A match that arrives late for a checkpointed date needs a full replay.
+Resume cannot see everything. It cannot see a row removed (voided) from the ledger on or before the checkpoint date. Given only the newer rows, it cannot see a late row added on or before the checkpoint date either. So a void, an edit, or a backdated row needs a full replay. Store a match before the replay that covers its date.
 
-Schema, version 1. Dates are `YYYY-MM-DD` text. Every object has exactly these keys, and `from_snapshot` rejects a missing key, an unknown key, or a value of the wrong type or out of range.
+A stored snapshot sets every rating when it is loaded. Give it the same write protection as the ratings themselves. `from_snapshot` checks its shape and the engine's rules, not that it is authentic.
+
+Schema, version 1. Dates are `YYYY-MM-DD` text. Every object has exactly these keys, and `from_snapshot` rejects a missing key, an unknown key, or a value of the wrong type or out of range. It also rejects a state the engine cannot produce: an initial rating outside the rating bounds, an unplayed state with a played state's RD or with partners, opponents, or live updates, `matches_played` and `last_played` that disagree, more live updates than matches, a player listed as their own partner or opponent, or an imported reliability with no import date. Account and external ids must be non-blank and link to one player each. In a resumable snapshot, no date may be after `calculated_as_of`, and the replay counts must match `ledger_digests` and `processed_match_ids`. Counts are at most `2**63 - 1`.
 
 - `snapshot_version`: `1`.
 - `engine_version`: the package version that wrote it. Informational, not checked.
@@ -171,7 +175,9 @@ Schema, version 1. Dates are `YYYY-MM-DD` text. Every object has exactly these k
 - `players`: sorted by `id`. Each has `id`, `account_user_id` (text or `null`), `external_ids` (source to id), and `ratings` (rating format value to state). A state has every `RatingState` field: `rating`, `rd`, `matches_played`, `last_played`, `rd_as_of`, `initial_rating`, `initial_source`, `initial_source_date`, `initial_source_reliability`, `initial_external_player_id`, `initial_evidence_reference`, `live_updates_since_replay`, `partners`, and `opponents` (the last two map a player id to a date).
 - `processed_match_ids`: sorted.
 - `self_reported_log`: sorted by format, then teams. Each entry has `rating_format`, `teams` (two sorted lists of player ids), and `dates` in the order they were recorded.
-- `ledger_digests`: `match_id` to the SHA-256 digest of each row the replay considered. Resume uses them to check rows dated on or before the checkpoint.
+- `ledger_digests`: `match_id` to the SHA-256 digest of every row a replay considered, kept across resumes. Resume uses them to check rows dated on or before the checkpoint.
+- `ledger_player_ids`: sorted ids of every player named in those rows, counted or not. Resume refuses a seed for one of them.
+- `resumable`: `true` only while the engine is exactly what a replay produced. Resume refuses a snapshot where it is `false`.
 
 ## Test data
 
