@@ -14,14 +14,31 @@ inactivity-based uncertainty, rolling partner/opponent diversity, scale
 calibration, and deterministic historical replay.
 
 Published behavior notes:
-- Team average movement is zero-sum, with two documented exceptions, both
-  reported on every MatchResult:
-    1. `clamped`: a player hit the rating floor or ceiling, so part of their
+- Each player moves by their own K (from their RD after inactivity):
+  `sign * K * effective_weight * surprise`. A partner's or opponent's
+  uncertainty never changes a player's step. Team average movement is not
+  always zero-sum. Every MatchResult reports the net as `imbalance` (mean
+  team A delta plus mean team B delta). When both teams have the same mean
+  K and nothing is clamped or frozen, it is 0.0. It can be nonzero for
+  three reasons:
+    1. Unequal K: the team with the higher mean K moves more.
+    2. `clamped`: a player hit the rating floor or ceiling, so part of their
        change was not applied.
-    2. `frozen`: the match is on or before a player's imported baseline date.
+    3. `frozen`: the match is on or before a player's imported baseline date.
        The imported rating already reflects that match, so that player's
        rating is used for the expectation but does not move. Their teammates
-       still receive only their own share, so the team moves less.
+       move by their own K only, so the team moves less.
+  It is also 0.0 when the result matched the expectation, or when clamps or
+  freezes on both teams cancel. So an imbalance of 0.0 does not mean nothing
+  was clamped or frozen: read `clamped` and `frozen` for that.
+- Because team movement is not zero-sum, matches between high-K and low-K
+  players can add rating to the pool or remove it. Colluding accounts can
+  exploit this: a new account can gain rating by beating a low-K account
+  again and again, or lose rating faster on purpose. `imbalance` is a
+  per-match value in team-average units, so a match adds
+  `team_size * imbalance` to the pool's total rating (twice the value in
+  doubles). The backend should total it per pool (and per replay) and
+  monitor it.
 - Authoritative ratings come from scheduled replays (see
   `Config.replay_interval_days`). Live updates between replays are
   provisional and are labeled with the count of live updates since the last
@@ -233,8 +250,9 @@ class Config:
         }
     )
 
-    # Per-player responsiveness. K is derived from RD, then normalized across
-    # the match so team-average movement is zero-sum before clamps/freezes.
+    # Per-player responsiveness. K is derived from RD, and each player moves
+    # by their own K, so team-average movement is not always zero-sum.
+    # MatchResult.imbalance reports the net.
     k_min: float = 0.12
     k_max: float = 0.60
 
@@ -610,9 +628,19 @@ class MatchResult:
     """
     What record() did with one match in one rating format.
 
-    reason is None when the match counted. deltas, frozen, and clamped list
-    the rating changes and the two documented zero-sum exceptions. parent
-    holds the overall doubles update for a category match.
+    reason is None when the match counted. deltas lists the rating changes.
+    frozen and clamped list the players whose change was not fully applied.
+    imbalance is the mean team A delta plus the mean team B delta, from the
+    unrounded changes, rounded to 5 places. Each delta is rounded on its
+    own, so imbalance can differ from the same sum of the rounded deltas by
+    up to 1.5e-5. imbalance is in team-average units, so a match adds
+    team_size * imbalance to the pool's total rating (twice the value in
+    doubles). It is 0.0 when both teams have the same mean K and no
+    player is clamped or frozen, and for a match that did not count. It can
+    be nonzero when the teams' mean K differ or a player is clamped or
+    frozen. A value of 0.0 does not mean nothing was clamped or frozen: read
+    clamped and frozen for that. parent holds the overall doubles update for
+    a category match, with its own imbalance.
     """
 
     counted: bool
@@ -625,6 +653,7 @@ class MatchResult:
     deltas: dict[str, float] = field(default_factory=dict)
     frozen: tuple[str, ...] = ()  # predates the player's imported baseline
     clamped: tuple[str, ...] = ()  # hit the rating floor or ceiling
+    imbalance: float = 0.0  # mean team A delta plus mean team B delta
     parent: MatchResult | None = None  # overall doubles update for categories
 
 
@@ -1117,33 +1146,21 @@ class RatingEngine:
             cfg.match_weights[match.match_type] * repeat_factor * information_multiplier(match, cfg)
         )
 
-        # One shared match K keeps team-average movement zero-sum. Within each
-        # team, higher-uncertainty players receive a larger share.
-        all_k = [player_k(work[pid], cfg) for pid in ids]
-        match_k = sum(all_k) / len(all_k)
-        team_size = rating_format.team_size
-
+        # Each player moves by their own K, so team-average movement is not
+        # always zero-sum; imbalance reports the net.
         deltas: dict[str, float] = {}
+        applied: dict[str, float] = {}  # unrounded, for imbalance
         clamped: list[str] = []
         for team_ids, opponent_ids, sign in (
             (match.team_a, match.team_b, 1.0),
             (match.team_b, match.team_a, -1.0),
         ):
-            team_ks = [player_k(work[pid], cfg) for pid in team_ids]
-            team_k_total = sum(team_ks)
-            for pid, individual_k in zip(team_ids, team_ks, strict=True):
+            for pid in team_ids:
                 if pid in frozen:
-                    deltas[pid] = 0.0
+                    deltas[pid] = applied[pid] = 0.0
                     continue
                 state = work[pid]
-                raw_delta = (
-                    sign
-                    * team_size
-                    * match_k
-                    * effective_weight
-                    * surprise
-                    * (individual_k / team_k_total)
-                )
+                raw_delta = sign * player_k(state, cfg) * effective_weight * surprise
                 old_rating = state.rating
                 state.rating = max(cfg.min_rating, min(cfg.max_rating, old_rating + raw_delta))
                 if abs(state.rating - (old_rating + raw_delta)) > 1e-12:
@@ -1159,7 +1176,19 @@ class RatingEngine:
                     {other: match.played_on for other in team_ids if other != pid}
                 )
                 state.opponents.update({other: match.played_on for other in opponent_ids})
-                deltas[pid] = round(state.rating - old_rating, 5)
+                applied[pid] = state.rating - old_rating
+                deltas[pid] = round(applied[pid], 5)
+
+        # From the unrounded changes, so rounding residue never shows. Adding
+        # 0.0 turns a negative zero into 0.0.
+        imbalance = (
+            round(
+                sum(applied[pid] for pid in match.team_a) / len(match.team_a)
+                + sum(applied[pid] for pid in match.team_b) / len(match.team_b),
+                5,
+            )
+            + 0.0
+        )
 
         result = MatchResult(
             counted=True,
@@ -1171,6 +1200,7 @@ class RatingEngine:
             deltas=deltas,
             frozen=tuple(sorted(frozen)),
             clamped=tuple(clamped),
+            imbalance=imbalance,
         )
         return result, {pid: work[pid] for pid in ids if pid not in frozen}
 

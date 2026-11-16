@@ -90,9 +90,10 @@ def true_rating_seeds(true: dict[str, float]) -> list:
 def test_live_default_matches_old_evaluate():
     report = evaluate(simulate_league())
     # Frozen from evaluate() at commit 02063b9, before prequential_predictions.
+    # mse and bias re-frozen when each player moved by their own K (issue #14).
     assert report.matches_scored == 1159
-    assert report.mse == 0.01829
-    assert report.bias == 0.002047
+    assert report.mse == 0.018292
+    assert report.bias == 0.002051
 
 
 def test_unsupported_win_by_still_scores():
@@ -102,10 +103,11 @@ def test_unsupported_win_by_still_scores():
         n_matches=300, game_format=GameFormat(ScoringType.RALLY, points_to=11, win_by=3)
     )
     report = evaluate(ledger)
-    # Frozen from evaluate() at commit 02063b9.
+    # Frozen from evaluate() at commit 02063b9. mse and bias re-frozen when
+    # each player moved by their own K (issue #14).
     assert report.matches_scored == 259
-    assert report.mse == 0.023569
-    assert report.bias == 0.000251
+    assert report.mse == 0.023467
+    assert report.bias == 0.00029
     preds = prequential_predictions(ledger)
     assert len(preds) == report.matches_scored
     assert all(math.isnan(p.win_probability_raw) for p in preds)
