@@ -39,6 +39,7 @@ ERROR_NAMES = [
     "PlayerError",
     "EvaluationError",
     "LedgerConflictError",
+    "SnapshotError",
 ]
 
 
@@ -89,6 +90,10 @@ def _conflict() -> None:
     replay([_match(), _match(games=((11, 9),))], as_of=ON)
 
 
+def _bad_snapshot() -> None:
+    RatingEngine.from_snapshot({})
+
+
 @pytest.mark.parametrize(
     ("name", "action", "message"),
     [
@@ -98,6 +103,7 @@ def _conflict() -> None:
         ("PlayerError", _bad_player, "player_id is required"),
         ("EvaluationError", _bad_mode, "mode must be"),
         ("LedgerConflictError", _conflict, "Conflicting ledger rows"),
+        ("SnapshotError", _bad_snapshot, "missing key"),
     ],
 )
 def test_each_error_class_is_raised(name: str, action: Callable[[], None], message: str) -> None:
@@ -425,6 +431,7 @@ PUBLIC_API = [
     "ReplayInfo",
     "ScaleFit",
     "ScoringType",
+    "SnapshotError",
     "WinCalibrationFit",
     "calibrate_win_probability",
     "evaluate",

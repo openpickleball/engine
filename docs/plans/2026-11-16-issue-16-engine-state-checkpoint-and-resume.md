@@ -100,9 +100,9 @@ No new module, so `scripts/check_wheel.py` `PACKAGE_FILES` does not change. No n
 
 ## Order of work
 
-1. Red tests for `SnapshotError` export and the round trip (test_snapshot.py), commit failing tests.
+1. Red tests (test_snapshot.py) for the `SnapshotError` export, the round trip, determinism, the digest pairs, the coverage guard (`set(vars(RatingEngine()))` equals the attributes the snapshot covers, and `RatingState` fields equal the state keys), and the validation table. Commit failing tests. (The coverage guard and validation table were step 3; they move here so they fail before the code that makes them pass.)
 2. `SnapshotError`, `_match_digest`, `_ledger_digests` filled by `_replay`, `to_snapshot`, `from_snapshot` with validation. Green.
-3. Coverage guard test: `set(vars(RatingEngine()))` equals the attributes the snapshot covers, and `RatingState` fields equal the state keys. Validation table tests.
+3. (Folded into step 1.)
 4. Red resume tests (test_replay_resume.py), then `replay(from_snapshot=...)`. Green.
 5. Docs: module docstring, README, CHANGELOG.
 6. Full gate.
