@@ -297,6 +297,7 @@ SUMMARY_FIELDS = [
     "rating",
     "reliability",
     "imported_reliability",
+    "established",
     "rd",
     "matches_played",
     "last_played",
@@ -337,6 +338,7 @@ def test_player_summary_values_for_an_imported_baseline() -> None:
     assert summary.rating == round(state.rating, 3)
     assert summary.reliability == engine_module.reliability(state, eng.cfg, as_of)
     assert summary.imported_reliability == 85.0
+    assert summary.established is False
     assert summary.rd == round(engine_module.inflated_rd(state, as_of, eng.cfg), 4)
     assert summary.matches_played == 1
     assert summary.last_played == ON

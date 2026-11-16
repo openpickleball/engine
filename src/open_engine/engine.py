@@ -382,6 +382,12 @@ class Config:
     import_reliability_carry_matches: int = 10
     import_reliability_max_age_days: int = 365
 
+    # Reliability label. PlayerSummary.established is True when OPEN-earned
+    # reliability, as displayed, is at least this value (0-100). A label for
+    # display and eligibility only: it changes no rating, prediction, or
+    # evaluation.
+    established_reliability_threshold: float = 60.0
+
     # Category doubles matches also update overall doubles.
     category_feeds_parent: bool = True
 
@@ -428,6 +434,8 @@ class Config:
             raise ConfigError("self-reported repeat limits must be positive")
         if self.import_reliability_carry_matches < 0 or self.import_reliability_max_age_days < 0:
             raise ConfigError("import reliability limits must be nonnegative")
+        if not 0.0 <= self.established_reliability_threshold <= 100.0:
+            raise ConfigError("established_reliability_threshold must be between 0 and 100")
 
     def fingerprint(self) -> str:
         """Stable hash of every parameter, stored with each replay."""
@@ -803,6 +811,15 @@ class PlayerSummary:
     fresh, is within the carry match limit, and is higher than the earned
     value. It is shown separately and never replaces or converts into
     reliability.
+
+    established is True when reliability (as displayed, rounded to 1 place)
+    is at least Config.established_reliability_threshold. Imported
+    reliability never counts toward it, and it is measured at the same
+    reference date as reliability, so it lapses with inactivity. It is a
+    label only and changes no rating. A rating that is not established is
+    what external rating systems usually call provisional. That is different
+    from OPEN's provisional live updates between replays and from the
+    open_provisional initial source.
     """
 
     player_id: str
@@ -810,6 +827,7 @@ class PlayerSummary:
     rating: float  # rounded to 3 places
     reliability: float  # OPEN-earned reliability, 0-100
     imported_reliability: float | None  # carried imported reliability, 0-100
+    established: bool  # reliability >= Config.established_reliability_threshold
     rd: float  # inflated to the reference date, rounded to 4 places
     matches_played: int
     last_played: date | None
@@ -2244,6 +2262,7 @@ class RatingEngine:
             rating=round(state.rating, 3),
             reliability=earned,
             imported_reliability=imported,
+            established=earned >= cfg.established_reliability_threshold,
             rd=round(inflated_rd(state, reference, cfg), 4),
             matches_played=state.matches_played,
             last_played=state.last_played,
