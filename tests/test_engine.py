@@ -299,7 +299,7 @@ def test_clamp_reported():
 # General ------------------------------------------------------------------------
 
 
-def test_zero_sum_without_clamp_or_freeze():
+def test_zero_sum_when_k_equal_without_clamp_or_freeze():
     eng = RatingEngine()
     r = eng.record(match("m", ("a", "b"), ("c", "d"), games=((11, 4),)))
     assert sum(r.deltas.values()) == pytest.approx(0.0, abs=1e-4)

@@ -19,8 +19,9 @@ delta_i = sign * K_i * effective_weight * surprise      (before the rating clamp
 `team_size * match_k * K_i / sum(team K)` are removed. When every participant has the same K,
 the new formula gives exactly the old deltas, because `team_size * k * k / (team_size * k) = k`.
 
-Team-average movement is then zero-sum only when both teams have the same mean K and no clamp
-or freeze applies. Every `MatchResult` reports the net as a new field, `imbalance`:
+Team-average movement is then not always zero-sum. It is zero-sum when both teams have the same
+mean K and no clamp or freeze applies, and can also net to zero in other cases (no surprise, or
+clamps and freezes on both teams that cancel). Every `MatchResult` reports the net as a new field, `imbalance`:
 
 ```
 imbalance = mean(deltas of team_a) + mean(deltas of team_b)
@@ -30,8 +31,8 @@ It is computed from the applied, unrounded rating changes (new rating minus old 
 players count as 0.0), then rounded to 5 places, with a negative zero turned into 0.0. (The first
 version summed the rounded `deltas`. Review found that rounding residue then leaked out as
 +/-1e-05 on matches whose net is zero, and as -0.0. Fixed under a frozen test,
-`tests/test_imbalance_rounding.py`.) It is 0.0 for a rejected match. It covers all three sources: unequal K, `clamped`, and
-`frozen`. The parent (overall doubles) `MatchResult` of a category match gets its own value.
+`tests/test_imbalance_rounding.py`.) It is 0.0 for a rejected match. It can be nonzero for three reasons: unequal K, `clamped`, and
+`frozen`. A value of 0.0 does not mean nothing was clamped or frozen. The parent (overall doubles) `MatchResult` of a category match gets its own value.
 
 The issue's third criterion, "Backtest shows no regression in Brier score", is out of scope for
 this repository: evaluation on real match data lives in a separate private repository (CLAUDE.md
@@ -69,6 +70,13 @@ so the issue stays open until that backtest is done.
   field and docstring), the `Config` K comment, and the module docstring's zero-sum note.
 - `tests/test_engine.py` or a new `tests/test_own_k.py`: the tests listed under Proof. A new file
   is preferred so the issue's tests stay together.
+- `tests/test_calibration.py`: re-pin the mse and bias of `test_live_default_matches_old_evaluate`
+  and `test_unsupported_win_by_still_scores`. Their simulated leagues mix K, so the old values
+  encoded the shared-K rule this issue removes.
+- `tests/test_engine.py`: rename `test_zero_sum_without_clamp_or_freeze` to
+  `test_zero_sum_when_k_equal_without_clamp_or_freeze`, since zero-sum now needs equal K. Its
+  assertion is unchanged.
+- `tests/test_imbalance_rounding.py`: frozen tests for the imbalance rounding defect.
 - `CHANGELOG.md`: `## [Unreleased]` entry under Changed (own K, no longer zero-sum) and Added
   (`MatchResult.imbalance`).
 - `CLAUDE.md`: rewrite the "Zero-sum exceptions" engine rule.
@@ -101,6 +109,14 @@ so the issue stays open until that backtest is done.
   construction would break if the field went before an existing one, so it goes after `clamped`
   and before `parent`. Check that `test_api.py` does not pin the field list; if it does, update
   it and note it in the changelog.
+- Collusion can create rating (decision 2026-11-15: accepted and documented). Without zero-sum,
+  matches between high-K and low-K players add rating to the pool or remove it. Example from
+  review: a new account (K 0.6) at 3.5 beats a low-K imported feeder at 4.0 ten times, 11-5,
+  REC_VERIFIED, one match per day. It ends at 4.135 (main: 4.002), the feeder loses 0.369, and
+  the pool gains +0.266 (main: 0). A new account can also drop its own rating faster by losing on
+  purpose. The user chose to accept this and document it: the module docstring and the
+  changelog say so, and name `imbalance` as the per-match signal the backend should total and
+  monitor. A follow-up issue will track mitigation. This change implements none.
 - Not chosen: discounting by opponent uncertainty (a further factor on each player's step). It
   adds a new parameter that needs calibration; it can be a later issue.
 

@@ -16,10 +16,11 @@ calibration, and deterministic historical replay.
 Published behavior notes:
 - Each player moves by their own K (from their RD after inactivity):
   `sign * K * effective_weight * surprise`. A partner's or opponent's
-  uncertainty never changes a player's step. Team average movement is
-  zero-sum only when both teams have the same mean K and nothing is clamped
-  or frozen. Every MatchResult reports the net as `imbalance` (mean team A
-  delta plus mean team B delta). It has three sources:
+  uncertainty never changes a player's step. Team average movement is not
+  always zero-sum. Every MatchResult reports the net as `imbalance` (mean
+  team A delta plus mean team B delta). When both teams have the same mean
+  K and nothing is clamped or frozen, it is 0.0. It can be nonzero for
+  three reasons:
     1. Unequal K: the team with the higher mean K moves more.
     2. `clamped`: a player hit the rating floor or ceiling, so part of their
        change was not applied.
@@ -27,6 +28,14 @@ Published behavior notes:
        The imported rating already reflects that match, so that player's
        rating is used for the expectation but does not move. Their teammates
        still move by their own K only, so the team moves less.
+  It is also 0.0 when the result matched the expectation, or when clamps or
+  freezes on both teams cancel. So an imbalance of 0.0 does not mean nothing
+  was clamped or frozen: read `clamped` and `frozen` for that.
+- Because team movement is not zero-sum, matches between high-K and low-K
+  players can add rating to the pool or remove it. Colluding accounts can
+  exploit this: a new account can gain rating by beating a low-K partner in
+  the scheme again and again, or lose rating faster on purpose. The backend
+  should total `imbalance` per player and per pool and monitor it.
 - Authoritative ratings come from scheduled replays (see
   `Config.replay_interval_days`). Live updates between replays are
   provisional and are labeled with the count of live updates since the last
@@ -239,8 +248,8 @@ class Config:
     )
 
     # Per-player responsiveness. K is derived from RD, and each player moves
-    # by their own K. Team-average movement is zero-sum only when both teams
-    # have the same mean K; MatchResult.imbalance reports the net.
+    # by their own K, so team-average movement is not always zero-sum.
+    # MatchResult.imbalance reports the net.
     k_min: float = 0.12
     k_max: float = 0.60
 
@@ -619,9 +628,12 @@ class MatchResult:
     reason is None when the match counted. deltas lists the rating changes.
     frozen and clamped list the players whose change was not fully applied.
     imbalance is the mean team A delta plus the mean team B delta, from the
-    unrounded changes: nonzero when the teams' mean K differ or a player is
-    frozen or clamped, and 0.0 for a match that did not count. parent holds
-    the overall doubles update for a category match, with its own imbalance.
+    unrounded changes. It is 0.0 when both teams have the same mean K and no
+    player is clamped or frozen, and for a match that did not count. It can
+    be nonzero when the teams' mean K differ or a player is clamped or
+    frozen. A value of 0.0 does not mean nothing was clamped or frozen: read
+    clamped and frozen for that. parent holds the overall doubles update for
+    a category match, with its own imbalance.
     """
 
     counted: bool
@@ -1127,8 +1139,8 @@ class RatingEngine:
             cfg.match_weights[match.match_type] * repeat_factor * information_multiplier(match, cfg)
         )
 
-        # Each player moves by their own K. Team-average movement is zero-sum
-        # only when both teams have the same mean K; imbalance reports the net.
+        # Each player moves by their own K, so team-average movement is not
+        # always zero-sum; imbalance reports the net.
         deltas: dict[str, float] = {}
         applied: dict[str, float] = {}  # unrounded, for imbalance
         clamped: list[str] = []
