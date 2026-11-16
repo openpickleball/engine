@@ -820,6 +820,7 @@ class MatchResult:
     frozen: tuple[str, ...] = ()  # predates the player's imported baseline
     clamped: tuple[str, ...] = ()  # hit the rating floor or ceiling
     imbalance: float = 0.0  # mean team A delta plus mean team B delta
+    late: bool = False  # dated before a player's last match in this format
     parent: MatchResult | None = None  # overall doubles update for categories
 
 
@@ -930,6 +931,17 @@ def _actual_point_share(match: Match, cfg: Config) -> tuple[float, bool]:
 def _rolling_unique_count(interactions: dict[str, date], on: date, window_days: int) -> int:
     cutoff = on - timedelta(days=window_days)
     return sum(1 for last_seen in interactions.values() if last_seen >= cutoff)
+
+
+def _latest(current: date | None, on: date) -> date:
+    """The later of a stored date and a match date, so a date never moves back."""
+    return on if current is None else max(current, on)
+
+
+def _seen(interactions: dict[str, date], ids: Iterable[str], on: date) -> None:
+    """Record each id as seen on `on`, keeping a later date already stored."""
+    for other in ids:
+        interactions[other] = _latest(interactions.get(other), on)
 
 
 def reliability(state: RatingState, cfg: Config, as_of: date) -> float:
@@ -2134,6 +2146,12 @@ class RatingEngine:
         if len(frozen) == len(ids):
             return MatchResult(False, rating_format, RejectionReason.BEFORE_IMPORTED_BASELINE), None
 
+        # Live results apply in arrival order. A match dated before any
+        # player's last match here (frozen players included) arrived late.
+        late = any(
+            (last := work[pid].last_played) is not None and match.played_on < last for pid in ids
+        )
+
         states_a = [work[pid] for pid in match.team_a]
         states_b = [work[pid] for pid in match.team_b]
         rating_a = sum(s.rating for s in states_a) / len(states_a)
@@ -2188,13 +2206,15 @@ class RatingEngine:
                     cfg.rd_min,
                     state.rd * (1.0 - cfg.rd_shrink_per_match * effective_weight),
                 )
-                state.rd_as_of = match.played_on
+                # Dates never move back, so a late match does not rerun
+                # inactivity or drop a recent partner from the window.
+                state.rd_as_of = _latest(state.rd_as_of, match.played_on)
                 state.matches_played += 1
-                state.last_played = match.played_on
-                state.partners.update(
-                    {other: match.played_on for other in team_ids if other != pid}
+                state.last_played = _latest(state.last_played, match.played_on)
+                _seen(
+                    state.partners, (other for other in team_ids if other != pid), match.played_on
                 )
-                state.opponents.update({other: match.played_on for other in opponent_ids})
+                _seen(state.opponents, opponent_ids, match.played_on)
                 applied[pid] = state.rating - old_rating
                 deltas[pid] = round(applied[pid], 5)
 
@@ -2220,6 +2240,7 @@ class RatingEngine:
             frozen=tuple(sorted(frozen)),
             clamped=tuple(clamped),
             imbalance=imbalance,
+            late=late,
         )
         return result, {pid: work[pid] for pid in ids if pid not in frozen}
 
