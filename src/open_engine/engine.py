@@ -69,7 +69,7 @@ import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import UTC, date, datetime, timedelta
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Literal
 
 # Explicit re-exports, so `from open_engine.engine import X` passes mypy --strict.
@@ -88,8 +88,14 @@ from .winprob import calibrate_win_probability, match_win_probability
 # ---------------------------------------------------------------------------
 
 
-class _StrEnum(str, Enum):
-    """A str Enum whose str() and format() give the value, on every Python version."""
+class _StrEnum(StrEnum):
+    """
+    Base of the public string enums. str() and format() give the value.
+
+    StrEnum already does this. Defining the two methods here as well keeps them
+    on this one class: without them, the enum machinery copies them into every
+    subclass.
+    """
 
     def __str__(self) -> str:
         return str.__str__(self)

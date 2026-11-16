@@ -109,7 +109,13 @@ browser work; this is a standard-library Python package.
    README section and the module docstring are part of the implementation.)
 10. The five public `str` enums (`RatingFormat`, `MatchType`, `ScoringType`,
     `RejectionReason`, `ReliabilityBasis`) share a private `_StrEnum` base, so `str(m)`
-    and `f"{m}"` give `m.value` on every supported Python. repr, pickle, `json.dumps`,
+    and `f"{m}"` give `m.value` on every supported Python. With Python 3.11 as the floor,
+    the maintainer approved basing it on `enum.StrEnum`. `_StrEnum(StrEnum)` still defines
+    `__str__` and `__format__` itself: without them, `EnumType` copies both into each
+    subclass (seen on 3.11 and 3.14), and the frozen fingerprint test checks they live
+    only on `_StrEnum`. str, f-string, `format(m, ">10")`, repr, pickle identity,
+    `json.dumps`, `== value`, `cls(value)`, hash, and the fingerprint were compared
+    member by member against the `str, Enum` version and are identical on 3.11 and 3.14. repr, pickle, `json.dumps`,
     and `== "value"` do not change, and `Config().fingerprint()` does not depend on how
     the enums print (`tests/test_enum_str.py`).
 11. `Match.validate` raises `InvalidMatchError` when `match_id` or any team player id is
@@ -127,6 +133,7 @@ browser work; this is a standard-library Python package.
   `player_summary`; method renames and internal callers (`_predict_match`); docstrings;
   module docstring wording about exceptions.
   Review fixes: the `_StrEnum` base (criterion 10); the id check (criterion 11).
+- `pyproject.toml`: drop the ruff `UP042` ignore, since the enums now use `StrEnum`.
 - `src/open_engine/winprob.py`: raise `EvaluationError` (import it from `.engine`; check
   for an import cycle: `engine.py` already imports from `.winprob`, so define the
   exception classes in a new private module `src/open_engine/_errors.py` that both
