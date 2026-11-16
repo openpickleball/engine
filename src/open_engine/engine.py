@@ -49,7 +49,11 @@ Published behavior notes:
 - PlayerSummary.reliability is always OPEN-earned. An imported external
   reliability is shown separately, in PlayerSummary.imported_reliability,
   only until OPEN-earned reliability exceeds it or the carry limits in
-  Config are reached; otherwise that field is None. An external
+  Config are reached; otherwise that field is None. It is not carried
+  before its capture date, but with no as_of, player_summary measures from
+  the state's own rd_as_of, which for an unplayed import is its capture
+  date. So a future-dated import is still shown unless the caller passes
+  as_of (for example today); replay rejects such seeds. An external
   reliability never sets OPEN RD: an imported seed's RD is always
   Config.external_seed_rd.
 - Ledger order: `replay` and `prequential_predictions` sort matches by
@@ -1352,6 +1356,12 @@ class RatingEngine:
 
         as_of sets the date that inactivity and reliability are measured at.
         It defaults to the date of the player's last RD update, or today.
+
+        imported_reliability is not carried when the import's capture date is
+        after the reference date. Without as_of, the reference for an unplayed
+        imported state is its own rd_as_of (its capture date), so a
+        future-dated import is shown. Pass as_of (for example today) on the
+        live path to stop that; replay rejects such seeds.
         """
         cfg = self.cfg
         player = self.player(player_id)
