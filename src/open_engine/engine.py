@@ -1305,6 +1305,7 @@ class RatingEngine:
 
         # Imported reliability is shown, separately, only while it is fresh,
         # higher than what OPEN has earned, and within the carry match limit.
+        # Both values are compared as displayed, rounded to 1 place.
         imported: float | None = None
         seed_reliability = state.initial_source_reliability
         if (
@@ -1312,7 +1313,7 @@ class RatingEngine:
             and state.initial_source_date is not None
             and state.matches_played < cfg.import_reliability_carry_matches
             and (reference - state.initial_source_date).days <= cfg.import_reliability_max_age_days
-            and seed_reliability > earned
+            and round(float(seed_reliability), 1) > earned
         ):
             imported = round(float(seed_reliability), 1)
 
