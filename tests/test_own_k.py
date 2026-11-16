@@ -16,7 +16,13 @@ from open_engine import (
     RatingFormat,
     RejectionReason,
 )
-from open_engine.engine import inflated_rd, player_k
+from open_engine.engine import (
+    _actual_point_share,
+    expected_point_share,
+    inflated_rd,
+    information_multiplier,
+    player_k,
+)
 
 S = RatingFormat.SINGLES
 D = RatingFormat.DOUBLES
@@ -58,6 +64,25 @@ def _k_before(eng: RatingEngine, pid: str, fmt: RatingFormat, on: date = ON) -> 
     state = eng.state(pid, fmt)
     inflated = dataclasses.replace(state, rd=inflated_rd(state, on, eng.cfg))
     return player_k(inflated, eng.cfg)
+
+
+def _own_deltas(eng: RatingEngine, match: Match, movers: tuple[str, ...]) -> dict[str, float]:
+    """Each mover's expected delta from their own K, built from unrounded engine pieces."""
+    cfg = eng.cfg
+    fmt = match.rating_format
+    rating_a = sum(eng.state(p, fmt).rating for p in match.team_a) / len(match.team_a)
+    rating_b = sum(eng.state(p, fmt).rating for p in match.team_b) / len(match.team_b)
+    scale = cfg.scale_by_scoring[match.game_format.scoring]
+    actual, _ = _actual_point_share(match, cfg)
+    surprise = actual - expected_point_share(rating_a, rating_b, scale)
+    # Repeat factor 1.0: these matches are not self-reported.
+    weight = cfg.match_weights[match.match_type] * information_multiplier(match, cfg)
+    deltas: dict[str, float] = {}
+    for pid in movers:
+        sign = 1.0 if pid in match.team_a else -1.0
+        k = _k_before(eng, pid, fmt, match.played_on)
+        deltas[pid] = round(sign * k * weight * surprise, 5)
+    return deltas
 
 
 def _imbalance(result: MatchResult, match: Match) -> float:
@@ -116,7 +141,9 @@ def test_doubles_established_step_not_larger_against_new_opponent(
     [
         pytest.param(S, ("est",), ("new",), {"est"}, id="singles"),
         pytest.param(D, ("e1", "e2"), ("n1", "e4"), {"e1", "e2", "e4"}, id="doubles"),
-        pytest.param(D, ("e1", "n2"), ("n1", "e4"), {"e1", "e4"}, id="doubles-mixed-teams"),
+        pytest.param(
+            D, ("e1", "n2"), ("e3", "e4"), {"e1", "e3", "e4"}, id="doubles-unequal-team-k"
+        ),
     ],
 )
 def test_each_player_moves_by_own_k(
@@ -124,12 +151,13 @@ def test_each_player_moves_by_own_k(
 ) -> None:
     eng = _measure_engine(fmt, team_a + team_b, seeded)
     ks = {pid: _k_before(eng, pid, fmt) for pid in team_a + team_b}
-    assert len({round(k, 6) for k in ks.values()}) > 1
-    r = eng.record(_match(team_a, team_b, fmt))
-    for pid in team_a + team_b:
-        sign = 1.0 if pid in team_a else -1.0
-        own = sign * ks[pid] * r.effective_weight * r.surprise
-        assert r.deltas[pid] == pytest.approx(own, abs=2e-5)
+    mean_a = sum(ks[p] for p in team_a) / len(team_a)
+    mean_b = sum(ks[p] for p in team_b) / len(team_b)
+    assert abs(mean_a - mean_b) > 0.01
+    m = _match(team_a, team_b, fmt)
+    expected = _own_deltas(eng, m, team_a + team_b)
+    r = eng.record(m)
+    assert r.deltas == expected
 
 
 # Criterion 3: equal K gives the deltas measured on main.
@@ -218,12 +246,9 @@ def test_frozen_teammate_moves_by_own_k() -> None:
     eng.seed_external_rating("seeded", D, _snapshot())
     on = date(2026, 9, 15)
     m = _match(("seeded", "p1"), ("p2", "p3"), D, on=on)
-    ks = {pid: _k_before(eng, pid, D, on) for pid in ("p1", "p2", "p3")}
+    expected = _own_deltas(eng, m, ("p1", "p2", "p3"))
     r = eng.record(m)
     assert r.frozen == ("seeded",)
-    assert r.deltas["seeded"] == 0.0
-    for pid, sign in (("p1", 1.0), ("p2", -1.0), ("p3", -1.0)):
-        own = sign * ks[pid] * r.effective_weight * r.surprise
-        assert r.deltas[pid] == pytest.approx(own, abs=2e-5)
+    assert r.deltas == {"seeded": 0.0, **expected}
     assert r.imbalance == pytest.approx(_imbalance(r, m), abs=1e-5)
     assert r.imbalance != 0.0

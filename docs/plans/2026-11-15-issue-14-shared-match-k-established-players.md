@@ -151,3 +151,48 @@ doubles n1,n2 vs n3,n4    all K .6                 n1,n2 +0.05  n3,n4 -0.05
 Command: the scratch script `measure.py` (reproduced in the criterion 3 test), run with the
 worktree venv on `origin/main`. Rows 2, 3 and 5 are the equal-K "behave alike" cases for
 criterion 3. Row 1 reproduces the issue: 0.03928 / 0.02856 = 1.375.
+
+### Criterion 2 tests rewritten (approved 2026-11-15)
+
+The user approved unfreezing and rewriting `test_each_player_moves_by_own_k` and
+`test_frozen_teammate_moves_by_own_k` in `tests/test_own_k.py`. Reason: review found they
+compared with `approx(abs=2e-5)` against the rounded `r.effective_weight` and `r.surprise`, and
+the `doubles-mixed-teams` case (equal team mean K) also passed on main. The rewrite builds each
+expected delta from unrounded engine pieces (`expected_point_share`, `_actual_point_share`,
+`information_multiplier`, `cfg.match_weights`, `player_k` on the post-inflation state) and
+asserts exact equality to `round(sign * K * weight * surprise, 5)`. The mixed-teams case is
+replaced by `doubles-unequal-team-k` (e1, n2 vs e3, e4), whose team mean K differ. The rewritten
+tests are frozen from here on.
+
+Proof that the rewrite catches the defect: a scratch git worktree at the merge base (f6d57f3),
+with only the rewritten test file copied in, run with this worktree's venv and `PYTHONPATH` at
+the scratch worktree's `src` (`pytest tests/test_own_k.py -k moves_by_own_k`):
+
+```
+E       AssertionError: assert {'est': 0.039...ew': -0.03928} == {'est': 0.02856, 'new': -0.05}
+E         {'new': -0.03928} != {'new': -0.05}
+E         {'est': 0.03928} != {'est': 0.02856}
+E       AssertionError: assert {'e1': 0.0339...e4': -0.02466} == {'e1': 0.0285...e4': -0.02856}
+E         {'n1': -0.04318} != {'n1': -0.05}
+E         {'e1': 0.03392} != {'e1': 0.02856}
+E         {'e2': 0.03392} != {'e2': 0.02856}
+E         {'e4': -0.02466} != {'e4': -0.02856}
+E       AssertionError: assert {'e1': 0.0246...e4': -0.03392} == {'e1': 0.0285...e4': -0.02856}
+E         {'n2': 0.04318} != {'n2': 0.05}
+E         {'e3': -0.03392} != {'e3': -0.02856}
+E         {'e1': 0.02466} != {'e1': 0.02856}
+E         {'e4': -0.03392} != {'e4': -0.02856}
+E       AssertionError: assert {'seeded': 0....p3': -0.02473} == {'seeded': 0....p3': -0.02774}
+E         {'p1': 0.03159} != {'p1': 0.02774}
+E         {'p2': -0.02473} != {'p2': -0.02774}
+E         {'p3': -0.02473} != {'p3': -0.02774}
+FAILED tests/test_own_k.py::test_each_player_moves_by_own_k[singles] - Assert...
+FAILED tests/test_own_k.py::test_each_player_moves_by_own_k[doubles] - Assert...
+FAILED tests/test_own_k.py::test_each_player_moves_by_own_k[doubles-unequal-team-k]
+FAILED tests/test_own_k.py::test_frozen_teammate_moves_by_own_k - AssertionEr...
+4 failed, 28 deselected in 0.04s
+```
+
+Every case fails because main splits a shared match K, so each delta differs from the
+player's own-K step. The third case also shows the new-partner effect: on main, e1 beside new
+partner n2 moved +0.02466; with own K it moves +0.02856.
