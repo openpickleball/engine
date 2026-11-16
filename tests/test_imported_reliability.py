@@ -60,7 +60,7 @@ def test_import_expires_after_carry_matches() -> None:
     for i in range(2):
         played = date(2026, 10, 10 + i)
         eng.record(Match(f"m{i}", ("a", f"x{i}"), (f"y{i}", f"z{i}"), ((11, 7),), played, D))
-    summary = eng.player_summary("a", D)
+    summary = eng.player_summary("a", D, as_of=date(2026, 10, 11))
     assert summary.imported_reliability is None
 
 

@@ -74,7 +74,9 @@ engine. No code path in the package reads the wall clock.
   (**Breaking**) `reliability` requires `as_of`; `player_summary` defaults `as_of` to
   `calculated_as_of` and raises `ReferenceDateError` when the engine was never replayed,
   so a stale player's reliability and RD now reflect inactivity up to the last replay;
-  the engine no longer reads the wall clock (issue #17).
+  the engine no longer reads the wall clock (issue #17). The earlier Unreleased Fixed entry
+  for issue #15 said the reference defaults to `rd_as_of` and told the backend to pass
+  today; reword that clause to point at the new entry.
 - Tests:
   - New `tests/test_reference_date.py` with the criteria 1 to 6 and 8 tests below.
   - Update existing call sites that relied on the old default (expected, since the
@@ -145,8 +147,11 @@ Tests in `tests/test_reference_date.py`:
 - `test_summary_without_reference_date_raises` (criterion 4): live engine, record a match,
   `pytest.raises(ReferenceDateError, match="as_of")`; also for a format with no state
   (e.g. a category format) and assert the player gained no new rating state.
-- `test_summary_raise_keeps_snapshot_resumable` (criterion 4): only if a never-replayed
-  engine can produce a snapshot that matters; otherwise covered by the no-new-state check.
+- `test_summary_raise_creates_no_state` (criterion 4): the no-new-state check, split out of
+  the test above. It covers a format with no state and a player id the engine has never
+  seen.
+- `test_summary_raise_keeps_snapshot_resumable` was not written: a never-replayed engine's
+  snapshot is never resumable, so the no-new-state check covers it.
 - `test_explicit_as_of_overrides_calculated_as_of` (criterion 5): on the late replay,
   `as_of=date(2024, 3, 1)` equals the early replay's default.
 - `test_reliability_requires_as_of` (criterion 6): `pytest.raises(TypeError)` on

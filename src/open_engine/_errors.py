@@ -40,6 +40,10 @@ class SnapshotError(OpenEngineError):
     """A snapshot cannot be loaded or resumed from."""
 
 
+class ReferenceDateError(OpenEngineError):
+    """No reference date to measure inactivity and reliability at."""
+
+
 class LedgerConflictError(OpenEngineError):
     """Two or more ledger rows share a match_id but differ."""
 

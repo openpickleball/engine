@@ -13,6 +13,7 @@ from ._errors import (
     LedgerConflictError,
     OpenEngineError,
     PlayerError,
+    ReferenceDateError,
     SnapshotError,
 )
 from ._version import __version__ as __version__
@@ -67,6 +68,7 @@ __all__ = [
     "RatingEngine",
     "RatingFormat",
     "RatingState",
+    "ReferenceDateError",
     "RejectionReason",
     "ReplayInfo",
     "ScaleFit",
