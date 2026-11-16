@@ -953,6 +953,23 @@ def _latest(current: date | None, on: date) -> date:
     return on if current is None else max(current, on)
 
 
+def _is_late(state: RatingState, on: date) -> bool:
+    """
+    True when a match on `on` is dated before what the state already reflects.
+
+    That is its last match, or its rd_as_of when that is not just the
+    imported capture date: a category rating copied from overall doubles
+    keeps the doubles rd_as_of but has no last_played.
+    """
+    if state.last_played is not None and on < state.last_played:
+        return True
+    return (
+        state.rd_as_of is not None
+        and state.rd_as_of != state.initial_source_date
+        and on < state.rd_as_of
+    )
+
+
 def _seen(interactions: dict[str, date], ids: Iterable[str], on: date) -> None:
     """Record each id as seen on `on`, keeping a later date already stored."""
     for other in ids:
@@ -2165,9 +2182,7 @@ class RatingEngine:
 
         # Live results apply in arrival order. A match dated before any
         # player's last match here (frozen players included) arrived late.
-        late = any(
-            (last := work[pid].last_played) is not None and match.played_on < last for pid in ids
-        )
+        late = any(_is_late(work[pid], match.played_on) for pid in ids)
 
         states_a = [work[pid] for pid in match.team_a]
         states_b = [work[pid] for pid in match.team_b]
