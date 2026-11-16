@@ -115,9 +115,9 @@ browser work; this is a standard-library Python package.
     subclass (seen on 3.11 and 3.14), and the frozen fingerprint test checks they live
     only on `_StrEnum`. str, f-string, `format(m, ">10")`, repr, pickle identity,
     `json.dumps`, `== value`, `cls(value)`, hash, and the fingerprint were compared
-    member by member against the `str, Enum` version and are identical on 3.11 and 3.14. repr, pickle, `json.dumps`,
-    and `== "value"` do not change, and `Config().fingerprint()` does not depend on how
-    the enums print (`tests/test_enum_str.py`).
+    member by member against the `str, Enum` version and are identical on 3.11 and 3.14.
+    `Config().fingerprint()` does not depend on how the enums print
+    (`tests/test_enum_str.py`).
 11. `Match.validate` raises `InvalidMatchError` when `match_id` or any team player id is
     not a non-empty, non-whitespace `str`, and `RatingEngine._validate_teams` applies the
     same id check, so `predict_point_share` and `predict_win_probability` raise too.
@@ -163,8 +163,8 @@ browser work; this is a standard-library Python package.
   `win_probability` mentions.
 - `CHANGELOG.md`, `CLAUDE.md`: coordinator, Phase 8.
 
-`_errors.py` is under `src/`, which already ships in the sdist and wheel; no packaging
-change.
+`_errors.py` is under `src/`, which already ships in the sdist and wheel, so the hatch
+build config does not change; only the wheel check's allowed list does (above).
 
 ## Order of work
 
@@ -269,7 +269,7 @@ ratings); docstrings on internal helpers; a `to_dict()` on `PlayerSummary`
 
   and it passes on the branch, where `norm()` uses `.value`.
 
-Measured on `origin/main` at 1a624ab, missing docstrings among exported names and the
+Measured on `origin/main` at 1a624ab (the base before the rebase onto 1371165), missing docstrings among exported names and the
 public methods of exported classes (a scratch script checking each class's own
 `__doc__`, treating a dataclass's generated `Name(...)` signature as missing): 30 items.
 Classes with only the generated signature: `Config`, `EvaluationReport`,
