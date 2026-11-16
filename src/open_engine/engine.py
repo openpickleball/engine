@@ -46,9 +46,16 @@ Published behavior notes:
   ledger live in ledger order: the replay date labels the result but never
   changes an update. Inactivity widens RD (`inflated_rd`) but never shrinks
   or discounts an old match's update.
-- An imported external reliability is shown separately from OPEN-earned
-  reliability. It is carried, clearly labeled, only until OPEN-earned
-  reliability exceeds it or the carry limits in Config are reached.
+- PlayerSummary.reliability is always OPEN-earned. An imported external
+  reliability is shown separately, in PlayerSummary.imported_reliability,
+  only until OPEN-earned reliability exceeds it or the carry limits in
+  Config are reached; otherwise that field is None. It is not carried
+  before its capture date, but with no as_of, player_summary measures from
+  the state's own rd_as_of, which for an unplayed import is its capture
+  date. So a future-dated import is still shown unless the caller passes
+  as_of (for example today); replay rejects such seeds. An external
+  reliability never sets OPEN RD: an imported seed's RD is always
+  Config.external_seed_rd.
 - Ledger order: `replay` and `prequential_predictions` sort matches by
   `played_on` first. Within one `played_on` date, untimed matches come
   first (by `sequence`, then `match_id`), then timed matches (by the UTC
@@ -62,7 +69,13 @@ Published behavior notes:
 - Errors: every error the engine raises on purpose is an `OpenEngineError`,
   which is a `ValueError`. `ConfigError` covers Config and GameFormat
   values, `InvalidMatchError` covers matches, teams, scores and
-  `played_at`, `InvalidSeedError` covers external and replay seeds,
+  `played_at`, `InvalidSeedError` covers external and replay seeds (a
+  seed state that breaks the seed rules in `RatingEngine.add_player`,
+  including a field of the wrong type or a rating outside the bounds,
+  raised by `add_player`, `replay`, and `prequential_predictions`, and so
+  by `evaluate`, `fit_scale`, and `fit_win_calibration`; `replay` also
+  rejects a seed dated after `as_of`, and `prequential_predictions` one
+  dated after its last ledger match),
   `PlayerError` covers player identities, `EvaluationError` covers
   evaluation, fits and win probabilities, and `LedgerConflictError` covers
   conflicting ledger rows.
@@ -262,7 +275,6 @@ class Config:
     new_player_rd: float = 0.80
     external_seed_rd: float = 0.42
     category_seed_rd: float = 0.50
-    external_reliability_maps_to_rd: bool = False
     rd_shrink_per_match: float = 0.08
     rd_growth_per_day: float = 0.012
 
@@ -657,28 +669,25 @@ class MatchResult:
     parent: MatchResult | None = None  # overall doubles update for categories
 
 
-class ReliabilityBasis(_StrEnum):
-    """Where a displayed reliability comes from."""
-
-    OPEN = "open"
-    IMPORTED = "imported"
-
-
 @dataclass(frozen=True)
 class PlayerSummary:
     """
     A player's published rating in one format, with reliability and provenance.
 
-    reliability is the displayed value: imported reliability while it is
-    carried (reliability_basis is IMPORTED), otherwise open_reliability.
+    reliability is always OPEN-earned. imported_reliability is the imported
+    external reliability, rounded to 1 place, while it is carried, otherwise
+    None. It is carried when it was captured on or before the reference date
+    (player_summary's as_of, else the state's rd_as_of, else today), is
+    fresh, is within the carry match limit, and is higher than the earned
+    value. It is shown separately and never replaces or converts into
+    reliability.
     """
 
     player_id: str
     rating_format: RatingFormat
     rating: float  # rounded to 3 places
-    reliability: float  # displayed reliability, 0-100
-    reliability_basis: ReliabilityBasis
-    open_reliability: float  # OPEN-earned reliability, 0-100
+    reliability: float  # OPEN-earned reliability, 0-100
+    imported_reliability: float | None  # carried imported reliability, 0-100
     rd: float  # inflated to the reference date, rounded to 4 places
     matches_played: int
     last_played: date | None
@@ -800,6 +809,128 @@ def _matchup_key(match: Match) -> MatchupKey:
     )
 
 
+def _is_finite_number(value: object) -> bool:
+    """
+    True for an int (not bool) or a finite float.
+
+    Every int is finite. math.isfinite would overflow on a huge int, so ints
+    skip it and the seed rules' bounds reject out-of-range values instead.
+    """
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    return isinstance(value, float) and math.isfinite(value)
+
+
+def _is_plain_date(value: object) -> bool:
+    """True for a date that is not a datetime (the two do not compare)."""
+    return isinstance(value, date) and not isinstance(value, datetime)
+
+
+def _seed_type_broken(state: RatingState) -> str | None:
+    """The first seed field with the wrong type, or None."""
+    for name in ("matches_played", "live_updates_since_replay"):
+        value = getattr(state, name)
+        if not isinstance(value, int) or isinstance(value, bool):
+            return f"{name} must be an int"
+    for name in ("partners", "opponents"):
+        if not isinstance(getattr(state, name), dict):
+            return f"{name} must be a dict"
+    for name in ("rating", "rd"):
+        if not _is_finite_number(getattr(state, name)):
+            return f"{name} must be a finite number"
+    imported = state.initial_source_reliability
+    if imported is not None and not _is_finite_number(imported):
+        return "initial_source_reliability must be a finite number"
+    for name in ("initial_source_date", "rd_as_of"):
+        value = getattr(state, name)
+        if value is not None and not _is_plain_date(value):
+            return f"{name} must be a date"
+    return None
+
+
+def _seed_rule_broken(state: RatingState, cfg: Config) -> str | None:
+    """The first seed rule a state breaks, or None when it follows every rule."""
+    wrong_type = _seed_type_broken(state)
+    if wrong_type is not None:
+        return wrong_type
+    if state.matches_played != 0:
+        return "matches_played must be 0"
+    if state.last_played is not None:
+        return "last_played must be None"
+    if state.partners:
+        return "partners must be empty"
+    if state.opponents:
+        return "opponents must be empty"
+    if state.live_updates_since_replay != 0:
+        return "live_updates_since_replay must be 0"
+    if not cfg.min_rating <= state.rating <= cfg.max_rating:
+        return "rating must be between min_rating and max_rating"
+    if state.initial_source_date is None:
+        if state.rd != cfg.new_player_rd:
+            return "rd must equal new_player_rd for a provisional seed"
+        if state.rd_as_of is not None:
+            return "rd_as_of must be None for a provisional seed"
+        if state.initial_source_reliability is not None:
+            return "initial_source_reliability must be None for a provisional seed"
+        return None
+    seed_rds = (cfg.external_seed_rd, max(cfg.external_seed_rd, cfg.category_seed_rd))
+    if state.rd not in seed_rds:
+        return "rd must equal external_seed_rd or the category seed RD"
+    if state.rd_as_of != state.initial_source_date:
+        return "rd_as_of must equal initial_source_date"
+    imported = state.initial_source_reliability
+    if imported is not None and not 0 <= imported <= 100:
+        return "initial_source_reliability must be between 0 and 100"
+    return None
+
+
+def _check_seed_date(player: Player, latest: date, limit: str) -> None:
+    """Raise InvalidSeedError for a validated seed state dated after latest."""
+    for fmt in sorted(player.ratings):
+        source_date = player.ratings[fmt].initial_source_date
+        if source_date is not None and source_date > latest:
+            raise InvalidSeedError(
+                f"Seed for {player.id} in {fmt}: initial_source_date must not be after {limit}"
+            )
+
+
+def _check_seed_identity(player: object) -> None:
+    """Raise InvalidSeedError unless the seed is a Player with a str id."""
+    if not isinstance(player, Player):
+        raise InvalidSeedError(f"Seed must be a Player, not {type(player).__name__}")
+    if not isinstance(player.id, str):
+        raise InvalidSeedError(f"Seed player id must be a str, not {type(player.id).__name__}")
+
+
+def _validate_seed(player: Player, cfg: Config) -> None:
+    """Raise InvalidSeedError unless the seed and every seed state follow the seed rules."""
+    _check_seed_identity(player)
+    if not isinstance(player.ratings, dict):
+        raise InvalidSeedError(f"Seed for {player.id}: ratings must be a dict")
+    if not isinstance(player.external_ids, dict):
+        raise InvalidSeedError(f"Seed for {player.id}: external_ids must be a dict")
+    if not all(isinstance(k, str) and isinstance(v, str) for k, v in player.external_ids.items()):
+        raise InvalidSeedError(f"Seed for {player.id}: external_ids must map str to str")
+    if player.account_user_id is not None and not isinstance(player.account_user_id, str):
+        raise InvalidSeedError(f"Seed for {player.id}: account_user_id must be a str or None")
+    for key in player.ratings:
+        if not isinstance(key, RatingFormat):
+            raise InvalidSeedError(
+                f"Seed for {player.id}: ratings key {key!r} is not a RatingFormat"
+            )
+    for fmt in sorted(player.ratings):
+        state = player.ratings[fmt]
+        if not isinstance(state, RatingState):
+            raise InvalidSeedError(
+                f"Seed for {player.id} in {fmt}: rating state must be a RatingState"
+            )
+        rule = _seed_rule_broken(state, cfg)
+        if rule is not None:
+            raise InvalidSeedError(f"Seed for {player.id} in {fmt}: {rule}")
+
+
 # ---------------------------------------------------------------------------
 # Rating engine
 # ---------------------------------------------------------------------------
@@ -831,9 +962,39 @@ class RatingEngine:
         return self.players[player_id]
 
     def add_player(self, player: Player) -> None:
-        """Add a copy of a player record. Raises PlayerError if the id exists."""
+        """
+        Add a copy of a player record as a seed.
+
+        Seed rules, checked for the seed and every rating state:
+        - The seed is a Player with a str id, its ratings are a dict, every
+          key is a RatingFormat, and every value is a RatingState. Its
+          external_ids are a dict of str to str, and its account_user_id is
+          a str or None.
+        - rating, rd, and an imported reliability are ints or finite floats
+          (not bool), the counts are ints, partners and opponents are
+          dicts, and dates are dates.
+        - No matches, last_played, partners, opponents, or live updates.
+        - rating is within Config.min_rating and Config.max_rating.
+        - A provisional state (no initial_source_date) has RD new_player_rd,
+          no rd_as_of, and no imported reliability.
+        - An imported state, or a category state derived from one, has RD
+          external_seed_rd or max(external_seed_rd, category_seed_rd),
+          rd_as_of equal to initial_source_date, and an imported reliability
+          that is None or between 0 and 100.
+        Played states are rebuilt through replay instead.
+        add_player has no reference date, so it does not check that
+        initial_source_date is in the past: replay rejects a seed dated after
+        its as_of, and prequential_predictions one dated after its last match.
+
+        Raises InvalidSeedError for a seed that breaks these rules (a seed
+        that is not a Player, or has a non-str id, is checked before the
+        duplicate id) and PlayerError if the id exists. Nothing changes when
+        either is raised.
+        """
+        _check_seed_identity(player)
         if player.id in self.players:
             raise PlayerError(f"Player already exists: {player.id}")
+        _validate_seed(player, self.cfg)
         self.players[player.id] = clone_player(player)
 
     def link_account(self, player_id: str, account_user_id: str) -> None:
@@ -871,7 +1032,6 @@ class RatingEngine:
         rating_format: RatingFormat,
         snapshot: ExternalRatingSnapshot,
         *,
-        rd_override: float | None = None,
         replace_unplayed_seed: bool = False,
     ) -> RatingState:
         """
@@ -879,12 +1039,42 @@ class RatingEngine:
 
         The external rating is an initial condition, not a live dependency.
         Once OPEN matches exist, external refreshes cannot overwrite the rating.
+        The seed's RD is always Config.external_seed_rd: an external
+        reliability is kept for display (imported_reliability), never turned
+        into OPEN RD. There is no reference date here, so a snapshot captured
+        in the future is accepted; the next replay with an earlier as_of
+        rejects the seed.
 
-        Raises InvalidSeedError when the snapshot or the existing rating does
-        not allow the seed, and PlayerError when player_id is blank or the
-        snapshot's external identity cannot be linked (see attach_external_id).
+        rating_format must be a RatingFormat (a str is not converted), and
+        the snapshot is checked before anything changes: captured_on is a
+        date (not a datetime), source is a str, external_player_id is a str
+        or None, rating is an int or finite float (not bool) within the
+        rating bounds, and reliability is None or an int or finite float
+        (not bool) between 0 and 100. So every state seeded here passes the
+        seed rules in add_player.
+
+        Raises InvalidSeedError when the rating format, a checked snapshot
+        field, or the existing rating does not allow the seed, and PlayerError
+        when player_id is blank or the snapshot's external identity cannot be
+        linked (see attach_external_id).
         """
         cfg = self.cfg
+        # The same type rules the seed check applies, so every state seeded
+        # here is one add_player and replay accept.
+        if not isinstance(rating_format, RatingFormat):
+            raise InvalidSeedError("rating_format must be a RatingFormat")
+        if not _is_plain_date(snapshot.captured_on):
+            raise InvalidSeedError("External snapshot captured_on must be a date")
+        if not isinstance(snapshot.source, str):
+            raise InvalidSeedError("External snapshot source must be a str")
+        if snapshot.external_player_id is not None and not isinstance(
+            snapshot.external_player_id, str
+        ):
+            raise InvalidSeedError("External snapshot external_player_id must be a str or None")
+        if not _is_finite_number(snapshot.rating):
+            raise InvalidSeedError("External rating must be a finite number")
+        if snapshot.reliability is not None and not _is_finite_number(snapshot.reliability):
+            raise InvalidSeedError("External reliability must be a finite number")
         if not cfg.min_rating <= snapshot.rating <= cfg.max_rating:
             raise InvalidSeedError("External rating is outside the configured scale")
         if snapshot.reliability is not None and not 0 <= snapshot.reliability <= 100:
@@ -902,24 +1092,12 @@ class RatingEngine:
                     "A rating already exists; explicitly allow replacing an unplayed seed"
                 )
 
-        if rd_override is not None:
-            rd = rd_override
-        elif cfg.external_reliability_maps_to_rd and snapshot.reliability is not None:
-            # Must be empirically calibrated before production use.
-            fraction = snapshot.reliability / 100.0
-            rd = cfg.rd_max - fraction * (cfg.rd_max - cfg.rd_min)
-        else:
-            rd = cfg.external_seed_rd
-
-        if not cfg.rd_min <= rd <= cfg.rd_max:
-            raise InvalidSeedError("Seed RD is outside configured bounds")
-
         if snapshot.external_player_id:
             self.attach_external_id(player_id, snapshot.source, snapshot.external_player_id)
 
         state = RatingState(
             rating=snapshot.rating,
-            rd=rd,
+            rd=cfg.external_seed_rd,
             rd_as_of=snapshot.captured_on,
             initial_rating=snapshot.rating,
             initial_source=snapshot.source,
@@ -1214,6 +1392,12 @@ class RatingEngine:
 
         as_of sets the date that inactivity and reliability are measured at.
         It defaults to the date of the player's last RD update, or today.
+
+        imported_reliability is not carried when the import's capture date is
+        after the reference date. Without as_of, the reference for an unplayed
+        imported state is its own rd_as_of (its capture date), so a
+        future-dated import is shown. Pass as_of (for example today) on the
+        live path to stop that; replay rejects such seeds.
         """
         cfg = self.cfg
         player = self.player(player_id)
@@ -1221,26 +1405,28 @@ class RatingEngine:
         reference = as_of or state.rd_as_of or date.today()
         earned = reliability(state, cfg, reference)
 
-        # Imported reliability is shown, labeled, only while it is fresh,
+        # Imported reliability is shown, separately, only while it is fresh,
         # higher than what OPEN has earned, and within the carry match limit.
-        displayed, basis = earned, ReliabilityBasis.OPEN
+        # Both values are compared as displayed, rounded to 1 place.
+        imported: float | None = None
         seed_reliability = state.initial_source_reliability
         if (
             seed_reliability is not None
             and state.initial_source_date is not None
             and state.matches_played < cfg.import_reliability_carry_matches
-            and (reference - state.initial_source_date).days <= cfg.import_reliability_max_age_days
-            and seed_reliability > earned
+            and 0
+            <= (reference - state.initial_source_date).days
+            <= cfg.import_reliability_max_age_days
+            and round(float(seed_reliability), 1) > earned
         ):
-            displayed, basis = round(float(seed_reliability), 1), ReliabilityBasis.IMPORTED
+            imported = round(float(seed_reliability), 1)
 
         return PlayerSummary(
             player_id=player.id,
             rating_format=rating_format,
             rating=round(state.rating, 3),
-            reliability=displayed,
-            reliability_basis=basis,
-            open_reliability=earned,
+            reliability=earned,
+            imported_reliability=imported,
             rd=round(inflated_rd(state, reference, cfg), 4),
             matches_played=state.matches_played,
             last_played=state.last_played,
@@ -1276,16 +1462,36 @@ def replay(
     Rows that repeat a match_id and match in every field, in type and
     value, are counted once; any other repeat raises LedgerConflictError, even when it
     falls after as_of. Seeds must be
-    unplayed: imported or provisional states only.
+    unplayed imported or provisional states that follow the seed rules (see
+    RatingEngine.add_player), dated on or before as_of.
 
-    Raises InvalidSeedError for a seed that already has OPEN matches, and
-    PlayerError when two seeds share a player id.
+    Raises InvalidSeedError for a seed state that breaks the seed rules (see
+    add_player) or whose initial_source_date is after as_of, and PlayerError
+    when two seeds share a player id.
+    """
+    return _replay(matches, seed_players, cfg=cfg, as_of=as_of, check_seed_dates=True)
+
+
+def _replay(
+    matches: Iterable[Match],
+    seed_players: Iterable[Player],
+    *,
+    cfg: Config | None,
+    as_of: date,
+    check_seed_dates: bool,
+) -> RatingEngine:
+    """
+    replay, with the seed date check optional.
+
+    Scheduled prequential windows replay to dates before a seed captured
+    mid-ledger, which is legitimate there (earlier matches are frozen for
+    that player), so they skip the check.
     """
     engine = RatingEngine(cfg)
     for player in seed_players:
-        if any(state.matches_played for state in player.ratings.values()):
-            raise InvalidSeedError(f"Seed for {player.id} already contains OPEN matches")
         engine.add_player(player)
+        if check_seed_dates:
+            _check_seed_date(player, as_of, "as_of")
 
     considered = counted = 0
     for match in _ledger(matches):
@@ -1401,12 +1607,28 @@ def prequential_predictions(
     date). A match on day d is predicted from replay(matches on or before s,
     as_of=s) for the largest replay date s strictly before d, and matches in
     that window are then predicted and recorded live in ledger order.
+
+    Every seed is validated up front, in both modes, by the seed rules (see
+    RatingEngine.add_player), and a seed whose initial_source_date is after
+    the last ledger match raises InvalidSeedError. A repeated seed id raises
+    PlayerError, as add_player does. A seed captured mid-ledger is accepted:
+    scheduled replays before its date freeze it as usual.
     """
     if mode not in ("live", "scheduled"):
         raise EvaluationError(f"mode must be 'live' or 'scheduled', not {mode!r}")
     cfg = cfg or Config()
     ordered = _ledger(matches)
     seeds = list(seed_players)
+    seen: set[str] = set()
+    for player in seeds:
+        # Same order and messages as add_player, so both modes agree.
+        _check_seed_identity(player)
+        if player.id in seen:
+            raise PlayerError(f"Player already exists: {player.id}")
+        seen.add(player.id)
+        _validate_seed(player, cfg)
+        if ordered:
+            _check_seed_date(player, ordered[-1].played_on, "the last ledger match")
     predictions: list[PrequentialPrediction] = []
 
     def step(engine: RatingEngine, match: Match) -> None:
@@ -1442,11 +1664,12 @@ def prequential_predictions(
     for replay_date, window in sorted(windows.items()):
         if score_from is not None and all(m.played_on < score_from for m in window):
             continue
-        engine = replay(
+        engine = _replay(
             [m for m in ordered if m.played_on <= replay_date],
             seeds,
             cfg=cfg,
             as_of=replay_date,
+            check_seed_dates=False,
         )
         for match in window:
             step(engine, match)

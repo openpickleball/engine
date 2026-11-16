@@ -67,10 +67,10 @@ result = engine.record(
 print(result.counted, result.reason, result.deltas)
 
 summary = engine.player_summary("alice", RatingFormat.DOUBLES)
-print(summary.rating, summary.reliability, summary.reliability_basis)
+print(summary.rating, summary.reliability, summary.imported_reliability)
 ```
 
-`result.reason` is `None` when the match counted and a `RejectionReason` when it did not. `player_summary` returns a `PlayerSummary`.
+`result.reason` is `None` when the match counted and a `RejectionReason` when it did not. `player_summary` returns a `PlayerSummary`. Its `reliability` is always OPEN-earned. `imported_reliability` is an imported external reliability while it is carried, shown separately, and `None` otherwise.
 
 Authoritative ratings come from `replay(ledger, as_of=...)`. Calibrate the expectation scale on match history with `fit_scale(...)`. The expectation scale and the K factor together set how sharp predictions are, and in a closed pool they also set the rating spread. Run `fit_scale` with `mode="scheduled"` and a `score_from` date that skips immature ratings, then check `at_bound` and `profile` on the result: a fit that sits on a search edge or has a flat error profile is not identified. `RatingEngine.predict_win_probability` assumes points are independent, which tends to make match win probabilities overconfident. Calibrate them with `fit_win_calibration` and store the result in `Config.win_calibration_by_scoring`.
 
@@ -108,7 +108,6 @@ Results:
 - `MatchResult`: what `record` did with a match, including the rating changes.
 - `RejectionReason`: why a match was not counted.
 - `PlayerSummary`: a player's rating, reliability, and provenance in one format.
-- `ReliabilityBasis`: whether a displayed reliability is OPEN-earned or imported.
 - `ReplayInfo`: the date, config version, and config fingerprint of a replay.
 
 Evaluation and calibration:
@@ -130,8 +129,8 @@ Errors (every class is a `ValueError`):
 - `OpenEngineError`: base class for every error the engine raises on purpose.
 - `ConfigError`: a `Config` or `GameFormat` value is not valid.
 - `InvalidMatchError`: a match, its teams, its scores, or its `played_at` is not valid.
-- `InvalidSeedError`: an external or replay seed cannot initialize a rating.
-- `PlayerError`: a player identity, account link, or external identity is not valid. `seed_external_rating` raises it for a blank player id or when the snapshot's external identity cannot be linked (it names no source, it is already linked to another player, or the player already has a different id from that source), and `replay` raises it when two seeds share a player id.
+- `InvalidSeedError`: an external or replay seed cannot initialize a rating. `RatingEngine.add_player`, `replay`, and `prequential_predictions` (and so `evaluate`, `fit_scale`, and `fit_win_calibration`) raise it for a seed that breaks the seed rules in `add_player`'s docstring, including a seed that is not a `Player`, a field of the wrong type, or a rating outside the rating bounds. `replay` also raises it for a seed dated after `as_of`, and `prequential_predictions` for one dated after its last ledger match. `RatingEngine.seed_external_rating` raises it for a rating format of the wrong type, a snapshot whose captured date, source, or external id has the wrong type, or whose rating or reliability has the wrong type or is out of range, or an existing rating it may not replace.
+- `PlayerError`: a player identity, account link, or external identity is not valid. `seed_external_rating` raises it for a blank player id or when the snapshot's external identity cannot be linked (it names no source, it is already linked to another player, or the player already has a different id from that source), and `replay` and `prequential_predictions` raise it when two seeds share a player id.
 - `EvaluationError`: an evaluation, fit, or win probability cannot be computed.
 - `LedgerConflictError`: ledger rows share a `match_id` but differ. Its `match_ids` lists them.
 <!-- public-api:end -->

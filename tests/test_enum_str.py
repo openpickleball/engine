@@ -13,7 +13,6 @@ from open_engine import (
     MatchType,
     RatingFormat,
     RejectionReason,
-    ReliabilityBasis,
     ScoringType,
 )
 from open_engine.engine import _StrEnum
@@ -23,7 +22,6 @@ ENUMS: list[type[Enum]] = [
     MatchType,
     ScoringType,
     RejectionReason,
-    ReliabilityBasis,
 ]
 MEMBERS = [member for cls in ENUMS for member in cls]
 
