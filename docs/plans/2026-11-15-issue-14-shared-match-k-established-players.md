@@ -16,8 +16,10 @@ delta_i = sign * K_i * effective_weight * surprise      (before the rating clamp
 
 `K_i` is `player_k` on the player's working state, after `inflated_rd`, as today. The shared
 `match_k` (the mean of every participant's K) and the within-team share
-`team_size * match_k * K_i / sum(team K)` are removed. When every participant has the same K,
-the new formula gives exactly the old deltas, because `team_size * k * k / (team_size * k) = k`.
+`team_size * match_k * K_i / sum(team K)` are removed. The old step was
+`K_i * mean(all K) / mean(own team K)`, so when both teams have the same mean K (including when
+every participant has the same K) and no player is frozen, the new formula gives exactly the old
+deltas. Ratings change for matches whose team mean K differ, or with a frozen player.
 
 Team-average movement is then not always zero-sum. It is zero-sum when both teams have the same
 mean K and no clamp or freeze applies, and can also net to zero in other cases (no surprise, or

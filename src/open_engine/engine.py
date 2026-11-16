@@ -27,7 +27,7 @@ Published behavior notes:
     3. `frozen`: the match is on or before a player's imported baseline date.
        The imported rating already reflects that match, so that player's
        rating is used for the expectation but does not move. Their teammates
-       still move by their own K only, so the team moves less.
+       move by their own K only, so the team moves less.
   It is also 0.0 when the result matched the expectation, or when clamps or
   freezes on both teams cancel. So an imbalance of 0.0 does not mean nothing
   was clamped or frozen: read `clamped` and `frozen` for that.
