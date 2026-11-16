@@ -1207,9 +1207,13 @@ def _snap_number(value: object, path: str) -> float:
     raise SnapshotError(f"{path} must be a finite number (an int or float, not bool)")
 
 
+# The largest count a snapshot holds. json.dumps writes any int up to it.
+_MAX_COUNT = 2**63 - 1
+
+
 def _snap_count(value: object, path: str) -> int:
-    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-        raise SnapshotError(f"{path} must be a nonnegative int")
+    if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= _MAX_COUNT:
+        raise SnapshotError(f"{path} must be a nonnegative int no larger than 2**63 - 1")
     return value
 
 
@@ -1230,7 +1234,54 @@ def _snap_date_map(value: object, path: str) -> dict[str, date]:
     return result
 
 
-def _snap_state(value: object, path: str, cfg: Config) -> RatingState:
+def _snap_state(value: object, path: str, player_id: str, cfg: Config) -> RatingState:
+    """A rating state with the right types, checked against the engine's invariants."""
+    state = _snap_state_fields(value, path, cfg)
+    _check_state_invariants(state, path, player_id, cfg)
+    return state
+
+
+def _check_state_invariants(state: RatingState, path: str, player_id: str, cfg: Config) -> None:
+    """
+    Raise SnapshotError for a state the engine cannot produce.
+
+    Only an engine-made state may load, because a loaded state sets the
+    rating and the reliability shown for it: a low RD with no matches
+    would show earned reliability nobody earned, and a played state
+    relabeled unplayed would let an external seed replace an OPEN-earned
+    rating.
+    """
+    if not cfg.min_rating <= state.initial_rating <= cfg.max_rating:
+        raise SnapshotError(f"{path}.initial_rating must be between min_rating and max_rating")
+    if (state.matches_played == 0) != (state.last_played is None):
+        raise SnapshotError(f"{path}: matches_played must be 0 exactly when last_played is null")
+    if state.live_updates_since_replay > state.matches_played:
+        raise SnapshotError(f"{path}.live_updates_since_replay must not exceed matches_played")
+    if player_id in state.partners:
+        raise SnapshotError(f"{path}.partners: a player cannot be their own partner")
+    if player_id in state.opponents:
+        raise SnapshotError(f"{path}.opponents: a player cannot be their own opponent")
+    if state.initial_source_reliability is not None and state.initial_source_date is None:
+        raise SnapshotError(f"{path}.initial_source_reliability needs an initial_source_date")
+    if state.matches_played:
+        return
+    if state.partners:
+        raise SnapshotError(f"{path}: an unplayed state must have no partners")
+    if state.opponents:
+        raise SnapshotError(f"{path}: an unplayed state must have no opponents")
+    # A seed or new state has one of these RDs; a category state derived
+    # from its parent has max(parent RD, category_seed_rd). Only a counted
+    # match lowers RD from there.
+    if state.rd not in (cfg.new_player_rd, cfg.external_seed_rd) and (
+        state.rd < cfg.category_seed_rd
+    ):
+        raise SnapshotError(
+            f"{path}: rd of an unplayed state must be new_player_rd, external_seed_rd, "
+            "or at least category_seed_rd"
+        )
+
+
+def _snap_state_fields(value: object, path: str, cfg: Config) -> RatingState:
     raw = _snap_object(value, path, _STATE_KEYS)
     rating = _snap_number(raw["rating"], f"{path}.rating")
     if not cfg.min_rating <= rating <= cfg.max_rating:
@@ -1282,20 +1333,87 @@ def _snap_player(value: object, path: str, cfg: Config) -> Player:
     for source, external_id in external_raw.items():
         if not isinstance(source, str) or not isinstance(external_id, str):
             raise SnapshotError(f"{path}.external_ids must map str to str")
+        if not _is_id(source) or not _is_id(external_id):
+            raise SnapshotError(f"{path}.external_ids must not hold a blank source or id")
         external_ids[source] = external_id
+    account_user_id = _snap_opt_str(raw["account_user_id"], f"{path}.account_user_id")
+    if account_user_id is not None and not _is_id(account_user_id):
+        raise SnapshotError(f"{path}.account_user_id must not be blank")
     ratings = raw["ratings"]
     if not isinstance(ratings, Mapping):
         raise SnapshotError(f"{path}.ratings must be an object")
     states: dict[RatingFormat, RatingState] = {}
     for key, state in ratings.items():
         fmt = _snap_format(key, f"{path}.ratings key")
-        states[fmt] = _snap_state(state, f"{path}.ratings.{fmt.value}", cfg)
+        states[fmt] = _snap_state(state, f"{path}.ratings.{fmt.value}", player_id, cfg)
     return Player(
         id=player_id,
         ratings=states,
         external_ids=external_ids,
-        account_user_id=_snap_opt_str(raw["account_user_id"], f"{path}.account_user_id"),
+        account_user_id=account_user_id,
     )
+
+
+def _check_identities(players: Mapping[str, Player], paths: Mapping[str, str]) -> None:
+    """Raise SnapshotError for an account or external id linked to two players."""
+    accounts: dict[str, str] = {}
+    external: dict[tuple[str, str], str] = {}
+    for player_id, player in players.items():
+        account = player.account_user_id
+        if account is not None:
+            if accounts.setdefault(account, player_id) != player_id:
+                raise SnapshotError(
+                    f"{paths[player_id]}: account_user_id {account!r} is linked to more "
+                    "than one player"
+                )
+        for source, external_id in player.external_ids.items():
+            if external.setdefault((source, external_id), player_id) != player_id:
+                raise SnapshotError(
+                    f"{paths[player_id]}: external id {external_id!r} from {source!r} is "
+                    "linked to more than one player"
+                )
+
+
+def _check_resumable(snap: _Snapshot, paths: Mapping[str, str]) -> None:
+    """
+    Raise SnapshotError unless a resumable snapshot is consistent with its replay.
+
+    A replay never records anything dated after its as_of, and it considers
+    and counts exactly the rows behind its digests and processed ids. A
+    live engine can hold later dates, so only resumable snapshots are held
+    to this.
+    """
+    as_of = snap.calculated_as_of
+    info = snap.replay_info
+    if as_of is None or info is None:
+        raise SnapshotError("snapshot.resumable must be false when calculated_as_of is null")
+
+    def check(on: date | None, path: str) -> None:
+        if on is not None and on > as_of:
+            raise SnapshotError(f"{path} is after calculated_as_of in a resumable snapshot")
+
+    for player_id, player in snap.players.items():
+        for fmt, state in player.ratings.items():
+            path = f"{paths[player_id]}.ratings.{fmt.value}"
+            check(state.initial_source_date, f"{path}.initial_source_date")
+            check(state.last_played, f"{path}.last_played")
+            check(state.rd_as_of, f"{path}.rd_as_of")
+            for name, seen in (("partners", state.partners), ("opponents", state.opponents)):
+                for other, on in seen.items():
+                    check(on, f"{path}.{name}[{other!r}]")
+    for index, dates in enumerate(snap.self_reported_log.values()):
+        for position, on in enumerate(dates):
+            check(on, f"snapshot.self_reported_log[{index}].dates[{position}]")
+    if info.matches_considered != len(snap.ledger_digests):
+        raise SnapshotError(
+            "snapshot.replay_info.matches_considered must equal the number of "
+            "ledger_digests in a resumable snapshot"
+        )
+    if info.matches_counted != len(snap.processed_match_ids):
+        raise SnapshotError(
+            "snapshot.replay_info.matches_counted must equal the number of "
+            "processed_match_ids in a resumable snapshot"
+        )
 
 
 def _snap_log_entry(value: object, path: str) -> tuple[MatchupKey, list[date]]:
@@ -1381,12 +1499,15 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
     )
 
     players: dict[str, Player] = {}
+    player_paths: dict[str, str] = {}
     for index, value in enumerate(_snap_list(raw["players"], "snapshot.players")):
         path = f"snapshot.players[{index}]"
         player = _snap_player(value, path, cfg)
         if player.id in players:
             raise SnapshotError(f"{path}: duplicate player id {player.id!r}")
         players[player.id] = player
+        player_paths[player.id] = path
+    _check_identities(players, player_paths)
 
     processed: set[str] = set()
     ids = _snap_list(raw["processed_match_ids"], "snapshot.processed_match_ids")
@@ -1431,10 +1552,8 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
     resumable = raw["resumable"]
     if not isinstance(resumable, bool):
         raise SnapshotError("snapshot.resumable must be a bool")
-    if resumable and calculated_as_of is None:
-        raise SnapshotError("snapshot.resumable must be false when calculated_as_of is null")
 
-    return _Snapshot(
+    snap = _Snapshot(
         players,
         processed,
         log,
@@ -1444,6 +1563,9 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
         ledger_player_ids,
         resumable,
     )
+    if resumable:
+        _check_resumable(snap, player_paths)
+    return snap
 
 
 # ---------------------------------------------------------------------------

@@ -71,6 +71,12 @@ Validates everything before building, raising `SnapshotError` with the path of t
 - `rating` and `initial_rating`: int or finite float, not bool, `rating` within `min_rating`/`max_rating`. `rd` within `rd_min`/`rd_max`. `initial_source_reliability`: null or finite number in 0..100. Counts: int, not bool, nonnegative. `initial_source`: str. `initial_external_player_id`, `initial_evidence_reference`, `account_user_id`: str or null. `external_ids`: str to str.
 - `replay_info` is null exactly when `calculated_as_of` is null; otherwise its `as_of` equals `calculated_as_of`, its config fields equal the snapshot's, its counts are nonnegative ints with `matches_counted <= matches_considered`.
 - `ledger_digests`: str id to 64-char lowercase hex.
+- Fix round 1 (T4), engine invariants, so only a state the engine can produce loads:
+  - Unplayed state (`matches_played` 0): `rd` is `new_player_rd` or `external_seed_rd`, or at least `category_seed_rd` (a derived category state); no partners, opponents, or live updates. An imported reliability only with an `initial_source_date`.
+  - `matches_played == 0` exactly when `last_played` is null; `live_updates_since_replay <= matches_played`; a player is never their own partner or opponent.
+  - `initial_rating` within `min_rating`/`max_rating`. Every count at most `2**63 - 1`, so `json.dumps` can always write it.
+  - `account_user_id` (when set) and every external source and id are non-blank; no account and no (source, external id) is linked to two players.
+  - For a resumable snapshot only: no state, partner, opponent, or self-reported date after `calculated_as_of`; `matches_considered == len(ledger_digests)` and `matches_counted == len(processed_match_ids)`. A live engine can hold later dates, so a non-resumable snapshot is not held to this.
 
 Then builds `Player`/`RatingState` objects, sets `processed_match_ids`, `self_reported_log` (keys `(RatingFormat, frozenset({frozenset(team_a), frozenset(team_b)}))`), `calculated_as_of`, `replay_info`, `_ledger_digests`.
 
