@@ -104,7 +104,8 @@ Published behavior notes:
   ledger, and resume also raises SnapshotError for a checkpointed row
   missing from it (a void or deletion). Without it, resume cannot see a
   voided row on or before the checkpoint, and given only the newer rows
-  it cannot see a backdated row either: those need a full replay.
+  it cannot see a backdated row either. No flag lets it see a seed
+  withdrawn or corrected after the checkpoint. Those need a full replay.
 - `record` validates every match first. A valid match whose `match_id` was
   already processed returns a result that is not counted, with
   `RejectionReason.DUPLICATE_MATCH_ID`, instead of raising.
@@ -124,7 +125,10 @@ Production notes:
   ledger with `whole_ledger=True` so resume raises for a voided or
   deleted row on or before the checkpoint. Given only the newer rows,
   resume cannot see a removed row or a backdated one, so a void, an
-  edit, or a backdated row then needs a full replay. A snapshot does not
+  edit, or a backdated row then needs a full replay. A seed withdrawn or
+  corrected after the checkpoint needs a full replay too, with or
+  without whole_ledger, since the checkpoint already holds the old seed.
+  A snapshot does not
   replace the ledger: keep the ledger as the source of truth and run a
   full replay when in doubt.
 - A stored snapshot sets every rating when it is loaded, so give it the
@@ -2249,11 +2253,12 @@ def replay(
 
     from_snapshot resumes from a checkpoint: the to_snapshot() output (or
     json.loads of its text) of an earlier replay under the same cfg. The
-    result equals a full replay of the same ledger and seeds to as_of,
-    whether matches holds the whole ledger or only the rows after the
-    checkpoint date. Rows dated on or before the checkpoint date are not
-    recorded again: each must be a row the checkpoint considered,
-    unchanged. seed_players then holds only seeds not in the checkpoint.
+    result equals a full replay to as_of of the ledger and seeds the rows
+    come from (the checkpoint's seeds plus seed_players), whether matches
+    holds the whole ledger or only the rows after the checkpoint date.
+    Rows dated on or before the checkpoint date are not recorded again:
+    each must be a row the checkpoint considered, unchanged. seed_players
+    then holds only seeds not in the checkpoint.
     Take the checkpoint snapshot right after its replay, before any other
     call on the engine. Every engine method that changes state clears the
     snapshot's resumable mark; changing objects the engine returns
@@ -2286,8 +2291,9 @@ def replay(
       from matches.
     Without whole_ledger, resume cannot see a row removed (voided) from the
     ledger on or before the checkpoint date, and given only the newer rows
-    it cannot see a late row added on or before it either. Those need a
-    full replay.
+    it cannot see a late row added on or before it either. With or without
+    whole_ledger, it cannot see a seed withdrawn or corrected after the
+    checkpoint. Those need a full replay.
     """
     if not isinstance(whole_ledger, bool):
         raise SnapshotError(f"whole_ledger must be a bool, not {type(whole_ledger).__name__}")
