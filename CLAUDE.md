@@ -82,7 +82,7 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`, which calls `test.yml` 
 
 ## Tests
 
-- Tests use pytest with plain asserts and fixtures, no unittest classes. Prefer `pytest.mark.parametrize` for rule tables, and assert the specific error class and its message with `pytest.raises(..., match=...)` when a test exercises a validation branch.
+- Tests use pytest with plain asserts and fixtures, no unittest classes. Prefer `pytest.mark.parametrize` for rule tables, and assert the error and its message with `pytest.raises(..., match=...)` when a test exercises a validation branch. New tests name the specific `OpenEngineError` subclass; older tests that expect `ValueError` stay valid, since every engine error is one.
 - Every behavior change comes with a test. A bug fix comes with a test that fails without the fix.
 - Fixtures and test data are synthetic, with invented player identifiers. Never add real match results, even with names removed: a sequence of opponents, dates, and scores can still point to a specific person.
 
