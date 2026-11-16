@@ -7,7 +7,7 @@ Domain skills: none apply. This is a standard-library Python package, so django,
 ## Decisions taken with the maintainer
 
 - **Name: "established", not "provisional".** "Provisional" already means two other things here: a live rating between replays (CLAUDE.md, "Provisional versus authoritative") and the `open_provisional` initial source. The new names are `Config.established_reliability_threshold` and `PlayerSummary.established`. The docs say that a rating that is not established is what external rating systems usually call provisional.
-- **`evaluate()` does not change.** The threshold is a label for display and eligibility only. It does not change ratings, predictions, `evaluate`, `prequential_predictions`, `fit_scale`, or `fit_win_calibration`. `evaluate` has its own eligibility rule: every participant has an imported baseline or at least `burn_in_matches` OPEN matches. The code calls that "established" too (`_is_established`), so the docs say it is a separate rule from `PlayerSummary.established`.
+- **`evaluate()` does not change.** The threshold is a label for display and the backend's own eligibility rules only. It does not change ratings, predictions, `evaluate`, `prequential_predictions`, `fit_scale`, or `fit_win_calibration`. `evaluate` has its own eligibility rule: every participant has an imported baseline or at least `burn_in_matches` OPEN matches. The code calls that "established" too (`_is_established`), so the docs say it is a separate rule from `PlayerSummary.established`.
 
 ## Acceptance criteria
 
@@ -43,14 +43,14 @@ The scenario: a new player with no seed, one doubles match a week, single games 
 
 Matches needed to reach 60, by match type, for the same weekly schedule:
 
-| Match type | Diverse, single game | Diverse, best of 3 | Same four players, single game |
-| --- | --- | --- | --- |
-| Tournament | 10 | 8 | 18 |
-| League | 11 | 9 | 20 |
-| Recreational verified | 13 | 10 | 24 |
-| Self-reported | 25 | 20 | never (repeat matches are discounted, then rejected) |
+| Match type | Diverse, single game | Diverse, best of 3 won 2-1 (three games) | Diverse, best of 3 won 2-0 | Same four players, single game |
+| --- | --- | --- | --- | --- |
+| Tournament | 10 | 8 | 9 | 18 |
+| League | 11 | 9 | 10 | 20 |
+| Recreational verified | 13 | 10 | 11 | 24 |
+| Self-reported | 25 | 20 | 22 | never (repeat matches are discounted, then rejected) |
 
-The docs state the headline: "Under the defaults, a new player playing one match a week with varied partners and opponents becomes established after about 10 tournament, league, or recreational verified matches (11 league matches of one game), and after about twice as many against the same players. Self-reported matches need about 20 to 25 with varied players and never get there against the same players, because repeat matches are discounted and then rejected." They do not paste the whole table. (Corrected in review: an earlier headline gave a range of 8 to 13 that was false for self-reported matches.)
+The docs state the headline: "Under the defaults, a new player playing one match a week with varied partners and opponents becomes established after about 10 to 13 tournament, league, or recreational verified matches (10 tournament, 11 league, or 13 recreational verified matches of one game, fewer for best of 3), and after about twice as many against the same players. Self-reported matches need about 20 to 25 with varied players and never get there against the same players, because repeat matches are discounted and then rejected." They do not paste the whole table. (Corrected in review: an earlier headline gave a range of 8 to 13 that was false for self-reported matches.)
 
 After the 11th league match, measured at a later date with no new matches: 60.6 at 90 days, 59.7 at 120 days, 58.1 at 180 days.
 

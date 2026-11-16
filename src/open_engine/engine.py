@@ -73,20 +73,20 @@ Published behavior notes:
   reliability never counts, and it is measured at the same reference date
   as reliability, so it lapses with inactivity. Under the defaults, a new
   player playing one match a week with varied partners and opponents
-  becomes established after about 10 tournament, league, or recreational
-  verified matches (11 league matches of one game), and after about twice
-  as many against the same players. Self-reported matches need about 20
-  to 25 with varied players and never get there against the same
-  players, because repeat matches are discounted and then rejected. A
-  rating that is not
-  established is what external rating systems usually call provisional.
-  That is different from OPEN's provisional live updates between replays
-  and from the open_provisional initial source. The threshold is a label
-  for display and eligibility only: it changes no rating, prediction,
-  evaluate, prequential_predictions, fit_scale, or fit_win_calibration
-  output. Evaluation has its own eligibility rule: it scores a match only
-  when every participant has an imported baseline or at least
-  burn_in_matches OPEN matches. That rule is separate from
+  becomes established after about 10 to 13 tournament, league, or
+  recreational verified matches (10 tournament, 11 league, or 13
+  recreational verified matches of one game, fewer for best of 3), and
+  after about twice as many against the same players. Self-reported
+  matches need about 20 to 25 with varied players and never get there
+  against the same players, because repeat matches are discounted and
+  then rejected. A rating that is not established is what external
+  rating systems usually call provisional. That is different from OPEN's
+  provisional live updates between replays and from the open_provisional
+  initial source. The threshold is a label only: it changes no rating,
+  prediction, evaluate, prequential_predictions, fit_scale, or
+  fit_win_calibration output. Evaluation has its own eligibility rule:
+  it scores a match only when every participant has an imported baseline
+  or at least burn_in_matches OPEN matches. That rule is separate from
   PlayerSummary.established.
 - Ledger order: `replay` and `prequential_predictions` sort matches by
   `played_on` first. Within one `played_on` date, untimed matches come
@@ -404,9 +404,8 @@ class Config:
     import_reliability_max_age_days: int = 365
 
     # Reliability label. PlayerSummary.established is True when OPEN-earned
-    # reliability, as displayed, is at least this value (0-100). A label for
-    # display and eligibility only: it changes no rating, prediction, or
-    # evaluation.
+    # reliability, as displayed, is at least this value (0-100). A label
+    # only: it changes no rating, prediction, or evaluation.
     established_reliability_threshold: float = 60.0
 
     # Category doubles matches also update overall doubles.
