@@ -1564,15 +1564,22 @@ def prequential_predictions(
 
     Every seed is validated up front, in both modes, by the seed rules (see
     RatingEngine.add_player), and a seed whose initial_source_date is after
-    the last ledger match raises InvalidSeedError. A seed captured mid-ledger
-    is accepted: scheduled replays before its date freeze it as usual.
+    the last ledger match raises InvalidSeedError. A repeated seed id raises
+    PlayerError, as add_player does. A seed captured mid-ledger is accepted:
+    scheduled replays before its date freeze it as usual.
     """
     if mode not in ("live", "scheduled"):
         raise EvaluationError(f"mode must be 'live' or 'scheduled', not {mode!r}")
     cfg = cfg or Config()
     ordered = _ledger(matches)
     seeds = list(seed_players)
+    seen: set[str] = set()
     for player in seeds:
+        # Same order and messages as add_player, so both modes agree.
+        _check_seed_identity(player)
+        if player.id in seen:
+            raise PlayerError(f"Player already exists: {player.id}")
+        seen.add(player.id)
         _validate_seed(player, cfg)
         if ordered:
             _check_seed_date(player, ordered[-1].played_on, "the last ledger match")
