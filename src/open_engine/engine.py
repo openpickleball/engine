@@ -72,17 +72,21 @@ Published behavior notes:
   Config.established_reliability_threshold (60 by default). Imported
   reliability never counts, and it is measured at the same reference date
   as reliability, so it lapses with inactivity. Under the defaults, a new
-  player playing one match a week with varied partners and opponents
-  becomes established after about 10 to 13 tournament, league, or
-  recreational verified matches (10 tournament, 11 league, or 13
-  recreational verified matches of one game, fewer for best of 3), and
-  after about twice as many against the same players. Self-reported
-  matches need about 20 to 25 with varied players and never get there
-  against the same players, because repeat matches are discounted and
-  then rejected. A rating that is not established is what external
-  rating systems usually call provisional. That is different from OPEN's
-  provisional live updates between replays and from the open_provisional
-  initial source. The threshold is a label only: it changes no rating,
+  player with no imported rating, playing one match a week with varied
+  partners and opponents, becomes established after about 10 to 13
+  tournament, league, or recreational verified matches (10 tournament,
+  11 league, or 13 recreational verified matches of one game, fewer for
+  best of 3), and after about twice as many against the same players.
+  Self-reported matches need about 20 to 25 with varied players and
+  never get there against the same players, because repeat matches are
+  discounted and then rejected. A player seeded from an imported rating
+  starts at a lower RD (Config.external_seed_rd), so they become
+  established after about 3 to 4 such matches (3 tournament, 4 league or
+  recreational verified), whatever their imported reliability is. Only
+  the imported reliability value is ignored. A rating that is not
+  established is what external rating systems usually call provisional.
+  That is different from OPEN's provisional live updates between replays
+  and from the open_provisional initial source. The threshold is a label only: it changes no rating,
   prediction, evaluate, prequential_predictions, fit_scale, or
   fit_win_calibration output. Evaluation has its own eligibility rule:
   it scores a match only when every participant has an imported baseline
@@ -835,13 +839,17 @@ class PlayerSummary:
     established is True when reliability (as displayed, rounded to 1 place)
     is at least Config.established_reliability_threshold. Imported
     reliability never counts toward it, and it is measured at the same
-    reference date as reliability, so it lapses with inactivity. It is a
-    label only and changes no rating. A rating that is not established is
-    what external rating systems usually call provisional. That is different
-    from OPEN's provisional live updates between replays and from the
-    open_provisional initial source. Evaluation's eligibility rule (an
-    imported baseline or at least burn_in_matches OPEN matches) is a
-    separate rule from established.
+    reference date as reliability, so it lapses with inactivity. A player
+    seeded from an imported rating starts at a lower RD
+    (Config.external_seed_rd), so they reach the threshold after fewer
+    OPEN matches than a player with no imported rating (see the module
+    docstring for counts); only the imported reliability value is
+    ignored. It is a label only and changes no rating. A rating that is
+    not established is what external rating systems usually call
+    provisional. That is different from OPEN's provisional live updates
+    between replays and from the open_provisional initial source.
+    Evaluation's eligibility rule (an imported baseline or at least
+    burn_in_matches OPEN matches) is a separate rule from established.
     """
 
     player_id: str

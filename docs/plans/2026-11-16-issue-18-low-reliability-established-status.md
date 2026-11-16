@@ -7,7 +7,7 @@ Domain skills: none apply. This is a standard-library Python package, so django,
 ## Decisions taken with the maintainer
 
 - **Name: "established", not "provisional".** "Provisional" already means two other things here: a live rating between replays (CLAUDE.md, "Provisional versus authoritative") and the `open_provisional` initial source. The new names are `Config.established_reliability_threshold` and `PlayerSummary.established`. The docs say that a rating that is not established is what external rating systems usually call provisional.
-- **`evaluate()` does not change.** The threshold is a label for display and the backend's own eligibility rules only. It does not change ratings, predictions, `evaluate`, `prequential_predictions`, `fit_scale`, or `fit_win_calibration`. `evaluate` has its own eligibility rule: every participant has an imported baseline or at least `burn_in_matches` OPEN matches. The code calls that "established" too (`_is_established`), so the docs say it is a separate rule from `PlayerSummary.established`.
+- **`evaluate()` does not change.** The threshold is a label only. It does not change ratings, predictions, `evaluate`, `prequential_predictions`, `fit_scale`, or `fit_win_calibration`. `evaluate` has its own eligibility rule: every participant has an imported baseline or at least `burn_in_matches` OPEN matches. The code calls that "established" too (`_is_established`), so the docs say it is a separate rule from `PlayerSummary.established`.
 
 ## Acceptance criteria
 
@@ -50,7 +50,9 @@ Matches needed to reach 60, by match type, for the same weekly schedule:
 | Recreational verified | 13 | 10 | 11 | 24 |
 | Self-reported | 25 | 20 | 22 | never (repeat matches are discounted, then rejected) |
 
-The docs state the headline: "Under the defaults, a new player playing one match a week with varied partners and opponents becomes established after about 10 to 13 tournament, league, or recreational verified matches (10 tournament, 11 league, or 13 recreational verified matches of one game, fewer for best of 3), and after about twice as many against the same players. Self-reported matches need about 20 to 25 with varied players and never get there against the same players, because repeat matches are discounted and then rejected." They do not paste the whole table. (Corrected in review: an earlier headline gave a range of 8 to 13 that was false for self-reported matches.)
+The docs state the headline: "Under the defaults, a new player with no imported rating, playing one match a week with varied partners and opponents, becomes established after about 10 to 13 tournament, league, or recreational verified matches (10 tournament, 11 league, or 13 recreational verified matches of one game, fewer for best of 3), and after about twice as many against the same players. Self-reported matches need about 20 to 25 with varied players and never get there against the same players, because repeat matches are discounted and then rejected." They do not paste the whole table. (Corrected in review: an earlier headline gave a range of 8 to 13 that was false for self-reported matches.)
+
+A player seeded with `seed_external_rating` (rating 3.5, captured 2026-01-01) starts at RD `external_seed_rd` (0.42), not `new_player_rd` (0.80). On the same weekly schedule, single game, varied players, they reach 60 after 3 tournament matches (60.4), 4 league matches (69.2), or 4 recreational verified matches (66.9). The counts are the same with an imported reliability of 95.0 or None. Measured during review on this branch. The docs say the headline counts are for a player with no imported rating and give the 3 to 4 for a seeded player. (Added in review: the earlier headline did not say it covered only unseeded players.)
 
 After the 11th league match, measured at a later date with no new matches: 60.6 at 90 days, 59.7 at 120 days, 58.1 at 180 days.
 
