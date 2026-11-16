@@ -46,9 +46,12 @@ Published behavior notes:
   ledger live in ledger order: the replay date labels the result but never
   changes an update. Inactivity widens RD (`inflated_rd`) but never shrinks
   or discounts an old match's update.
-- An imported external reliability is shown separately from OPEN-earned
-  reliability. It is carried, clearly labeled, only until OPEN-earned
-  reliability exceeds it or the carry limits in Config are reached.
+- PlayerSummary.reliability is always OPEN-earned. An imported external
+  reliability is shown separately, in PlayerSummary.imported_reliability,
+  only until OPEN-earned reliability exceeds it or the carry limits in
+  Config are reached; otherwise that field is None. An external
+  reliability never sets OPEN RD: an imported seed's RD is always
+  Config.external_seed_rd.
 - Ledger order: `replay` and `prequential_predictions` sort matches by
   `played_on` first. Within one `played_on` date, untimed matches come
   first (by `sequence`, then `match_id`), then timed matches (by the UTC
@@ -62,7 +65,9 @@ Published behavior notes:
 - Errors: every error the engine raises on purpose is an `OpenEngineError`,
   which is a `ValueError`. `ConfigError` covers Config and GameFormat
   values, `InvalidMatchError` covers matches, teams, scores and
-  `played_at`, `InvalidSeedError` covers external and replay seeds,
+  `played_at`, `InvalidSeedError` covers external and replay seeds
+  (including a seed state the engine could not have produced before any
+  match, see `RatingEngine.add_player`),
   `PlayerError` covers player identities, `EvaluationError` covers
   evaluation, fits and win probabilities, and `LedgerConflictError` covers
   conflicting ledger rows.
