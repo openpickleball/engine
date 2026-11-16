@@ -1447,6 +1447,8 @@ def prequential_predictions(
     cfg = cfg or Config()
     ordered = _ledger(matches)
     seeds = list(seed_players)
+    for player in seeds:
+        _validate_seed(player, cfg)
     predictions: list[PrequentialPrediction] = []
 
     def step(engine: RatingEngine, match: Match) -> None:
