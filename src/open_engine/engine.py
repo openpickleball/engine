@@ -675,9 +675,12 @@ class PlayerSummary:
     A player's published rating in one format, with reliability and provenance.
 
     reliability is always OPEN-earned. imported_reliability is the imported
-    external reliability while it is carried (fresh, within the carry match
-    limit, and higher than the earned value), otherwise None. It is shown
-    separately and never replaces or converts into reliability.
+    external reliability, rounded to 1 place, while it is carried, otherwise
+    None. It is carried when it was captured on or before the reference date
+    (player_summary's as_of, else the state's rd_as_of, else today), is
+    fresh, is within the carry match limit, and is higher than the earned
+    value. It is shown separately and never replaces or converts into
+    reliability.
     """
 
     player_id: str
@@ -1050,9 +1053,10 @@ class RatingEngine:
         (not bool) between 0 and 100. So every state seeded here passes the
         seed rules in add_player.
 
-        Raises InvalidSeedError when the snapshot or the existing rating does
-        not allow the seed, and PlayerError when player_id is blank or the
-        snapshot's external identity cannot be linked (see attach_external_id).
+        Raises InvalidSeedError when the rating format, a checked snapshot
+        field, or the existing rating does not allow the seed, and PlayerError
+        when player_id is blank or the snapshot's external identity cannot be
+        linked (see attach_external_id).
         """
         cfg = self.cfg
         # The same type rules the seed check applies, so every state seeded
