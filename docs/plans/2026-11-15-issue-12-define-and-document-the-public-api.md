@@ -148,6 +148,10 @@ browser work; this is a standard-library Python package.
   error re-exports from `open_engine.engine`, scans every module in the package for
   raises, and covers a category match whose parent update is rejected.
 - `examples/basic_match.py`: renamed method; print the summary sensibly.
+- `scripts/check_wheel.py`: `_errors.py` added to `PACKAGE_FILES`, since main's issue 11
+  wheel check rejects any module not listed there. `tests/test_check_wheel.py`: the same
+  file added to its `PACKAGE` fixture list, because every listed file is required. The
+  maintainer approved this edit to a pre-existing test.
 - `README.md`: the "Public API" section; update the quick start's `player_summary` and
   `win_probability` mentions.
 - `CHANGELOG.md`, `CLAUDE.md`: coordinator, Phase 8.

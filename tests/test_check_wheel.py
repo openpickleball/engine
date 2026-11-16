@@ -13,6 +13,7 @@ SCRIPT = Path(__file__).parents[1] / "scripts" / "check_wheel.py"
 DIST_INFO = "openpickleball_engine-0.0.0.dist-info"
 PACKAGE = [
     "open_engine/__init__.py",
+    "open_engine/_errors.py",
     "open_engine/_version.py",
     "open_engine/engine.py",
     "open_engine/winprob.py",

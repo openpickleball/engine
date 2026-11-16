@@ -24,7 +24,7 @@ import zipfile
 PACKAGE = "open_engine"
 # Every file the wheel ships from src/open_engine/. All of them are required.
 PACKAGE_FILES: frozenset[str] = frozenset(
-    {"__init__.py", "_version.py", "engine.py", "winprob.py", "py.typed"}
+    {"__init__.py", "_errors.py", "_version.py", "engine.py", "winprob.py", "py.typed"}
 )
 # Hatchling names the metadata directory openpickleball_engine-<version>.dist-info.
 DIST_INFO_PREFIX = "openpickleball_engine-"
