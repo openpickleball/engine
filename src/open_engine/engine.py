@@ -77,8 +77,23 @@ Published behavior notes:
   rejects a seed dated after `as_of`, and `prequential_predictions` one
   dated after its last ledger match),
   `PlayerError` covers player identities, `EvaluationError` covers
-  evaluation, fits and win probabilities, and `LedgerConflictError` covers
-  conflicting ledger rows.
+  evaluation, fits and win probabilities, `LedgerConflictError` covers
+  conflicting ledger rows, and `SnapshotError` covers snapshots that cannot
+  be loaded or resumed from.
+- Snapshots and checkpoints: `RatingEngine.to_snapshot()` gives the whole
+  engine state as JSON-safe data (schema version 1) with sorted keys and
+  lists, and `RatingEngine.from_snapshot` loads it back after validating
+  every key, type, and range and checking the config version and
+  fingerprint. A replay's snapshot is a checkpoint:
+  `replay(..., from_snapshot=snapshot)` records only rows dated after the
+  checkpoint date and equals a full replay of the same ledger, given the
+  whole ledger or only the newer rows. It checks every row first and
+  raises instead of differing: SnapshotError for a snapshot not from a
+  replay or with live updates, an as_of before the checkpoint, or a row on
+  or before the checkpoint date that the checkpoint did not consider
+  (compared by a digest that mirrors the ledger's duplicate rule), and
+  LedgerConflictError for such a row that changed or a later row that
+  reuses its id.
 - `record` validates every match first. A valid match whose `match_id` was
   already processed returns a result that is not counted, with
   `RejectionReason.DUPLICATE_MATCH_ID`, instead of raising.
@@ -91,6 +106,13 @@ Production notes:
   rating once OPEN matches have been processed.
 - Store each replay's `ReplayInfo` (as_of date, config version, config
   fingerprint) for auditability.
+- To avoid replaying the whole ledger every time, persist the snapshot of
+  each scheduled replay and resume the next one from it. Take checkpoints
+  from replays only, never from an engine with live updates. Store a match
+  before the replay that covers its date; a match that arrives for a
+  checkpointed date makes resume raise, and needs a full replay. A
+  snapshot does not replace the ledger: keep the ledger as the source of
+  truth and run a full replay when in doubt.
 """
 
 from __future__ import annotations

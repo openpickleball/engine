@@ -85,8 +85,8 @@ Names not listed here are internal, including everything reached only through `o
 
 Rating:
 
-- `RatingEngine`: holds players and matches, records matches, and predicts outcomes. Its `predict_point_share` and `predict_win_probability` methods give team A's expected point share and calibrated match win probability.
-- `replay`: rebuilds authoritative ratings from seeds and the match ledger as of a date.
+- `RatingEngine`: holds players and matches, records matches, and predicts outcomes. Its `predict_point_share` and `predict_win_probability` methods give team A's expected point share and calibrated match win probability. `to_snapshot` saves its whole state as JSON-safe data, and `from_snapshot` loads it back (see "Snapshots and checkpoints").
+- `replay`: rebuilds authoritative ratings from seeds and the match ledger as of a date. With `from_snapshot`, it resumes from a checkpoint instead of starting over.
 - `ledger_order`: the sort key that sets the order of play in a ledger.
 - `reliability`: OPEN-earned reliability (0 to 100) for one rating state.
 - `expected_point_share`: team A's expected share of points from two team ratings and a scale.
@@ -146,6 +146,32 @@ Errors (every class is a `ValueError`):
 - `played_at` must include a time zone and fall on `played_on` in that zone.
 - Every row passed in is validated, including rows after `as_of`. An invalid row raises `InvalidMatchError`, for example one with a `played_at` without a time zone or a blank player id. A row with an invalid game format raises `ConfigError`. Both are `ValueError`s.
 - Rows that repeat a `match_id` count once when they are the same match: every field matches in type and value (so `3` and `3.0` differ), with `played_at` at the same moment and the same UTC offset. Any other repeat raises `LedgerConflictError`, a `ValueError` whose `match_ids` lists every conflicting id. This covers rows after `as_of` too.
+
+## Snapshots and checkpoints
+
+`RatingEngine.to_snapshot()` returns the engine's whole state as plain JSON data. `json.dumps(snapshot, allow_nan=False)` works with no custom encoder. `RatingEngine.from_snapshot(snapshot, cfg)` builds the engine back, from the dict or from `json.loads` of its text. Every value comes back with its type: an int stays an int. The same state always gives the same JSON text.
+
+A snapshot of a replay is a checkpoint. `replay(matches, seeds, cfg=cfg, as_of=later, from_snapshot=snapshot)` resumes from it and gives the same result as a full replay to `later`. You can pass the whole ledger or only the rows dated after the checkpoint. Pass only seeds that are not in the checkpoint.
+
+Resume raises instead of giving a different result:
+
+- `SnapshotError` for a malformed snapshot, a snapshot taken under another `Config`, a snapshot that is not from a replay, a snapshot with live updates since its replay, an `as_of` before the checkpoint date, or a row dated on or before the checkpoint date that the checkpoint did not see.
+- `LedgerConflictError` for a row dated on or before the checkpoint date that differs from the row the checkpoint saw under that `match_id`, or a later row that reuses one of those ids.
+- `PlayerError` for a seed whose player is already in the snapshot.
+
+So take checkpoints from replays only, and store a match before the replay that covers its date. A match that arrives late for a checkpointed date needs a full replay.
+
+Schema, version 1. Dates are `YYYY-MM-DD` text. Every object has exactly these keys, and `from_snapshot` rejects a missing key, an unknown key, or a value of the wrong type or out of range.
+
+- `snapshot_version`: `1`.
+- `engine_version`: the package version that wrote it. Informational, not checked.
+- `config_version`, `config_fingerprint`: of the `Config` it was taken under. `from_snapshot` checks both against the `Config` it is given.
+- `calculated_as_of`: the date of the last replay, or `null`.
+- `replay_info`: `null` when `calculated_as_of` is, otherwise `as_of`, `config_version`, `config_fingerprint`, `matches_considered`, and `matches_counted`.
+- `players`: sorted by `id`. Each has `id`, `account_user_id` (text or `null`), `external_ids` (source to id), and `ratings` (rating format value to state). A state has every `RatingState` field: `rating`, `rd`, `matches_played`, `last_played`, `rd_as_of`, `initial_rating`, `initial_source`, `initial_source_date`, `initial_source_reliability`, `initial_external_player_id`, `initial_evidence_reference`, `live_updates_since_replay`, `partners`, and `opponents` (the last two map a player id to a date).
+- `processed_match_ids`: sorted.
+- `self_reported_log`: sorted by format, then teams. Each entry has `rating_format`, `teams` (two sorted lists of player ids), and `dates` in the order they were recorded.
+- `ledger_digests`: `match_id` to the SHA-256 digest of each row the replay considered. Resume uses them to check rows dated on or before the checkpoint.
 
 ## Test data
 
