@@ -399,7 +399,6 @@ HIDDEN_HELPERS = [
     "inflated_rd",
     "player_k",
     "information_multiplier",
-    "recency_multiplier",
 ]
 
 

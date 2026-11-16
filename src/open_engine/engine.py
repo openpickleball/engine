@@ -25,8 +25,10 @@ Published behavior notes:
 - Authoritative ratings come from scheduled replays (see
   `Config.replay_interval_days`). Live updates between replays are
   provisional and are labeled with the count of live updates since the last
-  recalculation. Because recency decay depends on the replay date, every
-  recalculation shifts ratings slightly even with no new matches.
+  recalculation. A replay gives the same ratings as recording the same
+  ledger live in ledger order: the replay date labels the result but never
+  changes an update. Inactivity widens RD (`inflated_rd`) but never shrinks
+  or discounts an old match's update.
 - An imported external reliability is shown separately from OPEN-earned
   reliability. It is carried, clearly labeled, only until OPEN-earned
   reliability exceeds it or the carry limits in Config are reached.
@@ -274,10 +276,6 @@ class Config:
     game_count_bonus: float = 0.12
     max_information_multiplier: float = 1.30
 
-    # Replay-based time decay. A match's influence halves for each half-life
-    # between match date and replay as_of date. None disables decay.
-    recency_half_life_days: int | None = 365
-
     # Published recalculation schedule. Informational: the platform runs
     # replay() on this interval and labels ratings between runs as live.
     replay_interval_days: int = 7
@@ -332,8 +330,6 @@ class Config:
                 raise ConfigError(f"No game_length_weight for games to {points}")
         if self.max_information_multiplier < 1.0:
             raise ConfigError("max_information_multiplier must be at least 1")
-        if self.recency_half_life_days is not None and self.recency_half_life_days <= 0:
-            raise ConfigError("recency_half_life_days must be positive or None")
         if self.replay_interval_days <= 0:
             raise ConfigError("replay_interval_days must be positive")
         if self.diversity_window_days <= 0 or self.diversity_target <= 0:
@@ -710,13 +706,6 @@ def information_multiplier(match: Match, cfg: Config) -> float:
     return min(cfg.max_information_multiplier, length * count)
 
 
-def recency_multiplier(played_on: date, as_of: date, cfg: Config) -> float:
-    if cfg.recency_half_life_days is None:
-        return 1.0
-    age_days = max(0, (as_of - played_on).days)
-    return float(0.5 ** (age_days / cfg.recency_half_life_days))
-
-
 def _actual_point_share(match: Match, cfg: Config) -> tuple[float, bool]:
     points_a = sum(a for a, _ in match.games)
     points_b = sum(b for _, b in match.games)
@@ -1013,6 +1002,8 @@ class RatingEngine:
 
         Leave `as_of` unset for live processing (labeled provisional until the
         next replay). replay() passes a fixed as_of for authoritative rebuilds.
+        `as_of` only labels the update as part of a replay and must not be
+        earlier than the match date; the update itself does not depend on it.
         Nothing is changed unless the match counts.
         """
         match.validate()
@@ -1049,7 +1040,7 @@ class RatingEngine:
                 )
             repeat_factor = cfg.self_reported_repeat_factor**prior
 
-        primary, primary_updates = self._compute(match, match.rating_format, as_of, repeat_factor)
+        primary, primary_updates = self._compute(match, match.rating_format, repeat_factor)
         if not primary.counted or primary_updates is None:
             return primary
 
@@ -1057,9 +1048,7 @@ class RatingEngine:
         parent_format = match.rating_format.parent if cfg.category_feeds_parent else None
         if parent_format is not None:
             # A parent rejection (baseline or filter) never blocks the category.
-            primary.parent, parent_updates = self._compute(
-                match, parent_format, as_of, repeat_factor
-            )
+            primary.parent, parent_updates = self._compute(match, parent_format, repeat_factor)
 
         self._commit(match.rating_format, primary_updates, live)
         if parent_updates and parent_format is not None:
@@ -1078,7 +1067,7 @@ class RatingEngine:
             self.player(player_id).ratings[rating_format] = state
 
     def _compute(
-        self, match: Match, rating_format: RatingFormat, as_of: date, repeat_factor: float
+        self, match: Match, rating_format: RatingFormat, repeat_factor: float
     ) -> tuple[MatchResult, dict[str, RatingState] | None]:
         """Compute one format's update on working copies. Mutates nothing."""
         cfg = self.cfg
@@ -1125,10 +1114,7 @@ class RatingEngine:
         surprise = actual - expected
 
         effective_weight = (
-            cfg.match_weights[match.match_type]
-            * repeat_factor
-            * information_multiplier(match, cfg)
-            * recency_multiplier(match.played_on, as_of, cfg)
+            cfg.match_weights[match.match_type] * repeat_factor * information_multiplier(match, cfg)
         )
 
         # One shared match K keeps team-average movement zero-sum. Within each
