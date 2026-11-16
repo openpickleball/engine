@@ -1042,7 +1042,8 @@ class RatingEngine:
         in the future is accepted; the next replay with an earlier as_of
         rejects the seed.
 
-        The snapshot is checked before anything changes: captured_on is a
+        rating_format must be a RatingFormat (a str is not converted), and
+        the snapshot is checked before anything changes: captured_on is a
         date (not a datetime), source is a str, external_player_id is a str
         or None, rating is an int or finite float (not bool) within the
         rating bounds, and reliability is None or an int or finite float
@@ -1056,6 +1057,8 @@ class RatingEngine:
         cfg = self.cfg
         # The same type rules the seed check applies, so every state seeded
         # here is one add_player and replay accept.
+        if not isinstance(rating_format, RatingFormat):
+            raise InvalidSeedError("rating_format must be a RatingFormat")
         if not _is_plain_date(snapshot.captured_on):
             raise InvalidSeedError("External snapshot captured_on must be a date")
         if not isinstance(snapshot.source, str):
