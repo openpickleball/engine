@@ -1,0 +1,87 @@
+# Plan: Late live matches move rd_as_of, last_played, and partner dates backwards (issue #19)
+
+Risk tier: High. The fix changes existing live-mode behavior and adds a field to the public `MatchResult` (an API contract change). It also touches inactivity RD, which the project counts as rating integrity.
+
+Domain skills: none apply. This is a standard-library Python package, so django, django-ninja, allauth, celery, fastapi, and the frontend and Expo skills are not applicable.
+
+## Problem
+
+`RatingEngine._compute` sets `rd_as_of`, `last_played`, and every partner and opponent date to `match.played_on`. In live mode a match can arrive after a later-dated match was already recorded. Then those dates move backwards. Measured on `origin/main` (see Proof): after a 2026-10-01 match and then a late 2026-01-01 match, the player's `last_played` and `rd_as_of` both read 2026-01-01.
+
+The effects:
+
+- Inactivity RD growth (`inflated_rd`) runs again from the older date, so it is counted twice.
+- `last_played` is wrong, and with it `player_summary`'s default reference date.
+- Rolling diversity can drop a partner or opponent seen recently, because their date moves back out of the window.
+
+Live processing applies results in arrival order, not play order. That stays true. Only a replay gives play order. The backend needs to know when a live match arrived late so it can schedule a replay.
+
+## Decisions taken with the maintainer
+
+- **Late means a date before a player's last match in that rating format.** A result is late when `match.played_on` is earlier than the `last_played` of any of its players in the result's rating format, read before the update. Every player counts, frozen ones included: a frozen player's rating feeds the expectation, and a later match has already moved it.
+- **Dates only.** The engine stores dates, not times. Two matches on the same date that arrive out of `played_at` order are not flagged. The docs say so.
+- **Counted results only.** `late` is `False` for a match that did not count, as `imbalance` is 0.0. A rejection changes no state, so no date moves.
+- **Each format reports its own.** A category match's `parent` result carries its own `late`, measured against the overall doubles `last_played` values.
+- **Replay never reports late.** Replay records in ledger order, so `played_on` never decreases. The fix is a no-op there, and authoritative ratings do not change.
+- **Rating math does not change.** Only the stored dates change, so later inactivity growth and diversity windows are correct. The late match's own update is unchanged: it already skipped inflation, since `inflated_rd` returns the stored RD when `on <= rd_as_of`.
+
+## Acceptance criteria
+
+1. After a late live match, no player's `last_played`, `rd_as_of`, or partner or opponent date is earlier than it was before. A late match adds a new partner or opponent with the late date when that player was not in the map.
+2. After a late live match, RD inflation runs from the newest date: `rd_as_of` stays at the newest match date, and `player_summary(..., as_of=X).rd` equals the inflation of the post-match RD from that newest date to X.
+3. A partner or opponent seen on the newest date still counts toward rolling diversity after a late match with them on an older date.
+4. `MatchResult.late` is a `bool` field, default `False`, placed after `imbalance` and before `parent`. It is `True` for a counted match dated before any of its players' `last_played` in that format, and `False` for an in-order match, a same-date match, and any match that did not count. A category match's `parent` result reports its own value.
+5. Recording a ledger live in ledger order gives `late=False` for every result and the same states as before the fix (the existing `tests/test_replay_live_parity.py` stays green unchanged).
+6. Documented: the module docstring (the provisional versus authoritative note: live is arrival order, only replay gives play order, dates never move back, `late` flags out-of-order arrivals), the `MatchResult` docstring, the `record` docstring, the `player_summary` docstring (remove "A backdated live match moves last_played back, and so the default date with it."), the README (the `MatchResult` Public API line or the quick start text, whichever describes live recording), and a CHANGELOG entry under `[Unreleased]`: `### Added` for `MatchResult.late` and `### Fixed` for the dates (issue #19).
+
+## Files that change
+
+- `src/open_engine/engine.py`
+  - `MatchResult`: add `late: bool = False  # dated before a player's last match in this format` after `imbalance`. Extend the docstring: what late means, that it compares dates only, that it is `False` for a match that did not count, that `parent` has its own, and that the backend should schedule a replay when it sees one.
+  - `_compute`: before any update, compute `late = any(work[pid].last_played is not None and match.played_on < work[pid].last_played for pid in ids)`. In the update loop, replace the four assignments:
+    - `state.rd_as_of = match.played_on if state.rd_as_of is None else max(state.rd_as_of, match.played_on)`
+    - `state.last_played` the same way.
+    - partners and opponents: for each other id, set the date to `max(existing, match.played_on)` when present, else `match.played_on`. Write a small helper `_seen(interactions: dict[str, date], ids: Iterable[str], on: date) -> None` and use it for both maps. Keep iteration over the match's id tuples, which are ordered.
+    - Pass `late=late` to the counted `MatchResult`. Rejections from `_compute` keep the default `False`.
+  - `record` docstring: one sentence that live results come in arrival order and `late` flags a match dated before a player's last match.
+  - `player_summary` docstring: drop the backdated sentence. Say instead that a late live match never moves `last_played` back.
+  - Module docstring: extend the provisional versus authoritative note as in criterion 6.
+- `tests/test_late_live_match.py` (new): the tests in Proof.
+- `README.md`: one sentence where live recording or `MatchResult` is described.
+- `CHANGELOG.md`: the two entries in criterion 6.
+
+The snapshot schema does not change: `MatchResult` is not engine state, and `RatingState` gets no field. `__all__` does not change. `examples/basic_match.py` does not change.
+
+## Order of work
+
+1. Commit this plan alone as `docs: plan for issue 19`.
+2. Worktree setup is done: `.venv` in the worktree (Python 3.12), editable install, `open_engine` imports from this worktree's `src`. Use `.venv/bin/` for every command.
+3. TDD: write `tests/test_late_live_match.py` and watch it fail (dates move back, `late` missing). Freeze it and commit the red tests.
+4. Implement in `engine.py`. Run the tests until green. Commit.
+5. Docs: module docstring, docstrings, README, CHANGELOG. Commit.
+6. The full gate: `ruff check .`, `ruff format --check .`, `mypy src`, `pytest`.
+7. Live drive (High tier: the changed path plus failure and edge paths): a script that records an in-order match, a late match, a same-date match, a late category match with its parent, and a late match that is rejected (duplicate id and a partner-gap rejection), and prints `late`, `last_played`, `rd_as_of`, partner dates, and `player_summary` RD and reliability at a later date. Also run `python examples/basic_match.py`.
+
+## Risks
+
+- **Changing authoritative ratings by accident.** Riskiest step: the date assignments. `max` must be a no-op whenever dates arrive in order. The parity test and a live-in-ledger-order test cover it.
+- **Snapshot validation.** `from_snapshot` checks dates against `calculated_as_of` in a resumable snapshot. Live engines are not resumable, and the fix only keeps newer dates, so no new invalid state appears. A test round-trips a snapshot after a late match.
+- **Same-date out-of-order.** Not flagged, by design (dates only). Documented, so the backend does not read `late=False` as play order.
+- **Self-reported repeat log.** Arrival order can also change which self-reported repeat is rejected. This fix does not touch the log; `late` still flags the match when it counts. Not in scope.
+- **Not chosen:** reordering or re-applying earlier updates in live mode (that is what replay is for), and a `RejectionReason` for late matches (a late match is valid and still counts).
+
+## Proof
+
+| Criterion | Test in `tests/test_late_live_match.py` |
+| --- | --- |
+| 1 | parametrized over `last_played`, `rd_as_of`, partner date, opponent date: Oct 1 match then late Jan 1 match with the same partner and opponent; each stays Oct 1. A new partner in the late match gets Jan 1. |
+| 2 | after the late match, `rd_as_of` is Oct 1 and `player_summary(as_of=Dec 1).rd` equals `min(rd_max, sqrt(rd**2 + g**2 * 61))` rounded to 4, from the stored post-match RD. |
+| 3 | `reliability` at a date inside the window for Oct 1 but outside it for Jan 1 counts the partner seen Oct 1. |
+| 4 | `late` True for the late match; False for in-order, same-date, duplicate id, partner-gap rejection, and before-baseline rejection; category match: `parent.late` from the overall doubles dates; a frozen player's later `last_played` makes the result late. `dataclasses.fields(MatchResult)` order puts `late` after `imbalance` and before `parent`. |
+| 5 | record a synthetic multi-format ledger live in `ledger_order`; every result's `late` is False (and the parent's). `tests/test_replay_live_parity.py` unchanged and green. |
+| 6 | review, plus `tests/test_readme.py` if it checks the touched text. |
+| snapshot | `to_snapshot` then `from_snapshot` after a late match round-trips. |
+
+Live drive must show: the late match flagged with dates unchanged, the in-order and same-date matches not flagged, rejections not flagged, and RD at a later date grown from Oct 1.
+
+Measured on `origin/main` (d789e7c), default config, a short scratch script: record doubles `m1` on 2026-10-01 (`syn-a`, `syn-b` vs `syn-c`, `syn-d`), then `m2` on 2026-01-01 (`syn-a`, `syn-e` vs `syn-f`, `syn-g`). Output: `last_played 2026-01-01 rd_as_of 2026-01-01 partners {'syn-b': 2026-10-01, 'syn-e': 2026-01-01}`. The dates move back, as the issue says.
