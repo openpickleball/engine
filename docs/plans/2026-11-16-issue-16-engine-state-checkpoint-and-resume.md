@@ -92,7 +92,7 @@ Then builds `Player`/`RatingState` objects, sets `processed_match_ids`, `self_re
 6. Record each row dated after the checkpoint and on or before `as_of`, add its digest, count it.
 7. `calculated_as_of = as_of`; `replay_info` counts are the snapshot's plus this run's.
 
-Fix round 2 (D2-F2, user decision): `replay` gains keyword-only `whole_ledger: bool = False`. With `from_snapshot`, `_check_resume_rows` then also raises `SnapshotError` ("rows the checkpoint considered are missing from the ledger: ...", ids sorted) for every `ledger_digests` id not among the rows, after the conflict and not-in-checkpoint checks. Without `from_snapshot`, `whole_ledger=True` raises `SnapshotError` before anything else. The property test also resumes with `whole_ledger=True`.
+Fix round 2 (D2-F2, user decision): `replay` gains keyword-only `whole_ledger: bool = False`. With `from_snapshot`, `_check_resume_rows` then also raises `SnapshotError` ("rows the checkpoint considered are missing from the ledger: ...", ids sorted) for every `ledger_digests` id not among the rows, after the conflict and not-in-checkpoint checks. Without `from_snapshot`, `whole_ledger=True` raises `SnapshotError` before anything else. Fix round 3: a `whole_ledger` that is not a bool (an int, str, or None) raises `SnapshotError` first, as a usage error of the resume API. The property test also resumes with `whole_ledger=True`.
 
 A seed check order note: seeds are added before the ledger pre-pass, matching full replay, where seeds are checked before the ledger.
 

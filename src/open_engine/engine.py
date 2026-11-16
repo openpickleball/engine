@@ -2263,7 +2263,9 @@ def replay(
     matches holds the whole ledger, so resume also raises SnapshotError,
     naming the ids sorted, for any row the checkpoint considered that is
     missing from it: a row voided or deleted on or before the checkpoint
-    date. whole_ledger=True without from_snapshot raises SnapshotError.
+    date. whole_ledger=True without from_snapshot raises SnapshotError,
+    and so does a whole_ledger that is not a bool (an int, str, or None is
+    a usage error of the resume API, not a ledger flag).
 
     Resume raises instead of giving a different result. The rows are
     checked in this order: LedgerConflictError for changed or reused rows,
@@ -2287,6 +2289,8 @@ def replay(
     it cannot see a late row added on or before it either. Those need a
     full replay.
     """
+    if not isinstance(whole_ledger, bool):
+        raise SnapshotError(f"whole_ledger must be a bool, not {type(whole_ledger).__name__}")
     if whole_ledger and from_snapshot is None:
         raise SnapshotError("whole_ledger needs from_snapshot: it only applies to a resume")
     start = None
