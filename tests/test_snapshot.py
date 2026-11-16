@@ -108,6 +108,7 @@ def _engine_state(eng: RatingEngine) -> dict[str, object]:
         "calculated_as_of": eng.calculated_as_of,
         "replay_info": eng.replay_info,
         "ledger_digests": eng._ledger_digests,
+        "ledger_player_ids": eng._ledger_player_ids,
     }
 
 
@@ -234,6 +235,7 @@ TOP_LEVEL_KEYS = {
     "processed_match_ids",
     "self_reported_log",
     "ledger_digests",
+    "ledger_player_ids",
 }
 
 
@@ -248,6 +250,7 @@ def test_snapshot_covers_every_engine_attribute(snapshot: dict[str, object]) -> 
         "calculated_as_of",
         "replay_info",
         "_ledger_digests",
+        "_ledger_player_ids",
     }
     assert set(snapshot) == TOP_LEVEL_KEYS
 
