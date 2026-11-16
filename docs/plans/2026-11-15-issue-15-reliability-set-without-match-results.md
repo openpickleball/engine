@@ -28,6 +28,8 @@ Decisions approved by the maintainer before this plan was committed:
 
 7. Seed dates (review round 1, scope widened with maintainer approval). `replay` raises `InvalidSeedError` for a seed state whose `initial_source_date` (and so `rd_as_of`) is after `as_of`. `prequential_predictions` validates every seed up front, in both modes, and raises `InvalidSeedError` for one dated after the last `played_on` in its ledger; its scheduled windows replay through a private `_replay(..., check_seed_dates=False)`, because a seed captured mid-ledger is legitimate there. `player_summary` carries an imported reliability only when `0 <= (reference - initial_source_date).days <= import_reliability_max_age_days`. `add_player` and `seed_external_rating` have no reference date, so they make no date check, and nothing reads the wall clock.
 
+8. Seed rating and field types (review round 1; the rating bound is scope widened with maintainer approval). A seed state's `rating` must be within `[cfg.min_rating, cfg.max_rating]`. Every ratings key must be a `RatingFormat`; `rating`, `rd`, and a non-None `initial_source_reliability` must be finite ints or floats, not bool; `matches_played` and `live_updates_since_replay` ints, not bool; `partners` and `opponents` dicts; `initial_source_date` and `rd_as_of` dates, not datetimes. Each breach raises `InvalidSeedError` naming the player and format, never `TypeError`.
+
 ## Files that change
 
 - `src/open_engine/engine.py`
@@ -48,6 +50,7 @@ Decisions approved by the maintainer before this plan was committed:
 - Tests:
   - New `tests/test_seed_validation.py`: criteria 1 to 3 and 5.
   - New `tests/test_future_seed.py`: criterion 7.
+  - New `tests/test_seed_types.py` and `tests/test_seed_rating_bounds.py`: criterion 8.
   - `tests/test_engine.py` (lines 59 to 78), `tests/test_summary_reliability.py`, `tests/test_api.py` (`SUMMARY_FIELDS`, `test_reliability_basis_members` removed, the summary value tests): move to `imported_reliability` and the always-earned `reliability`.
 
 ## Order of work
@@ -62,8 +65,9 @@ Decisions approved by the maintainer before this plan was committed:
 - A seed check that is too strict rejects a legitimate seed. Criterion 3 tests every state the engine produces before a match, including categories derived from an imported parent and under a config where `external_seed_rd > category_seed_rd`.
 - Float equality on RD: seeds copy the exact Config value, and a database double round-trips exactly, so `==` is safe. A backend that rounds RD before storing would be rejected; that is intended (store what the engine produced).
 - Seeds are validated against the replaying config. A seed made under a config with different seed RDs is rejected. That is correct: seed RD is a config choice and the seed must be rebuilt under the new config. `fit_scale` and `fit_win_calibration` change only scale and calibration, so their trial configs still accept the caller's seeds.
-- Not done, by choice: `RatingEngine.players` and the `RatingState` returned by `state()` are mutable, so code holding the engine object can still assign `rd` directly. The in-memory engine is not a security boundary (see the module's production notes); the backend's authoritative path is ledger plus validated seeds through `replay`. Seed rating bounds and `initial_source` strings are not validated here: they are not reliability.
+- Not done, by choice: `RatingEngine.players` and the `RatingState` returned by `state()` are mutable, so code holding the engine object can still assign `rd` directly. The in-memory engine is not a security boundary (see the module's production notes); the backend's authoritative path is ledger plus validated seeds through `replay`. Seed `initial_source` strings are not validated here: they are not reliability (seed rating bounds were added by criterion 8).
 
+- Seed rating bounds: a seed made under a config with wider rating bounds is rejected under narrower ones, like seed RD. The `initial_source` strings and `initial_rating` are still not validated: they are provenance, not rating or reliability.
 - Seed date checks need a reference date, which only `replay` (`as_of`) and `prequential_predictions` (its last match) have. A future-dated seed can sit in an engine built with `add_player` or `seed_external_rating` until the next replay rejects it; `player_summary` does not carry its imported reliability meanwhile.
 
 ## Proof
@@ -72,6 +76,7 @@ Decisions approved by the maintainer before this plan was committed:
 - Criterion 1 removals: `pytest.raises(TypeError)` for `rd_override=` and `Config(external_reliability_maps_to_rd=True)`; a snapshot with reliability 99 seeds at `external_seed_rd`.
 - Criterion 3: states from `seed_external_rating`, `state()` (provisional and derived category, default config and `Config(external_seed_rd=0.6, category_seed_rd=0.5)`) pass through `replay` without error.
 - Criterion 7: `tests/test_future_seed.py`: replay rejects a doubles and a derived mixed seed dated after `as_of` and accepts one dated on it; prequential (both modes) rejects a seed dated after the last match and accepts one dated on it; a scheduled run with a mid-ledger seed matches values pinned from origin/main; the summary does not carry a future import.
+- Criterion 8: `tests/test_seed_types.py` (each wrong type through `add_player` and `replay`, and non-RatingFormat keys) and `tests/test_seed_rating_bounds.py` (out-of-bounds ratings rejected, ratings on the bounds accepted).
 - Criterion 4: summary tests for the carried, expired-by-age, expired-by-matches, and earned-higher cases.
 - No live drive beyond running `python examples/basic_match.py`: the package has no app; the gate plus the example cover it.
 

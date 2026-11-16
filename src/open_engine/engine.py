@@ -845,6 +845,8 @@ def _seed_rule_broken(state: RatingState, cfg: Config) -> str | None:
         return "opponents must be empty"
     if state.live_updates_since_replay != 0:
         return "live_updates_since_replay must be 0"
+    if not cfg.min_rating <= state.rating <= cfg.max_rating:
+        return "rating must be between min_rating and max_rating"
     if state.initial_source_date is None:
         if state.rd != cfg.new_player_rd:
             return "rd must equal new_player_rd for a provisional seed"
@@ -921,14 +923,19 @@ class RatingEngine:
         """
         Add a copy of a player record as a seed.
 
-        Every rating state must be one the engine could have produced before
-        any match: no matches, last_played, partners, opponents, or live
-        updates. A provisional state (no initial_source_date) has RD
-        new_player_rd, no rd_as_of, and no imported reliability. An imported
-        state, or a category state derived from one, has RD external_seed_rd
-        or max(external_seed_rd, category_seed_rd), rd_as_of equal to
-        initial_source_date, and an imported reliability that is None or
-        between 0 and 100. Played states are rebuilt through replay instead.
+        Seed rules, checked for every rating state:
+        - Every ratings key is a RatingFormat. rating, rd, and an imported
+          reliability are finite ints or floats (not bool), the counts are
+          ints, partners and opponents are dicts, and dates are dates.
+        - No matches, last_played, partners, opponents, or live updates.
+        - rating is within Config.min_rating and Config.max_rating.
+        - A provisional state (no initial_source_date) has RD new_player_rd,
+          no rd_as_of, and no imported reliability.
+        - An imported state, or a category state derived from one, has RD
+          external_seed_rd or max(external_seed_rd, category_seed_rd),
+          rd_as_of equal to initial_source_date, and an imported reliability
+          that is None or between 0 and 100.
+        Played states are rebuilt through replay instead.
         add_player has no reference date, so it does not check that
         initial_source_date is in the past: replay rejects a seed dated after
         its as_of, and prequential_predictions one dated after its last match.
