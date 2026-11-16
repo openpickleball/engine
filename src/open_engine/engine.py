@@ -798,8 +798,43 @@ def _matchup_key(match: Match) -> MatchupKey:
     )
 
 
+def _is_finite_number(value: object) -> bool:
+    """True for an int or float (not bool) that is finite."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _is_plain_date(value: object) -> bool:
+    """True for a date that is not a datetime (the two do not compare)."""
+    return isinstance(value, date) and not isinstance(value, datetime)
+
+
+def _seed_type_broken(state: RatingState) -> str | None:
+    """The first seed field with the wrong type, or None."""
+    for name in ("matches_played", "live_updates_since_replay"):
+        value = getattr(state, name)
+        if not isinstance(value, int) or isinstance(value, bool):
+            return f"{name} must be an int"
+    for name in ("partners", "opponents"):
+        if not isinstance(getattr(state, name), dict):
+            return f"{name} must be a dict"
+    for name in ("rating", "rd"):
+        if not _is_finite_number(getattr(state, name)):
+            return f"{name} must be a finite number"
+    imported = state.initial_source_reliability
+    if imported is not None and not _is_finite_number(imported):
+        return "initial_source_reliability must be a finite number"
+    for name in ("initial_source_date", "rd_as_of"):
+        value = getattr(state, name)
+        if value is not None and not _is_plain_date(value):
+            return f"{name} must be a date"
+    return None
+
+
 def _seed_rule_broken(state: RatingState, cfg: Config) -> str | None:
-    """The first seed rule a state breaks, or None when the engine could have made it."""
+    """The first seed rule a state breaks, or None when it follows every rule."""
+    wrong_type = _seed_type_broken(state)
+    if wrong_type is not None:
+        return wrong_type
     if state.matches_played != 0:
         return "matches_played must be 0"
     if state.last_played is not None:
@@ -830,7 +865,12 @@ def _seed_rule_broken(state: RatingState, cfg: Config) -> str | None:
 
 
 def _validate_seed(player: Player, cfg: Config) -> None:
-    """Raise InvalidSeedError unless every state is one the engine makes before a match."""
+    """Raise InvalidSeedError unless every seed state follows the seed rules."""
+    for key in player.ratings:
+        if not isinstance(key, RatingFormat):
+            raise InvalidSeedError(
+                f"Seed for {player.id}: ratings key {key!r} is not a RatingFormat"
+            )
     for fmt in sorted(player.ratings):
         rule = _seed_rule_broken(player.ratings[fmt], cfg)
         if rule is not None:
