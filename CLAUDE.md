@@ -14,6 +14,7 @@ The engine is a demonstration. Its methods have not been validated on real match
 
 - `src/open_engine/engine.py`: enums and game formats, `Config`, `Match`, `Player`, `RatingEngine`, `replay`, evaluation and calibration. Its module docstring lists the published behavior notes and the production requirements the backend must meet.
 - `src/open_engine/winprob.py`: game and match win probability and its calibration.
+- `src/open_engine/_errors.py`: the exception hierarchy, `OpenEngineError` and its subclasses. `engine.py` re-exports them.
 - `src/open_engine/__init__.py`: the public API (`__all__`). It re-exports `__version__`.
 - `src/open_engine/_version.py`: `__version__`, the one place a release sets the version.
 - `tests/`: pytest suite. `tests/fixtures/` holds synthetic fixtures only (see its README).
@@ -26,7 +27,7 @@ The engine is a demonstration. Its methods have not been validated on real match
 
 ## Stack
 
-- Python 3.11 or later (`requires-python = ">=3.11"`, ruff `target-version = "py311"`). CI tests 3.11, 3.12, and 3.13, so do not use syntax or standard library features newer than 3.11. Ruff ignores UP042: the enums stay `str, Enum`, because `StrEnum` changes their `str()` output. Modules use `from __future__ import annotations`.
+- Python 3.11 or later (`requires-python = ">=3.11"`, ruff `target-version = "py311"`). CI tests 3.11, 3.12, and 3.13, so do not use syntax or standard library features newer than 3.11. The public string enums subclass a private `_StrEnum` (a `StrEnum`), so `str()` and f-strings give the value. Modules use `from __future__ import annotations`.
 - No runtime dependencies (`dependencies = []`). Keep it that way: the standard library only.
 - Build backend hatchling. The version is read from `__version__` in `src/open_engine/_version.py`. The package ships `py.typed`.
 - Dev tools: pytest, ruff (lint rules `E`, `F`, `W`, `I`, `B`, `UP`, line length 100), mypy in strict mode, build, twine.
@@ -40,7 +41,9 @@ The engine is a demonstration. Its methods have not been validated on real match
 - **Provisional versus authoritative.** Authoritative ratings come from scheduled replays. Live updates between replays are provisional and labeled with the count since the last recalculation. Keep that labeling.
 - **External ratings are a seed only.** An imported rating initializes a player. It can never overwrite an OPEN-earned rating once OPEN matches exist. Imported reliability is shown separately from OPEN-earned reliability, and `reliability` is never a conversion of an external score.
 - **Calibration honesty.** A fit that lands on a search edge (`at_bound`) or has a flat error profile is not identified. Keep `ScaleFit.profile` and `at_bound` reporting it, and do not hide or round away signals that make an unidentified fit visible.
-- **Public API.** Anything exported from `open_engine` is listed in `__all__` in `__init__.py`. Adding, removing, or changing the signature of an export is a changelog entry, and a breaking change is called out as one (minor versions may break before 1.0.0).
+- **Public API.** Anything exported from `open_engine` is listed in `__all__` in `__init__.py` and in the README's "Public API" section, and has its own docstring, as do the public methods of exported classes. Tests check all three. Everything else, including names reached only through `open_engine.engine` or `open_engine.winprob`, is internal. Adding, removing, or changing the signature of an export is a changelog entry, and a breaking change is called out as one (minor versions may break before 1.0.0).
+- **Errors.** Raise only `OpenEngineError` subclasses from `_errors.py`, all of them `ValueError`s; a test scans every module for other raises. A rejected match is not an error: `record` returns a `MatchResult` with a `RejectionReason`. A new rejection gets a new `RejectionReason` member.
+- **Validate before committing.** `record` validates the whole match, every player id included, before it changes any state, so a failed call leaves ratings untouched and a retry cannot move them again.
 
 ## Commands
 
@@ -79,7 +82,7 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`, which calls `test.yml` 
 
 ## Tests
 
-- Tests use pytest with plain asserts and fixtures, no unittest classes. Prefer `pytest.mark.parametrize` for rule tables, and assert the `ValueError` message with `pytest.raises(..., match=...)` when a test exercises a validation branch.
+- Tests use pytest with plain asserts and fixtures, no unittest classes. Prefer `pytest.mark.parametrize` for rule tables, and assert the specific error class and its message with `pytest.raises(..., match=...)` when a test exercises a validation branch.
 - Every behavior change comes with a test. A bug fix comes with a test that fails without the fix.
 - Fixtures and test data are synthetic, with invented player identifiers. Never add real match results, even with names removed: a sequence of opponents, dates, and scores can still point to a specific person.
 

@@ -6,6 +6,30 @@ The engine is a demonstration. Its outputs are not OPEN ratings.
 
 ## [Unreleased]
 
+### Added
+
+- A "Public API" section in the README that lists every public name, with the note that the API may change in any 0.x release. Names not listed there, including everything reached only through `open_engine.engine` or `open_engine.winprob`, are internal. A test checks that the list equals `open_engine.__all__`.
+- An exception hierarchy. `OpenEngineError` is the base, and every class is a `ValueError`, so `except ValueError` still works: `ConfigError` (configuration and game formats), `InvalidMatchError` (matches, teams, ids, game scores, `played_at`), `InvalidSeedError` (external and replay seeds), `PlayerError` (player ids, account and external identity links), `EvaluationError` (evaluation, calibration, and win probability arguments), and `LedgerConflictError`, now under `OpenEngineError`. Seeding can also raise `PlayerError` when the player id or the external identity is not valid.
+- `RejectionReason`, a string enum with one member per reason a match is not counted.
+- `PlayerSummary`, the frozen dataclass `player_summary` returns, and `ReliabilityBasis` (`open` or `imported`).
+- Docstrings on every public name and on the public methods of public classes. A test checks them.
+
+### Changed
+
+- **Breaking:** `RatingEngine.predict` is now `predict_point_share` and `RatingEngine.win_probability` is now `predict_win_probability`, with the same arguments and results. The old names are gone.
+- **Breaking:** `clone_player`, `inflated_rd`, `player_k`, `information_multiplier`, and `recency_multiplier` are no longer exported from `open_engine`. They stay in `open_engine.engine` as internal helpers.
+- **Breaking:** `player_summary` returns a `PlayerSummary` instead of a dict. Fields keep their names and values, but `rating_format` is a `RatingFormat`, `reliability_basis` is a `ReliabilityBasis`, `reliability` is always a float, and `last_played`, `initial_source_date`, and `calculated_as_of` are `date` objects or `None` instead of ISO strings. `dataclasses.asdict` gives a dict, but its dates need converting before JSON.
+- **Breaking:** `MatchResult.reason` is a `RejectionReason`, or `None` when the match counted, instead of free text. `MatchResult.rating_format` is a `RatingFormat` on every result, including rejections before any rating work, instead of a string that could be empty. Its field order is now `counted`, `rating_format`, `reason`, so code that builds a `MatchResult` by position must change.
+- **Breaking:** errors that were plain `ValueError`s are now the classes above. A `GameFormat` used for win probability is validated first, so an invalid format raises `ConfigError`. That includes `win_by=0`, which used to raise the `ValueError` that is now `EvaluationError`.
+- **Breaking:** `Match.validate` rejects a `match_id` or player id that is not a non-empty, non-whitespace string, and a game that is not a pair of scores, with `InvalidMatchError`. `predict_point_share` and `predict_win_probability` apply the same id check. A ledger with such a row now raises in `replay`, even when the row is after `as_of` or would have been rejected, and so does one with non-string ids such as bytes that used to replay. Every ledger that still replays gives the same ratings.
+- `RatingFormat`, `MatchType`, and `ScoringType` are `StrEnum`s, so `str()` and f-strings give the value (`"doubles"`, not `"RatingFormat.DOUBLES"`). Comparison with the value, `repr`, pickling, and `Config.fingerprint()` are unchanged.
+
+### Fixed
+
+- `record` with a blank, whitespace-only, or non-string player id no longer changes any rating. It used to update the players before the bad id and then raise before marking the match processed, so every retry moved those ratings again. It now raises `InvalidMatchError` before anything changes.
+- `LedgerConflictError` survives pickling and copying with its message and `match_ids` intact. The message used to come back garbled.
+- A malformed game score, or a `GameFormat` win probability cannot use, raises an engine error instead of a bare `ValueError` or `TypeError` from inside the math.
+
 ## [0.3.0.dev0] - 2026-11-15
 
 The first dev release, published to TestPyPI.
