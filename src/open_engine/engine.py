@@ -1993,6 +1993,7 @@ def replay(
     *,
     cfg: Config | None = None,
     as_of: date,
+    from_snapshot: Mapping[str, object] | None = None,
 ) -> RatingEngine:
     """
     Rebuild authoritative ratings from seeds plus the immutable match ledger.
@@ -2009,8 +2010,50 @@ def replay(
     Raises InvalidSeedError for a seed state that breaks the seed rules (see
     add_player) or whose initial_source_date is after as_of, and PlayerError
     when two seeds share a player id.
+
+    from_snapshot resumes from a checkpoint: the to_snapshot() output (or
+    json.loads of its text) of an earlier replay under the same cfg. The
+    result equals a full replay of the same ledger and seeds to as_of,
+    whether matches holds the whole ledger or only the rows after the
+    checkpoint date. Rows dated on or before the checkpoint date are not
+    recorded again: each must be a row the checkpoint considered,
+    unchanged. seed_players then holds only seeds not in the checkpoint.
+    Resume raises instead of giving a different result:
+    - SnapshotError for a malformed snapshot or one taken under another
+      Config (see RatingEngine.from_snapshot), a snapshot not from a
+      replay, one with live updates since its replay, an as_of before the
+      checkpoint date, or a row dated on or before the checkpoint date that
+      the checkpoint did not consider.
+    - LedgerConflictError for a row dated on or before the checkpoint date
+      that differs from the row the checkpoint considered under its
+      match_id, or a row dated after it that reuses one of those ids.
+    - PlayerError for a seed whose player is already in the snapshot.
     """
-    return _replay(matches, seed_players, cfg=cfg, as_of=as_of, check_seed_dates=True)
+    start = None
+    if from_snapshot is not None:
+        start = _resume_start(from_snapshot, cfg, as_of)
+    return _replay(matches, seed_players, cfg=cfg, as_of=as_of, check_seed_dates=True, start=start)
+
+
+def _resume_start(snapshot: Mapping[str, object], cfg: Config | None, as_of: date) -> RatingEngine:
+    """The engine a resumed replay starts from. SnapshotError when it cannot resume."""
+    engine = RatingEngine.from_snapshot(snapshot, cfg)
+    checkpoint = engine.calculated_as_of
+    if checkpoint is None:
+        raise SnapshotError("Cannot resume: the snapshot is not from a replay")
+    live = sorted(engine.processed_match_ids - set(engine._ledger_digests))
+    if live or any(
+        state.live_updates_since_replay
+        for player in engine.players.values()
+        for state in player.ratings.values()
+    ):
+        raise SnapshotError("Cannot resume: the snapshot has live updates since its replay")
+    if as_of < checkpoint:
+        raise SnapshotError(
+            f"Cannot resume: as_of {as_of.isoformat()} is before the checkpoint "
+            f"date {checkpoint.isoformat()}"
+        )
+    return engine
 
 
 def _replay(
@@ -2020,23 +2063,39 @@ def _replay(
     cfg: Config | None,
     as_of: date,
     check_seed_dates: bool,
+    start: RatingEngine | None = None,
 ) -> RatingEngine:
     """
-    replay, with the seed date check optional.
+    replay, with the seed date check optional, from a fresh engine or start.
 
     Scheduled prequential windows replay to dates before a seed captured
     mid-ledger, which is legitimate there (earlier matches are frozen for
     that player), so they skip the check.
+
+    start is a checked checkpoint engine (see _resume_start). Every row is
+    checked against its digests before any row is recorded, and only rows
+    dated after its checkpoint are recorded.
     """
-    engine = RatingEngine(cfg)
+    engine = RatingEngine(cfg) if start is None else start
     for player in seed_players:
         engine.add_player(player)
         if check_seed_dates:
             _check_seed_date(player, as_of, "as_of")
 
+    rows = _ledger(matches)
     considered = counted = 0
-    for match in _ledger(matches):
+    checkpoint: date | None = None
+    if start is not None:
+        checkpoint = start.calculated_as_of
+        assert checkpoint is not None and start.replay_info is not None
+        _check_resume_rows(rows, checkpoint, start._ledger_digests)
+        considered = start.replay_info.matches_considered
+        counted = start.replay_info.matches_counted
+
+    for match in rows:
         if match.played_on > as_of:
+            continue
+        if checkpoint is not None and match.played_on <= checkpoint:
             continue
         considered += 1
         engine._ledger_digests[match.match_id] = _match_digest(match)
@@ -2052,6 +2111,35 @@ def _replay(
         matches_counted=counted,
     )
     return engine
+
+
+def _check_resume_rows(rows: list[Match], checkpoint: date, digests: Mapping[str, str]) -> None:
+    """
+    Raise unless every row agrees with the checkpoint.
+
+    A row dated on or before the checkpoint date must be a row the
+    checkpoint considered, unchanged. A row dated after it must not reuse
+    one of those ids. Conflicts raise LedgerConflictError first, then
+    missing rows raise SnapshotError, each naming every id.
+    """
+    conflicts: set[str] = set()
+    missing: set[str] = set()
+    for match in rows:
+        seen = digests.get(match.match_id)
+        if match.played_on > checkpoint:
+            if seen is not None:
+                conflicts.add(match.match_id)
+        elif seen is None:
+            missing.add(match.match_id)
+        elif seen != _match_digest(match):
+            conflicts.add(match.match_id)
+    if conflicts:
+        raise LedgerConflictError(conflicts)
+    if missing:
+        raise SnapshotError(
+            "Cannot resume: rows dated on or before the checkpoint date are not in the "
+            "checkpoint: " + ", ".join(sorted(missing))
+        )
 
 
 # ---------------------------------------------------------------------------
