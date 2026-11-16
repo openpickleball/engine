@@ -619,7 +619,7 @@ class MatchResult:
     reason is None when the match counted. deltas lists the rating changes.
     frozen and clamped list the players whose change was not fully applied.
     imbalance is the mean team A delta plus the mean team B delta, from the
-    rounded deltas: nonzero when the teams' mean K differ or a player is
+    unrounded changes: nonzero when the teams' mean K differ or a player is
     frozen or clamped, and 0.0 for a match that did not count. parent holds
     the overall doubles update for a category match, with its own imbalance.
     """
@@ -1130,6 +1130,7 @@ class RatingEngine:
         # Each player moves by their own K. Team-average movement is zero-sum
         # only when both teams have the same mean K; imbalance reports the net.
         deltas: dict[str, float] = {}
+        applied: dict[str, float] = {}  # unrounded, for imbalance
         clamped: list[str] = []
         for team_ids, opponent_ids, sign in (
             (match.team_a, match.team_b, 1.0),
@@ -1137,7 +1138,7 @@ class RatingEngine:
         ):
             for pid in team_ids:
                 if pid in frozen:
-                    deltas[pid] = 0.0
+                    deltas[pid] = applied[pid] = 0.0
                     continue
                 state = work[pid]
                 raw_delta = sign * player_k(state, cfg) * effective_weight * surprise
@@ -1156,7 +1157,19 @@ class RatingEngine:
                     {other: match.played_on for other in team_ids if other != pid}
                 )
                 state.opponents.update({other: match.played_on for other in opponent_ids})
-                deltas[pid] = round(state.rating - old_rating, 5)
+                applied[pid] = state.rating - old_rating
+                deltas[pid] = round(applied[pid], 5)
+
+        # From the unrounded changes, so rounding residue never shows. Adding
+        # 0.0 turns a negative zero into 0.0.
+        imbalance = (
+            round(
+                sum(applied[pid] for pid in match.team_a) / len(match.team_a)
+                + sum(applied[pid] for pid in match.team_b) / len(match.team_b),
+                5,
+            )
+            + 0.0
+        )
 
         result = MatchResult(
             counted=True,
@@ -1168,11 +1181,7 @@ class RatingEngine:
             deltas=deltas,
             frozen=tuple(sorted(frozen)),
             clamped=tuple(clamped),
-            imbalance=round(
-                sum(deltas[pid] for pid in match.team_a) / len(match.team_a)
-                + sum(deltas[pid] for pid in match.team_b) / len(match.team_b),
-                5,
-            ),
+            imbalance=imbalance,
         )
         return result, {pid: work[pid] for pid in ids if pid not in frozen}
 

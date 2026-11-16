@@ -13,7 +13,7 @@ The engine is a demonstration. Its outputs are not OPEN ratings.
 - `RejectionReason`, a string enum with one member per reason a match is not counted.
 - `PlayerSummary`, the frozen dataclass `player_summary` returns, and `ReliabilityBasis` (`open` or `imported`).
 - Docstrings on every public name and on the public methods of public classes. A test checks them.
-- `MatchResult.imbalance`: the mean team A delta plus the mean team B delta, from the rounded deltas. It is nonzero when the teams' mean K differ or a player is clamped or frozen, and 0.0 for a match that did not count. A category match's `parent` result has its own value. The field comes after `clamped` and before `parent` (issue #14).
+- `MatchResult.imbalance`: the mean team A delta plus the mean team B delta, from the unrounded changes, rounded to 5 places. It is nonzero when the teams' mean K differ or a player is clamped or frozen, and 0.0 for a match that did not count. A category match's `parent` result has its own value. The field comes after `clamped` and before `parent` (issue #14).
 
 ### Changed
 

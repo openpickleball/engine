@@ -26,8 +26,11 @@ or freeze applies. Every `MatchResult` reports the net as a new field, `imbalanc
 imbalance = mean(deltas of team_a) + mean(deltas of team_b)
 ```
 
-It is computed from the applied, rounded `deltas` (frozen players count as 0.0), rounded to 5
-places. It is 0.0 for a rejected match. It covers all three sources: unequal K, `clamped`, and
+It is computed from the applied, unrounded rating changes (new rating minus old rating; frozen
+players count as 0.0), then rounded to 5 places, with a negative zero turned into 0.0. (The first
+version summed the rounded `deltas`. Review found that rounding residue then leaked out as
++/-1e-05 on matches whose net is zero, and as -0.0. Fixed under a frozen test,
+`tests/test_imbalance_rounding.py`.) It is 0.0 for a rejected match. It covers all three sources: unequal K, `clamped`, and
 `frozen`. The parent (overall doubles) `MatchResult` of a category match gets its own value.
 
 The issue's third criterion, "Backtest shows no regression in Brier score", is out of scope for
@@ -80,7 +83,7 @@ so the issue stays open until that backtest is done.
    player after RD inflation; apply `sign * K_i * effective_weight * surprise`. Keep the clamp,
    RD shrink, and bookkeeping exactly as they are.
 3. Add `imbalance: float = 0.0` to `MatchResult` after `clamped` (keep `parent` last), compute it
-   in `_compute` from the rounded deltas, and update the docstring.
+   in `_compute` from the unrounded applied changes, and update the docstring.
 4. Update the module docstring, the `Config` comment, `CLAUDE.md`, and `CHANGELOG.md`.
 5. Run the full gate and `python examples/basic_match.py`.
 
