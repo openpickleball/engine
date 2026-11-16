@@ -92,14 +92,19 @@ Published behavior notes:
   whole ledger or only the newer rows. It checks every row first and
   raises instead of differing: SnapshotError for a snapshot not from a
   replay, with live updates, or changed in any other way after its replay
-  (the snapshot's `resumable` mark, which replay sets and every other
-  state change clears), an as_of before the checkpoint, a row on or
-  before the checkpoint date that the checkpoint did not consider
-  (compared by a digest that mirrors the ledger's duplicate rule), or a
-  seed for a player the checkpoint's rows named; LedgerConflictError for
-  such a row that changed or a later row that reuses its id. Resume
-  cannot see a voided row on or before the checkpoint, or a backdated row
-  when given only the newer rows: those need a full replay.
+  (the snapshot's `resumable` mark, which replay sets and every engine
+  method that changes state clears; changing objects the engine returns,
+  such as players, rating states, or processed_match_ids, directly is not
+  tracked and makes the snapshot unsafe to resume), an as_of before the
+  checkpoint, a row on or before the checkpoint date that the checkpoint
+  did not consider (compared by a digest that mirrors the ledger's
+  duplicate rule), or a seed for a player the checkpoint's rows named;
+  LedgerConflictError for such a row that changed or a later row that
+  reuses its id. With `whole_ledger=True` the caller passes the whole
+  ledger, and resume also raises SnapshotError for a checkpointed row
+  missing from it (a void or deletion). Without it, resume cannot see a
+  voided row on or before the checkpoint, and given only the newer rows
+  it cannot see a backdated row either: those need a full replay.
 - `record` validates every match first. A valid match whose `match_id` was
   already processed returns a result that is not counted, with
   `RejectionReason.DUPLICATE_MATCH_ID`, instead of raising.
@@ -115,11 +120,13 @@ Production notes:
 - To avoid replaying the whole ledger every time, persist the snapshot of
   each scheduled replay and resume the next one from it. Take the
   snapshot right after the replay, before any other call on the engine.
-  Store a match before the replay that covers its date. A void, an edit,
-  or a backdated row on or before a checkpoint date needs a full replay:
-  resume cannot see a removed row, nor a late row when given only the
-  newer rows. A snapshot does not replace the ledger: keep the ledger as
-  the source of truth and run a full replay when in doubt.
+  Store a match before the replay that covers its date. Pass the whole
+  ledger with `whole_ledger=True` so resume raises for a voided or
+  deleted row on or before the checkpoint. Given only the newer rows,
+  resume cannot see a removed row or a backdated one, so a void, an
+  edit, or a backdated row then needs a full replay. A snapshot does not
+  replace the ledger: keep the ledger as the source of truth and run a
+  full replay when in doubt.
 - A stored snapshot sets every rating when it is loaded, so give it the
   same write protection as the ratings themselves. from_snapshot checks
   its shape and the engine's invariants, not that it is authentic.
@@ -1656,10 +1663,13 @@ class RatingEngine:
         full.
 
         To use the snapshot as a checkpoint, take it right after replay,
-        before any other call on the engine: any change after the replay
-        (a new player or rating state, including one player_summary or
-        state() creates, a seed, an identity link, a live match) sets
-        resumable to false, and resume refuses it. A stored snapshot sets
+        before any other call on the engine. Every engine method that
+        changes state (creating a player or rating state, including one
+        player_summary or state() creates, a seed, an identity link, a
+        live match) sets resumable to false, and resume refuses it.
+        Changing objects the engine returns (players, rating states,
+        processed_match_ids and the like) directly is not tracked, and
+        makes the snapshot unsafe to resume. A stored snapshot sets
         every rating when loaded, so protect it from writes as you protect
         the ratings themselves: from_snapshot checks its shape and the
         engine's invariants, not that it is authentic.
@@ -2242,6 +2252,7 @@ def replay(
     cfg: Config | None = None,
     as_of: date,
     from_snapshot: Mapping[str, object] | None = None,
+    whole_ledger: bool = False,
 ) -> RatingEngine:
     """
     Rebuild authoritative ratings from seeds plus the immutable match ledger.
@@ -2267,7 +2278,20 @@ def replay(
     recorded again: each must be a row the checkpoint considered,
     unchanged. seed_players then holds only seeds not in the checkpoint.
     Take the checkpoint snapshot right after its replay, before any other
-    call on the engine. Resume raises instead of giving a different result:
+    call on the engine. Every engine method that changes state clears the
+    snapshot's resumable mark; changing objects the engine returns
+    directly is not tracked and makes the snapshot unsafe to resume.
+
+    whole_ledger=True (keyword only, with from_snapshot) promises that
+    matches holds the whole ledger, so resume also raises SnapshotError,
+    naming the ids sorted, for any row the checkpoint considered that is
+    missing from it: a row voided or deleted on or before the checkpoint
+    date. whole_ledger=True without from_snapshot raises SnapshotError.
+
+    Resume raises instead of giving a different result. The rows are
+    checked in this order: LedgerConflictError for changed or reused rows,
+    then SnapshotError for rows not in the checkpoint, then (with
+    whole_ledger) SnapshotError for checkpointed rows that are missing.
     - SnapshotError for a malformed snapshot or one taken under another
       Config (see RatingEngine.from_snapshot), a snapshot not from a
       replay, one with live updates or any other change since its replay
@@ -2279,16 +2303,27 @@ def replay(
       that differs from the row the checkpoint considered under its
       match_id, or a row dated after it that reuses one of those ids.
     - PlayerError for a seed whose player is already in the snapshot.
-    Resume cannot see a row removed (voided) from the ledger on or before
-    the checkpoint date, nor, when given only the newer rows, a late row
-    added on or before it. A void, an edit, or a backdated row needs a
+    - SnapshotError, with whole_ledger=True, for a checkpointed row missing
+      from matches.
+    Without whole_ledger, resume cannot see a row removed (voided) from the
+    ledger on or before the checkpoint date, and given only the newer rows
+    it cannot see a late row added on or before it either. Those need a
     full replay.
     """
+    if whole_ledger and from_snapshot is None:
+        raise SnapshotError("whole_ledger needs from_snapshot: it only applies to a resume")
     start = None
     if from_snapshot is not None:
         start = _resume_start(from_snapshot, cfg, as_of)
     return _replay(
-        matches, seed_players, cfg=cfg, as_of=as_of, check_seed_dates=True, track=True, start=start
+        matches,
+        seed_players,
+        cfg=cfg,
+        as_of=as_of,
+        check_seed_dates=True,
+        track=True,
+        start=start,
+        whole_ledger=whole_ledger,
     )
 
 
@@ -2327,6 +2362,7 @@ def _replay(
     check_seed_dates: bool,
     track: bool,
     start: RatingEngine | None = None,
+    whole_ledger: bool = False,
 ) -> RatingEngine:
     """
     replay, with the seed date check optional, from a fresh engine or start.
@@ -2361,7 +2397,7 @@ def _replay(
         info = start.replay_info
         if checkpoint is None or info is None:
             raise SnapshotError("Cannot resume: the snapshot is not from a replay")
-        _check_resume_rows(rows, checkpoint, start._ledger_digests)
+        _check_resume_rows(rows, checkpoint, start._ledger_digests, whole_ledger)
         considered = info.matches_considered
         counted = info.matches_counted
 
@@ -2389,14 +2425,19 @@ def _replay(
     return engine
 
 
-def _check_resume_rows(rows: list[Match], checkpoint: date, digests: Mapping[str, str]) -> None:
+def _check_resume_rows(
+    rows: list[Match], checkpoint: date, digests: Mapping[str, str], whole_ledger: bool
+) -> None:
     """
     Raise unless every row agrees with the checkpoint.
 
     A row dated on or before the checkpoint date must be a row the
     checkpoint considered, unchanged. A row dated after it must not reuse
-    one of those ids. Conflicts raise LedgerConflictError first, then
-    missing rows raise SnapshotError, each naming every id.
+    one of those ids. With whole_ledger, every row the checkpoint
+    considered must also be among the rows. Conflicts raise
+    LedgerConflictError first, then rows not in the checkpoint raise
+    SnapshotError, then (with whole_ledger) checkpointed rows missing from
+    the ledger raise SnapshotError, each naming every id, sorted.
     """
     conflicts: set[str] = set()
     missing: set[str] = set()
@@ -2416,6 +2457,13 @@ def _check_resume_rows(rows: list[Match], checkpoint: date, digests: Mapping[str
             "Cannot resume: rows dated on or before the checkpoint date are not in the "
             "checkpoint: " + ", ".join(sorted(missing))
         )
+    if whole_ledger:
+        removed = set(digests) - {match.match_id for match in rows}
+        if removed:
+            raise SnapshotError(
+                "Cannot resume: rows the checkpoint considered are missing from the ledger: "
+                + ", ".join(sorted(removed))
+            )
 
 
 # ---------------------------------------------------------------------------

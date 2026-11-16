@@ -86,7 +86,7 @@ Names not listed here are internal, including everything reached only through `o
 Rating:
 
 - `RatingEngine`: holds players and matches, records matches, and predicts outcomes. Its `predict_point_share` and `predict_win_probability` methods give team A's expected point share and calibrated match win probability. `to_snapshot` saves its whole state as JSON-safe data, and `from_snapshot` loads it back (see "Snapshots and checkpoints").
-- `replay`: rebuilds authoritative ratings from seeds and the match ledger as of a date. With `from_snapshot`, it resumes from a checkpoint instead of starting over.
+- `replay`: rebuilds authoritative ratings from seeds and the match ledger as of a date. With `from_snapshot`, it resumes from a checkpoint instead of starting over. Add `whole_ledger=True` when passing the whole ledger, so resume also catches a row voided before the checkpoint.
 - `ledger_order`: the sort key that sets the order of play in a ledger.
 - `reliability`: OPEN-earned reliability (0 to 100) for one rating state.
 - `expected_point_share`: team A's expected share of points from two team ratings and a scale.
@@ -133,7 +133,7 @@ Errors (every class is a `ValueError`):
 - `PlayerError`: a player identity, account link, or external identity is not valid. `seed_external_rating` raises it for a blank player id or when the snapshot's external identity cannot be linked (it names no source, it is already linked to another player, or the player already has a different id from that source), and `replay` and `prequential_predictions` raise it when two seeds share a player id. `replay(from_snapshot=...)` raises it for a seed whose player is already in the snapshot.
 - `EvaluationError`: an evaluation, fit, or win probability cannot be computed.
 - `LedgerConflictError`: ledger rows share a `match_id` but differ. Its `match_ids` lists them.
-- `SnapshotError`: a snapshot cannot be loaded or resumed from. `RatingEngine.from_snapshot` raises it for a malformed snapshot, one taken under another `Config`, or one holding a state the engine cannot produce, and `RatingEngine.to_snapshot` for state that could not load back. `replay(from_snapshot=...)` raises it for a snapshot not from a replay, one with live updates or any other change since its replay, an `as_of` before the checkpoint date, a row on or before the checkpoint date that the checkpoint did not see, or a seed for a player named in a row the checkpoint saw.
+- `SnapshotError`: a snapshot cannot be loaded or resumed from. `RatingEngine.from_snapshot` raises it for a malformed snapshot, one taken under another `Config`, or one holding a state the engine cannot produce, and `RatingEngine.to_snapshot` for state that could not load back. `replay(from_snapshot=...)` raises it for a snapshot not from a replay, one with live updates or any other change since its replay, an `as_of` before the checkpoint date, a row on or before the checkpoint date that the checkpoint did not see, a seed for a player named in a row the checkpoint saw, or, with `whole_ledger=True`, a row the checkpoint saw that is missing from the ledger. It also raises it for `whole_ledger=True` without `from_snapshot`.
 <!-- public-api:end -->
 
 ## Ledger order
@@ -153,15 +153,20 @@ Errors (every class is a `ValueError`):
 
 A snapshot of a replay is a checkpoint. `replay(matches, seeds, cfg=cfg, as_of=later, from_snapshot=snapshot)` resumes from it and gives the same result as a full replay to `later`. You can pass the whole ledger or only the rows dated after the checkpoint. Pass only seeds that are not in the checkpoint.
 
-Take the checkpoint snapshot right after the replay, before any other call on the engine. Any change after the replay makes the snapshot one resume refuses: a live match, a seed, an account or external id link, a new player, or a new rating state (`player_summary` and `state` create one for a format the player has no rating in).
+Take the checkpoint snapshot right after the replay, before any other call on the engine. Every engine method that changes state makes the snapshot one resume refuses: a live match, a seed, an account or external id link, a new player, or a new rating state (`player_summary` and `state` create one for a format the player has no rating in). Changing objects the engine returns (players, rating states, `processed_match_ids` and the like) directly is not tracked, and makes the snapshot unsafe to resume.
+
+When you pass the whole ledger, also pass `whole_ledger=True`. Resume then raises `SnapshotError` for any row the checkpoint saw that is missing from the ledger, which catches a match voided or deleted on or before the checkpoint date. `whole_ledger=True` without `from_snapshot` raises `SnapshotError`.
 
 Resume raises instead of giving a different result:
 
 - `SnapshotError` for a malformed snapshot, a snapshot taken under another `Config`, a snapshot that is not from a replay, a snapshot with live updates or any other change since its replay, an `as_of` before the checkpoint date, a row dated on or before the checkpoint date that the checkpoint did not see, or a seed for a player named in a row the checkpoint saw (even when every such row was rejected, so the player is not in the snapshot).
 - `LedgerConflictError` for a row dated on or before the checkpoint date that differs from the row the checkpoint saw under that `match_id`, or a later row that reuses one of those ids.
 - `PlayerError` for a seed whose player is already in the snapshot.
+- `SnapshotError`, with `whole_ledger=True`, for a row the checkpoint saw that is missing from the ledger. It names every missing id, sorted.
 
-Resume cannot see everything. It cannot see a row removed (voided) from the ledger on or before the checkpoint date. Given only the newer rows, it cannot see a late row added on or before the checkpoint date either. So a void, an edit, or a backdated row needs a full replay. Store a match before the replay that covers its date.
+The row checks run in this order: changed or reused rows (`LedgerConflictError`), then rows the checkpoint did not see, then (with `whole_ledger=True`) checkpointed rows that are missing.
+
+Resume never silently differs from a full replay of the rows it is given. Without `whole_ledger=True`, it cannot see a row removed (voided) from the ledger on or before the checkpoint date. Given only the newer rows, it cannot see a late row on or before the checkpoint date that you left out either. So a void, an edit, or a backdated row needs a full replay, or the whole ledger with `whole_ledger=True`, which raises for a removed row. Store a match before the replay that covers its date.
 
 A stored snapshot sets every rating when it is loaded. Give it the same write protection as the ratings themselves. `from_snapshot` checks its shape and the engine's rules, not that it is authentic.
 
