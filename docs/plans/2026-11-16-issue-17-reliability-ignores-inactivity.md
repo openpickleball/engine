@@ -41,6 +41,9 @@ engine. No code path in the package reads the wall clock.
 9. Docs (module docstring, `PlayerSummary` and `player_summary` docstrings, README quick
    start, CHANGELOG) describe the new default and no longer mention today or rd_as_of as
    a fallback. `examples/basic_match.py` runs.
+10. Added after review: an `as_of` that is not a plain `date` (a str, or a datetime)
+    raises `ReferenceDateError` before any player or rating state is created, so a
+    replayed engine's snapshot stays resumable.
 
 ## Files that change
 
@@ -119,8 +122,10 @@ engine. No code path in the package reads the wall clock.
   unplayed seed captured after the replay date is not carried until the next replay or an
   explicit `as_of`. All documented.
 - `player_summary` creates a missing category state; raising after creation would change
-  state on a failed call (and clear the snapshot `resumable` mark). The check must come
-  first; a test asserts no state is created and the snapshot stays resumable.
+  state on a failed call (and clear the snapshot `resumable` mark). Both checks (no
+  reference date, and an `as_of` of the wrong type) come first. Tests assert no state is
+  created, and for a rejected `as_of` on a replayed engine, that the snapshot stays
+  resumable (`tests/test_summary_as_of_type.py`).
 - `or` versus `is not None`: dates are always truthy, but use `is not None` for clarity.
 - Riskiest step: the module docstring rewrite, since several tests check docs; keep the
   wording plain and consistent with CHANGELOG.
@@ -156,7 +161,15 @@ Tests in `tests/test_reference_date.py`:
   the test above. It covers a format with no state and a player id the engine has never
   seen.
 - `test_summary_raise_keeps_snapshot_resumable` was not written: a never-replayed engine's
-  snapshot is never resumable, so the no-new-state check covers it.
+  snapshot is never resumable, so the no-new-state check covers the missing reference
+  date. The resumable check lives in `tests/test_summary_as_of_type.py` instead.
+- `tests/test_reference_date_live.py` (criterion 2, added after review): after a replay
+  and a later live match, the default summary equals the summary at the live match date,
+  and a stale import is not carried.
+- `tests/test_summary_as_of_type.py` (criterion 10, added after review): a str, aware
+  datetime, or naive datetime `as_of` raises `ReferenceDateError` for a new format, a new
+  player, an existing played state, and an unplayed state; nothing is created and the
+  snapshot stays resumable.
 - `test_explicit_as_of_overrides_calculated_as_of` (criterion 5): on the late replay,
   `as_of=date(2024, 3, 1)` equals the early replay's default.
 - `test_reliability_requires_as_of` (criterion 6): `pytest.raises(TypeError)` on

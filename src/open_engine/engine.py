@@ -2189,6 +2189,8 @@ class RatingEngine:
         None. The check comes first, so a failed call creates no player or
         rating state.
         """
+        if as_of is not None and not _is_plain_date(as_of):
+            raise ReferenceDateError("player_summary as_of must be a date, not a datetime")
         reference = as_of if as_of is not None else self.calculated_as_of
         if reference is None:
             raise ReferenceDateError(
