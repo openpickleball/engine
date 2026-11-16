@@ -24,8 +24,19 @@ MX = RatingFormat.MIXED_DOUBLES
 SRC = Path(__file__).resolve().parents[1] / "src" / "open_engine"
 EARLY = date(2024, 3, 1)
 LATE = date(2026, 11, 1)
-CLOCK_CALLS = {("date", "today"), ("datetime", "now"), ("datetime", "utcnow")}
-CLOCK_CALLS |= {("datetime", "today"), ("time", "time")}
+CLOCK_NAMES = {
+    "today",
+    "now",
+    "utcnow",
+    "fromtimestamp",
+    "utcfromtimestamp",
+    "time",
+    "time_ns",
+    "monotonic",
+    "perf_counter",
+    "localtime",
+    "gmtime",
+}
 
 
 def _ledger() -> list[Match]:
@@ -43,20 +54,68 @@ def _ledger() -> list[Match]:
     ]
 
 
-def _clock_calls(path: Path) -> list[str]:
+def _clock_reads(source: str, name: str) -> list[str]:
+    """Every import of time and every call to a clock-like name, whatever its owner."""
     found: list[str] = []
-    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-            continue
-        owner = node.func.value
-        if isinstance(owner, ast.Name) and (owner.id, node.func.attr) in CLOCK_CALLS:
-            found.append(f"{path.name}:{node.lineno} {ast.unparse(node)}")
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            hit = any(alias.name.split(".")[0] == "time" for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            hit = node.module is not None and node.module.split(".")[0] == "time"
+        elif isinstance(node, ast.Call):
+            func = node.func
+            called = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            hit = called in CLOCK_NAMES
+        else:
+            hit = False
+        if hit:
+            found.append(f"{name}:{getattr(node, 'lineno', 0)} {ast.unparse(node)}")
     return found
 
 
 def test_package_never_reads_the_wall_clock() -> None:
-    found = [call for path in sorted(SRC.glob("*.py")) for call in _clock_calls(path)]
+    paths = sorted(SRC.rglob("*.py"))
+    assert paths
+    found = [
+        read
+        for path in paths
+        for read in _clock_reads(path.read_text(encoding="utf-8"), str(path.relative_to(SRC)))
+    ]
     assert found == []
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        "date.today()",
+        "datetime.now()",
+        "datetime.utcnow()",
+        "datetime.today()",
+        "datetime.datetime.now()",
+        "dt.now()",
+        "d.date.today()",
+        "datetime.fromtimestamp(0)",
+        "datetime.utcfromtimestamp(0)",
+        "time.time()",
+        "time.time_ns()",
+        "time.monotonic()",
+        "time.perf_counter()",
+        "time.localtime()",
+        "time.gmtime()",
+        "now()",
+        "perf_counter()",
+        "import time",
+        "import time as t",
+        "from time import monotonic",
+    ],
+)
+def test_clock_scan_catches(snippet: str) -> None:
+    assert _clock_reads(snippet, "snippet") != []
+
+
+@pytest.mark.parametrize("snippet", ["date(2026, 1, 1)", "x.timestamp", "import datetime"])
+def test_clock_scan_ignores(snippet: str) -> None:
+    assert _clock_reads(snippet, "snippet") == []
 
 
 def test_inactive_player_reliability_drops_by_default() -> None:

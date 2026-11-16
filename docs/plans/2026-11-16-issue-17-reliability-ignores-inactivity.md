@@ -18,8 +18,11 @@ engine. No code path in the package reads the wall clock.
 
 ## Acceptance criteria
 
-1. No `date.today()`, `datetime.now()`, `datetime.utcnow()`, `datetime.today()`, or
-   `time.time()` call anywhere in `src/open_engine`. A test scans every module for them.
+1. No wall clock read anywhere in `src/open_engine`. A test scans every module,
+   recursively, and fails on any `import time` or `from time import ...` and on any call
+   to `today`, `now`, `utcnow`, `fromtimestamp`, `utcfromtimestamp`, `time`, `time_ns`,
+   `monotonic`, `perf_counter`, `localtime`, or `gmtime`, whatever the owner expression
+   (widened after review, so `datetime.datetime.now()` and aliases are caught).
 2. Reliability reflects inactivity by default: `player_summary` without `as_of` measures
    at the later of `engine.calculated_as_of` and the player's `last_played` (the maintainer
    approved this after review: a stale player is measured at the replay date, a player with
@@ -138,9 +141,10 @@ state), and no change to `record` or `replay`.
 Tests in `tests/test_reference_date.py`:
 
 - `test_package_never_reads_the_wall_clock` (criterion 1): parse every `.py` file under
-  `src/open_engine` with `ast` and fail on any call whose function is an attribute named
-  `today`, `now`, `utcnow`, or `time` on a name (`date.today()`, `datetime.now()`,
-  `time.time()`), naming the file and line. Measured on origin/main:
+  `src/open_engine` (recursively) with `ast` and fail as criterion 1 says, naming the
+  file and line. The maintainer approved unfreezing this one test after review to widen
+  it; parametrized `test_clock_scan_catches` and `test_clock_scan_ignores` feed snippets
+  to the scanner to prove each form is caught. Measured on origin/main:
   `grep -rnE "today\(|\.now\(|utcnow|time\.time" src/` gives
   `engine.py:881 as_of = state.rd_as_of or date.today()` and
   `engine.py:2185 reference = as_of or state.rd_as_of or date.today()`, so it fails there.
