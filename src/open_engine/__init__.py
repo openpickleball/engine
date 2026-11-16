@@ -13,6 +13,7 @@ from ._errors import (
     LedgerConflictError,
     OpenEngineError,
     PlayerError,
+    SnapshotError,
 )
 from ._version import __version__ as __version__
 from .engine import (
@@ -70,6 +71,7 @@ __all__ = [
     "ReplayInfo",
     "ScaleFit",
     "ScoringType",
+    "SnapshotError",
     "WinCalibrationFit",
     "calibrate_win_probability",
     "evaluate",
