@@ -187,7 +187,7 @@ def test_category_parent_reports_its_own_late() -> None:
         Match("syn-m2", ("syn-a", "syn-w"), ("syn-x", "syn-y"), ((11, 7),), OLDER, MX)
     )
     assert mixed.counted
-    assert mixed.late is False
+    assert mixed.late is True
     assert mixed.parent is not None
     assert mixed.parent.late is True
     assert engine.state("syn-a", D).last_played == NEWEST
