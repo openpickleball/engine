@@ -800,6 +800,45 @@ def _matchup_key(match: Match) -> MatchupKey:
     )
 
 
+def _seed_rule_broken(state: RatingState, cfg: Config) -> str | None:
+    """The first seed rule a state breaks, or None when the engine could have made it."""
+    if state.matches_played != 0:
+        return "matches_played must be 0"
+    if state.last_played is not None:
+        return "last_played must be None"
+    if state.partners:
+        return "partners must be empty"
+    if state.opponents:
+        return "opponents must be empty"
+    if state.live_updates_since_replay != 0:
+        return "live_updates_since_replay must be 0"
+    if state.initial_source_date is None:
+        if state.rd != cfg.new_player_rd:
+            return "rd must equal new_player_rd for a provisional seed"
+        if state.rd_as_of is not None:
+            return "rd_as_of must be None for a provisional seed"
+        if state.initial_source_reliability is not None:
+            return "initial_source_reliability must be None for a provisional seed"
+        return None
+    seed_rds = (cfg.external_seed_rd, max(cfg.external_seed_rd, cfg.category_seed_rd))
+    if state.rd not in seed_rds:
+        return "rd must equal external_seed_rd or the category seed RD"
+    if state.rd_as_of != state.initial_source_date:
+        return "rd_as_of must equal initial_source_date"
+    imported = state.initial_source_reliability
+    if imported is not None and not 0 <= imported <= 100:
+        return "initial_source_reliability must be between 0 and 100"
+    return None
+
+
+def _validate_seed(player: Player, cfg: Config) -> None:
+    """Raise InvalidSeedError unless every state is one the engine makes before a match."""
+    for fmt in sorted(player.ratings):
+        rule = _seed_rule_broken(player.ratings[fmt], cfg)
+        if rule is not None:
+            raise InvalidSeedError(f"Seed for {player.id} in {fmt}: {rule}")
+
+
 # ---------------------------------------------------------------------------
 # Rating engine
 # ---------------------------------------------------------------------------
@@ -831,9 +870,24 @@ class RatingEngine:
         return self.players[player_id]
 
     def add_player(self, player: Player) -> None:
-        """Add a copy of a player record. Raises PlayerError if the id exists."""
+        """
+        Add a copy of a player record as a seed.
+
+        Every rating state must be one the engine could have produced before
+        any match: no matches, last_played, partners, opponents, or live
+        updates. A provisional state (no initial_source_date) has RD
+        new_player_rd, no rd_as_of, and no imported reliability. An imported
+        state, or a category state derived from one, has RD external_seed_rd
+        or max(external_seed_rd, category_seed_rd), rd_as_of equal to
+        initial_source_date, and an imported reliability that is None or
+        between 0 and 100. Played states are rebuilt through replay instead.
+
+        Raises PlayerError if the id exists and InvalidSeedError for a state
+        that breaks these rules. Nothing changes when either is raised.
+        """
         if player.id in self.players:
             raise PlayerError(f"Player already exists: {player.id}")
+        _validate_seed(player, self.cfg)
         self.players[player.id] = clone_player(player)
 
     def link_account(self, player_id: str, account_user_id: str) -> None:
@@ -1278,13 +1332,12 @@ def replay(
     falls after as_of. Seeds must be
     unplayed: imported or provisional states only.
 
-    Raises InvalidSeedError for a seed that already has OPEN matches, and
-    PlayerError when two seeds share a player id.
+    Raises InvalidSeedError for a seed state the engine could not have
+    produced before any match (see add_player), and PlayerError when two
+    seeds share a player id.
     """
     engine = RatingEngine(cfg)
     for player in seed_players:
-        if any(state.matches_played for state in player.ratings.values()):
-            raise InvalidSeedError(f"Seed for {player.id} already contains OPEN matches")
         engine.add_player(player)
 
     considered = counted = 0
