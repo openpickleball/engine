@@ -53,8 +53,7 @@ Published behavior notes:
   before its capture date, measured at the same reference date as
   reliability (see the next note), so an unplayed import captured after
   the last replay is not shown by default; replay rejects such seeds. An
-  external
-  reliability never sets OPEN RD: an imported seed's RD is always
+  external reliability never sets OPEN RD: an imported seed's RD is always
   Config.external_seed_rd.
 - player_summary measures inactivity, RD, and reliability at a reference
   date. With no as_of, it is the later of the last replay date
@@ -94,7 +93,8 @@ Published behavior notes:
   evaluation, fits and win probabilities, `LedgerConflictError` covers
   conflicting ledger rows, `SnapshotError` covers snapshots that cannot
   be loaded or resumed from, and `ReferenceDateError` covers a
-  `player_summary` call with no date to measure at.
+  `player_summary` call with no date to measure at or with an as_of that
+  is not a plain date.
 - Snapshots and checkpoints: `RatingEngine.to_snapshot()` gives the whole
   engine state as JSON-safe data (schema version 1) with sorted keys and
   lists, and `RatingEngine.from_snapshot` loads it back after validating
@@ -2206,7 +2206,9 @@ class RatingEngine:
         state.
         """
         if as_of is not None and not _is_plain_date(as_of):
-            raise ReferenceDateError("player_summary as_of must be a plain date, not a datetime")
+            raise ReferenceDateError(
+                "player_summary as_of must be a date, not a str, datetime, or other type"
+            )
         reference = as_of if as_of is not None else self.calculated_as_of
         if reference is None:
             raise ReferenceDateError(

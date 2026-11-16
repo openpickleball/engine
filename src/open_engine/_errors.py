@@ -41,7 +41,12 @@ class SnapshotError(OpenEngineError):
 
 
 class ReferenceDateError(OpenEngineError):
-    """No reference date to measure inactivity and reliability at."""
+    """
+    No usable reference date to measure inactivity and reliability at.
+
+    player_summary raises it when it gets no as_of and the engine was never
+    replayed, or when its as_of is not a plain date.
+    """
 
 
 class LedgerConflictError(OpenEngineError):

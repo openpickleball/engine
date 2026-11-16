@@ -11,8 +11,12 @@ Expo, browser skills: not applicable because there is no UI.
 
 ## Decision
 
-The maintainer chose: `player_summary` defaults `as_of` to the engine's `calculated_as_of`
-(the date of the last replay) and raises when both are unset. The free function
+The maintainer chose: `player_summary` defaults `as_of` to the later of the engine's
+`calculated_as_of` (the date of the last replay) and the player's last match
+(`last_played`), and raises when `as_of` and `calculated_as_of` are both unset. The plan
+first said `calculated_as_of` alone; the maintainer approved the `last_played` refinement
+after review, since a live match after the replay otherwise mixed a newer RD with an older
+partner window. The free function
 `reliability(state, cfg, as_of)` takes `as_of` as a required argument, since it has no
 engine. No code path in the package reads the wall clock.
 
@@ -87,8 +91,10 @@ engine. No code path in the package reads the wall clock.
 - `examples/basic_match.py`: pass `as_of=` the match date to `player_summary`.
 - `CHANGELOG.md` under `## [Unreleased]`: Added `ReferenceDateError`; Changed
   (**Breaking**) `reliability` requires `as_of`; `player_summary` defaults `as_of` to
-  `calculated_as_of` and raises `ReferenceDateError` when the engine was never replayed,
-  so a stale player's reliability and RD now reflect inactivity up to the last replay;
+  the later of `calculated_as_of` and the player's `last_played` (refinement approved by
+  the maintainer after review) and raises `ReferenceDateError` when the engine was never
+  replayed or `as_of` is not a plain date, so a stale player's reliability and RD now
+  reflect inactivity up to the last replay;
   the engine no longer reads the wall clock (issue #17). The earlier Unreleased Fixed entry
   for issue #15 said the reference defaults to `rd_as_of` and told the backend to pass
   today; reword that clause to point at the new entry.
