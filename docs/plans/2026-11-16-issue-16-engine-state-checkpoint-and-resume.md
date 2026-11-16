@@ -140,3 +140,19 @@ No new module, so `scripts/check_wheel.py` `PACKAGE_FILES` does not change. No n
 - Live drive: run a script that replays a synthetic ledger to a checkpoint, writes `to_snapshot()` to a JSON file, loads it in a new process, resumes with the remaining rows, and prints that the resumed and full snapshots are equal; then shows each rejection path (live update, late row, changed row, config mismatch) raising the documented error.
 
 Measured on the default branch (b5fe113), for the "checkpoint plus remaining matches equals full replay" assumption: a scratch script built a 400-match synthetic ledger (singles, doubles, mixed doubles, every match type, an external doubles seed), ran `replay(ms, [seed], as_of=cut)` for cuts 2025-06-15 and 2025-10-01, then `record(m, as_of=2025-12-31)` for every `_ledger(ms)` row after the cut, and compared every player's `ratings`, `processed_match_ids`, and `self_reported_log` with `replay(ms, [seed], as_of=2025-12-31)`. Result: `players 12 counted 381 diffs 0`. A cut before the seed's capture date raised `InvalidSeedError` (seed dated after `as_of`), which is why resume adds seeds through the same check.
+
+Fix round 2 (D2-F1), frozen test rewrite. The user approved on 2026-11-16 rewriting the round 1 frozen test `tests/test_snapshot_invariants.py`: its five identity rows (blank account, shared account, blank external source, blank external id, shared external id) are removed. Why: the public API builds these states (two replay seeds that share an `account_user_id` or an external id, a seed with blank ids, `link_account` and `attach_external_id` with whitespace), so `to_snapshot()` raised on engines the engine itself made. Identity values do not affect ratings. Tightening those entry points goes to a follow-up issue. The new frozen test `tests/test_snapshot_identities.py` round-trips each case. On the code before the fix it fails for the expected reason, `SnapshotError` from `to_snapshot`:
+
+```
+E                   open_engine._errors.SnapshotError: snapshot.players[1]: account_user_id 'acct-1' is linked to more than one player
+E                   open_engine._errors.SnapshotError: snapshot.players[1]: external id 'x1' from 'src' is linked to more than one player
+E               open_engine._errors.SnapshotError: snapshot.players[0].external_ids must not hold a blank source or id
+E           open_engine._errors.SnapshotError: snapshot.players[0].account_user_id must not be blank
+E               open_engine._errors.SnapshotError: snapshot.players[0].external_ids must not hold a blank source or id
+FAILED tests/test_snapshot_identities.py::test_api_built_identities_round_trip[A shared account from seeds]
+FAILED tests/test_snapshot_identities.py::test_api_built_identities_round_trip[A2 shared external id from seeds]
+FAILED tests/test_snapshot_identities.py::test_api_built_identities_round_trip[A3 blank ids on a seed]
+FAILED tests/test_snapshot_identities.py::test_api_built_identities_round_trip[B blank account from link_account]
+FAILED tests/test_snapshot_identities.py::test_api_built_identities_round_trip[B2 blank source from attach_external_id]
+5 failed in 0.10s
+```

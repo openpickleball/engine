@@ -2,9 +2,10 @@
 
 A loaded snapshot sets every rating, so it must hold only states the
 engine itself can reach: unplayed states with a seed RD, played states
-with consistent counts and dates, unique non-blank identities, bounded
-numbers, and, for a resumable snapshot, nothing dated after its replay.
-All ids are synthetic.
+with consistent counts and dates, bounded numbers, and, for a resumable
+snapshot, nothing dated after its replay. Identities are not checked
+here: the engine itself can build shared or blank ones (see
+test_snapshot_identities.py). All ids are synthetic.
 """
 
 from __future__ import annotations
@@ -69,13 +70,6 @@ def _state(snap: Snap, pid: str, fmt: str) -> dict[str, object]:
 def _set(pid: str, fmt: str, **values: object) -> Callable[[Snap], None]:
     def mutate(snap: Snap) -> None:
         _state(snap, pid, fmt).update(values)
-
-    return mutate
-
-
-def _set_player(pid: str, **values: object) -> Callable[[Snap], None]:
-    def mutate(snap: Snap) -> None:
-        _player(snap, pid).update(values)
 
     return mutate
 
@@ -176,38 +170,6 @@ TAMPERED: list[tuple[str, Callable[[Snap], None], str]] = [
     ),
     ("own partner", _own_partner, r"a player cannot be their own partner"),
     ("own opponent", _own_opponent, r"a player cannot be their own opponent"),
-    # c. identities are non-blank and unique
-    (
-        "blank account",
-        _set_player("syn-a", account_user_id=""),
-        r"account_user_id must not be blank",
-    ),
-    (
-        "shared account",
-        _both(
-            _set_player("syn-a", account_user_id="acct-1"),
-            _set_player("syn-b", account_user_id="acct-1"),
-        ),
-        r"account_user_id 'acct-1' is linked to more than one player",
-    ),
-    (
-        "blank external source",
-        _set_player("syn-a", external_ids={" ": "ext-1"}),
-        r"external_ids must not hold a blank source or id",
-    ),
-    (
-        "blank external id",
-        _set_player("syn-a", external_ids={"ext": ""}),
-        r"external_ids must not hold a blank source or id",
-    ),
-    (
-        "shared external id",
-        _both(
-            _set_player("syn-a", external_ids={"ext": "same"}),
-            _set_player("syn-b", external_ids={"ext": "same"}),
-        ),
-        r"external id 'same' from 'ext' is linked to more than one player",
-    ),
     # d. a resumable snapshot holds nothing after its replay, and its counts agree
     (
         "future source date",
