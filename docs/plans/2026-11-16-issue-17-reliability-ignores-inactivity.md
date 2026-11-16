@@ -64,15 +64,21 @@ engine. No code path in the package reads the wall clock.
     `ReferenceDateError("player_summary needs as_of when the engine has not been replayed")`
     (wording may vary, test matches on "as_of") when it is None, before `self.player(...)`
     and `self.state(...)` so no state is created. Use `is not None`, not `or`.
-    Docstring: as_of defaults to `calculated_as_of`; pass it for a live engine or to
-    measure at another date; raises ReferenceDateError when both are None.
+    Docstring (revised after review): with no as_of, the reference is the later of
+    `calculated_as_of` and the player's `last_played`; players can be measured at
+    different dates; a backdated live match moves `last_played` back; an as_of earlier
+    than the last match does not rebuild past state; raises ReferenceDateError when the
+    engine was never replayed or as_of is not a plain date.
   - `PlayerSummary` docstring: reference date is "player_summary's as_of, else the
-    engine's calculated_as_of".
+    later of the engine's calculated_as_of and the player's last_played".
   - Module docstring bullet on `PlayerSummary.reliability` and imports: replace the
     sentences about "with no as_of, player_summary measures from the state's own rd_as_of
     ... unless the caller passes as_of (for example today)" with the new rule. Add a
-    behavior note that `player_summary` measures inactivity at the last replay date by
-    default and that the engine never reads the wall clock.
+    behavior note that `player_summary` measures inactivity, by default, at the later of
+    the last replay date and the player's last match, and that the engine never reads the
+    wall clock. CHANGELOG also says an unplayed import is now measured at the replay date
+    by default, so it stops being carried once older than
+    `import_reliability_max_age_days` at that date.
 - `src/open_engine/__init__.py`: import and add `"ReferenceDateError"` to `__all__`
   (keep the existing ordering convention).
 - `README.md`: add `ReferenceDateError` to the "Public API" list (the test compares it to
