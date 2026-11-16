@@ -16,17 +16,22 @@ The engine is a demonstration. Its outputs are not OPEN ratings.
 
 ### Changed
 
-- **Breaking:** `RatingEngine.predict` is now `predict_point_share` and `RatingEngine.win_probability` is now `predict_win_probability`, with the same arguments and results. The old names are gone.
+- **Breaking:** `RatingEngine.predict` is now `predict_point_share` and `RatingEngine.win_probability` is now `predict_win_probability`, with the same arguments and, for valid player ids, the same results. The old names are gone.
 - **Breaking:** `clone_player`, `inflated_rd`, `player_k`, `information_multiplier`, and `recency_multiplier` are no longer exported from `open_engine`. They stay in `open_engine.engine` as internal helpers.
 - **Breaking:** `player_summary` returns a `PlayerSummary` instead of a dict. Fields keep their names and values (`initial_source_reliability` now comes before `initial_source_date`, which changes the key order of `dataclasses.asdict`), but `rating_format` is a `RatingFormat`, `reliability_basis` is a `ReliabilityBasis`, `reliability` is always a float, and `last_played`, `initial_source_date`, and `calculated_as_of` are `date` objects or `None` instead of ISO strings. `dataclasses.asdict` gives a dict, but its dates need converting before JSON.
 - **Breaking:** `MatchResult.reason` is a `RejectionReason`, or `None` when the match counted, instead of free text. `MatchResult.rating_format` is a `RatingFormat` on every result, including rejections before any rating work, instead of a string that could be empty. `rating_format` is now required and comes second (`counted`, `rating_format`, `reason`), and `reason` defaults to `None` instead of `""`, so code that builds a `MatchResult` must pass `rating_format` and, if it uses positions, follow the new order.
 - **Breaking:** errors that were plain `ValueError`s are now the classes above. A `GameFormat` used for win probability is validated first, so an invalid format raises `ConfigError`. That includes `win_by=0`, which used to raise the `ValueError` that is now `EvaluationError`.
-- **Breaking:** `Match.validate` rejects a `match_id` or player id that is not a non-empty, non-whitespace string, and a game that is not a pair of scores, with `InvalidMatchError`. `predict_point_share` and `predict_win_probability` apply the same id check. Blank match ids already raised. What is new: a ledger with a blank, whitespace-only, or non-string player id, or a non-string id such as bytes, now raises in `replay` and `prequential_predictions` (and so in `evaluate`, `fit_scale`, and `fit_win_calibration`), even when the row is after `as_of` or would have been rejected. Before, such ledgers could replay. Every ledger that still replays gives the same ratings.
-- `RatingFormat`, `MatchType`, and `ScoringType` are `StrEnum`s, so `str()` and f-strings give the value (`"doubles"`, not `"RatingFormat.DOUBLES"`). Comparison with the value, `repr`, pickling, and `Config.fingerprint()` are unchanged.
+- **Breaking:** match and player ids must be non-empty strings that are not only whitespace. `Match.validate` raises `InvalidMatchError` for any other `match_id` or player id, and for a game that is not a pair of scores. Blank match ids already raised. These used to be accepted:
+  - Player ids that are blank, whitespace-only, or not strings, in a row after `as_of` or in a rejected row. Ledgers with such rows used to replay.
+  - Ids that are bytes. `record` used to count those matches.
+  - Blank player ids in `predict_point_share` and `predict_win_probability`, which used to return a value.
+
+  Such rows now raise in `record`, `replay`, and `prequential_predictions` (and so in `evaluate`, `fit_scale`, and `fit_win_calibration`). Every ledger that still replays gives the same ratings.
+- **Breaking:** `RatingFormat`, `MatchType`, and `ScoringType` are `StrEnum`s, so `str()` and f-strings give the value (`"doubles"`, not `"RatingFormat.DOUBLES"`). Comparison with the value, `repr`, pickling, and `Config.fingerprint()` are unchanged.
 
 ### Fixed
 
-- `record` with a blank, whitespace-only, or non-string player id no longer changes any rating. It used to update the players before the bad id and then raise before marking the match processed, so every retry moved those ratings again. It now raises `InvalidMatchError` before anything changes.
+- `record` with a blank or whitespace-only player id, or one that is not a string (such as an int), no longer changes any rating. It used to update the players before the bad id, then raise before marking the match processed, so every retry moved those ratings again. It now raises `InvalidMatchError` before anything changes.
 - `LedgerConflictError` survives pickling and copying with its message and `match_ids` intact. The message used to come back garbled.
 - `game_win_probability`, `match_win_probability`, and `predict_win_probability` validate the `GameFormat` and raise `ConfigError` for an invalid one. Before, a `cap` at or below `points_to` silently returned a wrong probability, and `points_to=0` raised a bare `ValueError` from inside the math.
 - A malformed game score (not a pair of scores) raises `InvalidMatchError` instead of a bare `ValueError` or `TypeError` from unpacking.
