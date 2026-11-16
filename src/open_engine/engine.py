@@ -1038,6 +1038,7 @@ _TOP_KEYS = frozenset(
         "self_reported_log",
         "ledger_digests",
         "ledger_player_ids",
+        "resumable",
     }
 )
 _REPLAY_INFO_KEYS = frozenset(
@@ -1077,6 +1078,7 @@ class _Snapshot:
     replay_info: ReplayInfo | None
     ledger_digests: dict[str, str]
     ledger_player_ids: set[str]
+    resumable: bool
 
 
 def _iso(value: object) -> object:
@@ -1426,8 +1428,21 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
             raise SnapshotError(f"{path}: duplicate player id {player_id!r}")
         ledger_player_ids.add(player_id)
 
+    resumable = raw["resumable"]
+    if not isinstance(resumable, bool):
+        raise SnapshotError("snapshot.resumable must be a bool")
+    if resumable and calculated_as_of is None:
+        raise SnapshotError("snapshot.resumable must be false when calculated_as_of is null")
+
     return _Snapshot(
-        players, processed, log, calculated_as_of, replay_info, digests, ledger_player_ids
+        players,
+        processed,
+        log,
+        calculated_as_of,
+        replay_info,
+        digests,
+        ledger_player_ids,
+        resumable,
     )
 
 
@@ -1456,6 +1471,31 @@ class RatingEngine:
         # Every player id named in a row a replay considered, counted or
         # not. Resume refuses a seed for one of them.
         self._ledger_player_ids: set[str] = set()
+        # True only while the state is exactly what replay produced, so a
+        # snapshot of it can be resumed from. Replay sets it at the end.
+        self._resumable = False
+
+    # -- state changes ---------------------------------------------------------
+    #
+    # Every change to engine state outside replay goes through these three
+    # methods, which clear the resumable mark. A new method that changes a
+    # player record, a rating state, or an identity must use them too, or a
+    # snapshot taken after it could resume to a result a full replay would
+    # not give.
+
+    def _changed(self) -> None:
+        """Mark the engine as no longer exactly what a replay produced."""
+        self._resumable = False
+
+    def _put_player(self, player: Player) -> None:
+        """Store a new player record."""
+        self._changed()
+        self.players[player.id] = player
+
+    def _put_state(self, player: Player, rating_format: RatingFormat, state: RatingState) -> None:
+        """Store a player's rating state in one format."""
+        self._changed()
+        player.ratings[rating_format] = state
 
     # -- snapshots -------------------------------------------------------------
 
@@ -1503,6 +1543,7 @@ class RatingEngine:
             ],
             "processed_match_ids": sorted(self.processed_match_ids, key=str),
             "replay_info": replay_info,
+            "resumable": self._resumable,
             "self_reported_log": _log_form(self.self_reported_log),
             "snapshot_version": SNAPSHOT_VERSION,
         }
@@ -1539,6 +1580,7 @@ class RatingEngine:
         engine.replay_info = state.replay_info
         engine._ledger_digests = state.ledger_digests
         engine._ledger_player_ids = state.ledger_player_ids
+        engine._resumable = state.resumable
         return engine
 
     # -- players and identity ------------------------------------------------
@@ -1548,7 +1590,7 @@ class RatingEngine:
         if not player_id or not player_id.strip():
             raise PlayerError("player_id is required")
         if player_id not in self.players:
-            self.players[player_id] = Player(id=player_id)
+            self._put_player(Player(id=player_id))
         return self.players[player_id]
 
     def add_player(self, player: Player) -> None:
@@ -1585,7 +1627,7 @@ class RatingEngine:
         if player.id in self.players:
             raise PlayerError(f"Player already exists: {player.id}")
         _validate_seed(player, self.cfg)
-        self.players[player.id] = clone_player(player)
+        self._put_player(clone_player(player))
 
     def link_account(self, player_id: str, account_user_id: str) -> None:
         """Claim an existing external-only player profile for an OPEN account."""
@@ -1599,6 +1641,7 @@ class RatingEngine:
             for p in self.players.values()
         ):
             raise PlayerError("This account is already linked to another player profile")
+        self._changed()
         player.account_user_id = account_user_id
 
     def attach_external_id(self, player_id: str, source: str, external_player_id: str) -> None:
@@ -1612,6 +1655,7 @@ class RatingEngine:
         for other in self.players.values():
             if other.id != player_id and other.external_ids.get(source) == external_player_id:
                 raise PlayerError("This external identity is already linked to another player")
+        self._changed()
         player.external_ids[source] = external_player_id
 
     # -- seeding ---------------------------------------------------------------
@@ -1696,14 +1740,14 @@ class RatingEngine:
             initial_external_player_id=snapshot.external_player_id,
             initial_evidence_reference=snapshot.evidence_reference,
         )
-        player.ratings[rating_format] = state
+        self._put_state(player, rating_format, state)
         return state
 
     def seed_provisional_rating(self, player_id: str, rating_format: RatingFormat) -> RatingState:
         """The player's state in a format. Creates a new unplayed state if it is missing."""
         player = self.player(player_id)
         if rating_format not in player.ratings:
-            player.ratings[rating_format] = self._new_state(player_id, rating_format)
+            self._put_state(player, rating_format, self._new_state(player_id, rating_format))
         return player.ratings[rating_format]
 
     def _new_state(self, player_id: str, rating_format: RatingFormat) -> RatingState:
@@ -1861,7 +1905,7 @@ class RatingEngine:
         for player_id, state in updates.items():
             if live:
                 state.live_updates_since_replay += 1
-            self.player(player_id).ratings[rating_format] = state
+            self._put_state(self.player(player_id), rating_format, state)
 
     def _compute(
         self, match: Match, rating_format: RatingFormat, repeat_factor: float
@@ -2099,6 +2143,11 @@ def _resume_start(snapshot: Mapping[str, object], cfg: Config | None, as_of: dat
         for state in player.ratings.values()
     ):
         raise SnapshotError("Cannot resume: the snapshot has live updates since its replay")
+    if not engine._resumable:
+        raise SnapshotError(
+            "Cannot resume: the engine changed after its replay. Take the checkpoint "
+            "snapshot right after replay, before any other call on the engine"
+        )
     if as_of < checkpoint:
         raise SnapshotError(
             f"Cannot resume: as_of {as_of.isoformat()} is before the checkpoint "
@@ -2167,6 +2216,7 @@ def _replay(
             counted += 1
 
     engine.calculated_as_of = as_of
+    engine._resumable = track
     engine.replay_info = ReplayInfo(
         as_of=as_of,
         config_version=engine.cfg.version,

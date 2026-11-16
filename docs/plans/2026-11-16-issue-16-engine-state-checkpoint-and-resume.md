@@ -12,7 +12,7 @@ Domain skills: superpowers:test-driven-development: invoke (implementer). Django
 4. The schema is versioned (`snapshot_version`, 1) and carries `config_version`, `config_fingerprint`, and `calculated_as_of`. `from_snapshot` raises `SnapshotError` for another `snapshot_version`, for a fingerprint or config version that does not match the `Config` it is given, and for any missing key, unknown key, or value of the wrong type or out of range.
 5. `replay(matches, seed_players, *, cfg, as_of, from_snapshot=snapshot)` continues from a checkpoint. For any ledger and any checkpoint taken by `replay(..., as_of=C)` with `C <= as_of`, the resumed engine's snapshot equals the snapshot of a full `replay(..., as_of=as_of)`, whether the caller passes the whole ledger or only the rows after `C`. A property-style test checks this over many random synthetic ledgers and cut dates.
 6. Resume never silently differs from a full replay. It raises instead when it cannot match one:
-   - `SnapshotError` when the snapshot is not from a replay, when it has live updates since that replay, when `as_of` is before the checkpoint date, or when a ledger row dated on or before the checkpoint date is not in the checkpoint.
+   - `SnapshotError` when the snapshot is not from a replay, when it has live updates or any other change since that replay, when `as_of` is before the checkpoint date, or when a ledger row dated on or before the checkpoint date is not in the checkpoint.
    - `LedgerConflictError` when a row dated on or before the checkpoint date differs from the row the checkpoint counted under that `match_id`, or a row dated after it reuses one of those ids.
    - `PlayerError` for a seed whose player is already in the snapshot, as `add_player` does, and `SnapshotError` for a seed whose player was named in a row the checkpoint considered (every such row may have been rejected, so the player is not in the snapshot, but a full replay with the seed would count them).
 7. The snapshot schema is documented (README section, and the `to_snapshot` docstring). `SnapshotError` is exported, listed in `__all__` and the README "Public API", and has a docstring. `CHANGELOG.md` has an Added entry. The module docstring's behavior notes and production notes describe checkpoints.
@@ -54,6 +54,7 @@ self_reported_log: list sorted by (rating_format, teams) of
   {rating_format, teams: [[ids sorted], [ids sorted]] (the two teams sorted), dates: [ISO dates, in stored order]}
 ledger_digests: {match_id: digest}
 ledger_player_ids: sorted list of every player id named in a row a replay considered (cumulative across resumes)
+resumable: bool, true only while the engine is exactly what a replay produced
 ```
 
 Dicts are emitted with sorted keys so output is deterministic. After building the dict, `to_snapshot` runs the same validator `from_snapshot` uses, so it raises `SnapshotError` (naming the field) instead of returning a snapshot that cannot load (for example a non-str `initial_evidence_reference` set by hand).
@@ -77,7 +78,7 @@ Then builds `Player`/`RatingState` objects, sets `processed_match_ids`, `self_re
 
 `_replay` gains an optional starting engine. With `from_snapshot`:
 1. `engine = RatingEngine.from_snapshot(from_snapshot, cfg)`.
-2. `SnapshotError` unless `engine.calculated_as_of` is set, every `processed_match_id` is in `_ledger_digests`, and every state has `live_updates_since_replay == 0`.
+2. `SnapshotError` unless `engine.calculated_as_of` is set, every `processed_match_id` is in `_ledger_digests`, every state has `live_updates_since_replay == 0`, and the snapshot's `resumable` mark is true. Fix round 1 (T2): `RatingEngine._resumable` is set by `_replay` (replay path only) at the end and cleared by every state change outside it. The clears sit at the lowest shared mutation points: `_put_player` (used by `player()` creating a record and `add_player`), `_put_state` (used by `seed_external_rating`, `seed_provisional_rating`/`state()` creating a state, and `_commit` for a counted live `record`), and `_changed` (used by `link_account` and `attach_external_id`). A read that creates nothing leaves it set. `from_snapshot` restores it, and validation rejects a non-bool or a true mark without `calculated_as_of`.
 3. `SnapshotError` if `as_of < checkpoint`.
 4. Seeds go through `add_player` and the `as_of` date check, as in a full replay (`PlayerError` for an id already in the snapshot). Fix round 1 (T1): `SnapshotError` for a seed whose id is in the snapshot's `ledger_player_ids`, which `_replay(track=True)` fills from every considered row, counted or not.
 5. `rows = _ledger(matches)`. Pre-pass over every row before any `record`: a row dated on or before the checkpoint must have its id in `_ledger_digests` (else collect as missing) with the same digest (else collect as conflict); a row dated after the checkpoint whose id is in `_ledger_digests` is a conflict. Raise `LedgerConflictError(conflicts)` first if any, then `SnapshotError` naming the missing ids (sorted).
