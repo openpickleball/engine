@@ -35,11 +35,21 @@ Published behavior notes:
   first (by `sequence`, then `match_id`), then timed matches (by the UTC
   instant of `played_at`, then `sequence`, then `match_id`). Every row
   passed in is validated, including rows after `as_of`, so a naive
-  `played_at` raises ValueError wherever it sits. Rows that repeat a
+  `played_at` raises InvalidMatchError wherever it sits. Rows that repeat a
   `match_id` collapse to one only when every field matches in type and
   value, with `played_at` compared by its UTC instant and UTC offset; any
   other repeat raises `LedgerConflictError`, even after `as_of`. The
   result never depends on input order.
+- Errors: every error the engine raises on purpose is an `OpenEngineError`,
+  which is a `ValueError`. `ConfigError` covers Config and GameFormat
+  values, `InvalidMatchError` covers matches, teams, scores and
+  `played_at`, `InvalidSeedError` covers external and replay seeds,
+  `PlayerError` covers player identities, `EvaluationError` covers
+  evaluation, fits and win probabilities, and `LedgerConflictError` covers
+  conflicting ledger rows.
+- `record` validates every match first. A valid match whose `match_id` was
+  already processed returns a result that is not counted, with
+  `RejectionReason.DUPLICATE_MATCH_ID`, instead of raising.
 
 Production notes:
 - Persist the match ledger and player identities in a database. This module's
@@ -59,9 +69,17 @@ import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import UTC, date, datetime, timedelta
-from enum import Enum
-from typing import Any, Literal
+from enum import Enum, StrEnum
+from typing import Literal
 
+# Explicit re-exports, so `from open_engine.engine import X` passes mypy --strict.
+from ._errors import ConfigError as ConfigError
+from ._errors import EvaluationError as EvaluationError
+from ._errors import InvalidMatchError as InvalidMatchError
+from ._errors import InvalidSeedError as InvalidSeedError
+from ._errors import LedgerConflictError as LedgerConflictError
+from ._errors import OpenEngineError as OpenEngineError
+from ._errors import PlayerError as PlayerError
 from ._version import __version__
 from .winprob import calibrate_win_probability, match_win_probability
 
@@ -70,7 +88,25 @@ from .winprob import calibrate_win_probability, match_win_probability
 # ---------------------------------------------------------------------------
 
 
-class RatingFormat(str, Enum):
+class _StrEnum(StrEnum):
+    """
+    Base of the public string enums. str() and format() give the value.
+
+    StrEnum already does this. Defining the two methods here as well keeps them
+    on this one class: without them, the enum machinery copies them into every
+    subclass.
+    """
+
+    def __str__(self) -> str:
+        return str.__str__(self)
+
+    def __format__(self, format_spec: str) -> str:
+        return str.__format__(self, format_spec)
+
+
+class RatingFormat(_StrEnum):
+    """A rating pool. Each player has a separate rating in each format."""
+
     SINGLES = "singles"
     DOUBLES = "doubles"
     MIXED_DOUBLES = "mixed_doubles"
@@ -79,6 +115,7 @@ class RatingFormat(str, Enum):
 
     @property
     def team_size(self) -> int:
+        """Players per team: 1 for singles, 2 for every doubles format."""
         return 1 if self is RatingFormat.SINGLES else 2
 
     @property
@@ -93,14 +130,18 @@ class RatingFormat(str, Enum):
         return None
 
 
-class MatchType(str, Enum):
+class MatchType(_StrEnum):
+    """How a match was organized and verified. Sets its evidence weight."""
+
     TOURNAMENT = "tournament"
     LEAGUE = "league"
     REC_VERIFIED = "rec_verified"
     SELF_REPORTED = "self_reported"
 
 
-class ScoringType(str, Enum):
+class ScoringType(_StrEnum):
+    """Side-out scoring (only the serving side scores) or rally scoring."""
+
     SIDE_OUT = "side_out"
     RALLY = "rally"
 
@@ -115,31 +156,33 @@ class GameFormat:
     cap: int | None = None  # optional hard cap where win-by-1 ends the game
 
     def validate(self) -> None:
+        """Raise ConfigError when the format itself is not valid."""
         if self.points_to < 1:
-            raise ValueError("points_to must be positive")
+            raise ConfigError("points_to must be positive")
         if self.win_by < 1:
-            raise ValueError("win_by must be positive")
+            raise ConfigError("win_by must be positive")
         if self.cap is not None and self.cap <= self.points_to:
-            raise ValueError("cap must be greater than points_to")
+            raise ConfigError("cap must be greater than points_to")
 
     def validate_game(self, score_a: int, score_b: int) -> None:
+        """Raise InvalidMatchError when a game score cannot end a game in this format."""
         high, low = max(score_a, score_b), min(score_a, score_b)
         if high < self.points_to:
-            raise ValueError("A game must reach its target score")
+            raise InvalidMatchError("A game must reach its target score")
         if self.cap is not None and high > self.cap:
-            raise ValueError("Game score exceeds the cap")
+            raise InvalidMatchError("Game score exceeds the cap")
         if high == self.points_to:
             if high - low < self.win_by:
-                raise ValueError("Game was not won by the required margin")
+                raise InvalidMatchError("Game was not won by the required margin")
             return
         # Extended game (deuce): it ends the moment the margin is reached,
         # or at the cap.
         if self.cap is not None and high == self.cap:
             if not high - self.win_by <= low <= high - 1:
-                raise ValueError("Capped game score is not reachable")
+                raise InvalidMatchError("Capped game score is not reachable")
             return
         if high - low != self.win_by:
-            raise ValueError("Extended game must end at exactly the win-by margin")
+            raise InvalidMatchError("Extended game must end at exactly the win-by margin")
 
 
 ALL_GAME_FORMATS: frozenset[tuple[ScoringType, int]] = frozenset(
@@ -154,6 +197,13 @@ ALL_GAME_FORMATS: frozenset[tuple[ScoringType, int]] = frozenset(
 
 @dataclass(frozen=True)
 class Config:
+    """
+    Every rating parameter. Frozen, so a config cannot change during a replay.
+
+    The defaults are uncalibrated placeholders. fingerprint() identifies the
+    exact parameter set behind published ratings.
+    """
+
     version: str = __version__
 
     # Rating scale
@@ -255,45 +305,45 @@ class Config:
 
     def __post_init__(self) -> None:
         if not self.min_rating < self.max_rating:
-            raise ValueError("min_rating must be less than max_rating")
+            raise ConfigError("min_rating must be less than max_rating")
         if not self.min_rating <= self.default_rating <= self.max_rating:
-            raise ValueError("default_rating must be within rating bounds")
+            raise ConfigError("default_rating must be within rating bounds")
         if set(self.scale_by_scoring) != set(ScoringType):
-            raise ValueError("scale_by_scoring needs a value for every scoring type")
+            raise ConfigError("scale_by_scoring needs a value for every scoring type")
         if any(value <= 0 for value in self.scale_by_scoring.values()):
-            raise ValueError("scales must be positive")
+            raise ConfigError("scales must be positive")
         if set(self.win_calibration_by_scoring) != set(ScoringType):
-            raise ValueError("win_calibration_by_scoring needs a value for every scoring type")
+            raise ConfigError("win_calibration_by_scoring needs a value for every scoring type")
         if any(value <= 0 for value in self.win_calibration_by_scoring.values()):
-            raise ValueError("win calibration values must be positive")
+            raise ConfigError("win calibration values must be positive")
         if not 0 <= self.k_min <= self.k_max:
-            raise ValueError("K-factor bounds are invalid")
+            raise ConfigError("K-factor bounds are invalid")
         if not 0 < self.rd_min <= self.rd_max:
-            raise ValueError("RD bounds are invalid")
+            raise ConfigError("RD bounds are invalid")
         for name in ("new_player_rd", "external_seed_rd", "category_seed_rd"):
             if not self.rd_min <= getattr(self, name) <= self.rd_max:
-                raise ValueError(f"{name} must be within RD bounds")
+                raise ConfigError(f"{name} must be within RD bounds")
         if not 0.0 <= self.win_weight <= 1.0:
-            raise ValueError("win_weight must be between 0 and 1")
+            raise ConfigError("win_weight must be between 0 and 1")
         if set(self.match_weights) != set(MatchType):
-            raise ValueError("match_weights needs a value for every match type")
+            raise ConfigError("match_weights needs a value for every match type")
         for _, points in self.allowed_game_formats:
             if points not in self.game_length_weights:
-                raise ValueError(f"No game_length_weight for games to {points}")
+                raise ConfigError(f"No game_length_weight for games to {points}")
         if self.max_information_multiplier < 1.0:
-            raise ValueError("max_information_multiplier must be at least 1")
+            raise ConfigError("max_information_multiplier must be at least 1")
         if self.recency_half_life_days is not None and self.recency_half_life_days <= 0:
-            raise ValueError("recency_half_life_days must be positive or None")
+            raise ConfigError("recency_half_life_days must be positive or None")
         if self.replay_interval_days <= 0:
-            raise ValueError("replay_interval_days must be positive")
+            raise ConfigError("replay_interval_days must be positive")
         if self.diversity_window_days <= 0 or self.diversity_target <= 0:
-            raise ValueError("diversity settings must be positive")
+            raise ConfigError("diversity settings must be positive")
         if not 0.0 < self.self_reported_repeat_factor <= 1.0:
-            raise ValueError("self_reported_repeat_factor must be in (0, 1]")
+            raise ConfigError("self_reported_repeat_factor must be in (0, 1]")
         if self.self_reported_max_repeats < 1 or self.self_reported_repeat_window_days <= 0:
-            raise ValueError("self-reported repeat limits must be positive")
+            raise ConfigError("self-reported repeat limits must be positive")
         if self.import_reliability_carry_matches < 0 or self.import_reliability_max_age_days < 0:
-            raise ValueError("import reliability limits must be nonnegative")
+            raise ConfigError("import reliability limits must be nonnegative")
 
     def fingerprint(self) -> str:
         """Stable hash of every parameter, stored with each replay."""
@@ -321,6 +371,8 @@ class Config:
 
 @dataclass(frozen=True)
 class ExternalRatingSnapshot:
+    """A verified external rating captured on a date. Used only as a seed."""
+
     source: str
     rating: float
     captured_on: date
@@ -331,6 +383,8 @@ class ExternalRatingSnapshot:
 
 @dataclass
 class RatingState:
+    """One player's rating in one format, with its uncertainty and provenance."""
+
     rating: float
     rd: float
     matches_played: int = 0
@@ -359,6 +413,8 @@ class RatingState:
 
 @dataclass
 class Player:
+    """A player record: ratings by format, external identities, and account link."""
+
     id: str
     ratings: dict[RatingFormat, RatingState] = field(default_factory=dict)
 
@@ -375,6 +431,8 @@ class Player:
 
 @dataclass(frozen=True)
 class Match:
+    """One completed match: teams, game scores, date, format, and provenance."""
+
     match_id: str
     team_a: tuple[str, ...]
     team_b: tuple[str, ...]
@@ -398,36 +456,41 @@ class Match:
     confirmed_by: frozenset[str] = frozenset()
 
     def validate(self) -> None:
-        if not self.match_id.strip():
-            raise ValueError("match_id is required for duplicate protection")
+        """Raise InvalidMatchError (or ConfigError for its game format) when not valid."""
+        if not _is_id(self.match_id):
+            raise InvalidMatchError("match_id is required for duplicate protection")
         expected_size = self.rating_format.team_size
         if len(self.team_a) != expected_size or len(self.team_b) != expected_size:
-            raise ValueError(
+            raise InvalidMatchError(
                 f"{self.rating_format.value} requires {expected_size} player(s) per team"
             )
         all_ids = self.team_a + self.team_b
+        if not all(_is_id(pid) for pid in all_ids):
+            raise InvalidMatchError("Player ids must be non-empty strings")
         if len(set(all_ids)) != len(all_ids):
-            raise ValueError("A player cannot appear more than once in a match")
+            raise InvalidMatchError("A player cannot appear more than once in a match")
         if not set(self.confirmed_by) <= set(all_ids):
-            raise ValueError("confirmed_by may only contain match participants")
+            raise InvalidMatchError("confirmed_by may only contain match participants")
         if self.played_at is not None:
             _utc_instant(self.played_at)
         if self.played_at is not None and self.played_at.date() != self.played_on:
-            raise ValueError("played_at must fall on played_on")
+            raise InvalidMatchError("played_at must fall on played_on")
         if self.sequence < 0:
-            raise ValueError("sequence must be nonnegative")
+            raise InvalidMatchError("sequence must be nonnegative")
         if not self.games:
-            raise ValueError("At least one game score is required")
+            raise InvalidMatchError("At least one game score is required")
+        if not all(isinstance(game, (tuple, list)) and len(game) == 2 for game in self.games):
+            raise InvalidMatchError("Each game must be a pair of scores")
         if self.best_of < 1 or self.best_of % 2 == 0:
-            raise ValueError("best_of must be a positive odd number")
+            raise InvalidMatchError("best_of must be a positive odd number")
         if len(self.games) > self.best_of:
-            raise ValueError("Games played cannot exceed best_of")
+            raise InvalidMatchError("Games played cannot exceed best_of")
         self.game_format.validate()
         for score_a, score_b in self.games:
             if not isinstance(score_a, int) or not isinstance(score_b, int):
-                raise ValueError("Game scores must be integers")
+                raise InvalidMatchError("Game scores must be integers")
             if score_a < 0 or score_b < 0 or score_a == score_b:
-                raise ValueError("Game scores must be nonnegative and cannot be tied")
+                raise InvalidMatchError("Game scores must be nonnegative and cannot be tied")
             self.game_format.validate_game(score_a, score_b)
         wins_needed = self.best_of // 2 + 1
         running_a = running_b = 0
@@ -438,31 +501,28 @@ class Match:
                 running_b += 1
             if running_a >= wins_needed or running_b >= wins_needed:
                 if index != len(self.games) - 1:
-                    raise ValueError("No games may be recorded after the match is decided")
+                    raise InvalidMatchError("No games may be recorded after the match is decided")
                 break
         if running_a < wins_needed and running_b < wins_needed:
-            raise ValueError("Match score does not contain a completed winner")
+            raise InvalidMatchError("Match score does not contain a completed winner")
+
+
+def _is_id(value: object) -> bool:
+    """True for a str with at least one non-whitespace character."""
+    return isinstance(value, str) and bool(value.strip())
 
 
 _UTC_MIN = datetime.min.replace(tzinfo=UTC)
 
 
 def _utc_instant(played_at: datetime) -> datetime:
-    """The UTC instant of an aware played_at; ValueError when there is none."""
+    """The UTC instant of an aware played_at; InvalidMatchError when there is none."""
     if played_at.tzinfo is None or played_at.utcoffset() is None:
-        raise ValueError("played_at must be timezone-aware")
+        raise InvalidMatchError("played_at must be timezone-aware")
     try:
         return played_at.astimezone(UTC)
     except OverflowError:
-        raise ValueError("played_at is outside the range that UTC can represent") from None
-
-
-class LedgerConflictError(ValueError):
-    """Two or more ledger rows share a match_id but differ."""
-
-    def __init__(self, match_ids: Iterable[str]) -> None:
-        self.match_ids: tuple[str, ...] = tuple(sorted(set(match_ids)))
-        super().__init__("Conflicting ledger rows for match_id: " + ", ".join(self.match_ids))
+        raise InvalidMatchError("played_at is outside the range that UTC can represent") from None
 
 
 def ledger_order(match: Match) -> tuple[date, int, datetime, int, str]:
@@ -472,7 +532,7 @@ def ledger_order(match: Match) -> tuple[date, int, datetime, int, str]:
     Matches sort by played_on. Within one day, untimed matches come first,
     by sequence then match_id. Timed matches follow, by the UTC instant of
     played_at, then sequence, then match_id. played_at must be
-    timezone-aware; a naive value raises ValueError.
+    timezone-aware; a naive value raises InvalidMatchError.
     """
     if match.played_at is None:
         return (match.played_on, 0, _UTC_MIN, match.sequence, match.match_id)
@@ -537,11 +597,31 @@ def _strict(value: object) -> object:
     return (type(value), value)
 
 
+class RejectionReason(_StrEnum):
+    """Why record() did not count a match."""
+
+    DUPLICATE_MATCH_ID = "duplicate_match_id"
+    GAME_FORMAT_NOT_ACCEPTED = "game_format_not_accepted"
+    SELF_REPORTED_UNCONFIRMED = "self_reported_unconfirmed"
+    SELF_REPORTED_REPEAT_LIMIT = "self_reported_repeat_limit"
+    BEFORE_IMPORTED_BASELINE = "before_imported_baseline"
+    SINGLES_RATING_GAP = "singles_rating_gap"
+    DOUBLES_PARTNER_GAP = "doubles_partner_gap"
+
+
 @dataclass
 class MatchResult:
+    """
+    What record() did with one match in one rating format.
+
+    reason is None when the match counted. deltas, frozen, and clamped list
+    the rating changes and the two documented zero-sum exceptions. parent
+    holds the overall doubles update for a category match.
+    """
+
     counted: bool
-    reason: str = ""
-    rating_format: str = ""
+    rating_format: RatingFormat
+    reason: RejectionReason | None = None  # None when the match counted
     expected_a: float = 0.0
     actual_a: float = 0.0
     surprise: float = 0.0
@@ -552,8 +632,45 @@ class MatchResult:
     parent: MatchResult | None = None  # overall doubles update for categories
 
 
+class ReliabilityBasis(_StrEnum):
+    """Where a displayed reliability comes from."""
+
+    OPEN = "open"
+    IMPORTED = "imported"
+
+
+@dataclass(frozen=True)
+class PlayerSummary:
+    """
+    A player's published rating in one format, with reliability and provenance.
+
+    reliability is the displayed value: imported reliability while it is
+    carried (reliability_basis is IMPORTED), otherwise open_reliability.
+    """
+
+    player_id: str
+    rating_format: RatingFormat
+    rating: float  # rounded to 3 places
+    reliability: float  # displayed reliability, 0-100
+    reliability_basis: ReliabilityBasis
+    open_reliability: float  # OPEN-earned reliability, 0-100
+    rd: float  # inflated to the reference date, rounded to 4 places
+    matches_played: int
+    last_played: date | None
+    initial_rating: float
+    initial_source: str
+    initial_source_reliability: float | None
+    initial_source_date: date | None
+    calculated_as_of: date | None  # date of the last replay, None when never replayed
+    live_updates_since_recalculation: int
+    config_version: str
+    account_linked: bool
+
+
 @dataclass(frozen=True)
 class ReplayInfo:
+    """Provenance of one replay: as_of date, config version and fingerprint, counts."""
+
     as_of: date
     config_version: str
     config_fingerprint: str
@@ -605,7 +722,7 @@ def _actual_point_share(match: Match, cfg: Config) -> tuple[float, bool]:
     points_b = sum(b for _, b in match.games)
     total = points_a + points_b
     if total <= 0:
-        raise ValueError("Match must contain at least one point")
+        raise InvalidMatchError("Match must contain at least one point")
     games_a = sum(a > b for a, b in match.games)
     games_b = len(match.games) - games_a
     a_won = games_a > games_b
@@ -671,6 +788,12 @@ def _matchup_key(match: Match) -> MatchupKey:
 
 
 class RatingEngine:
+    """
+    Holds players and processed matches, and records matches one at a time.
+
+    Ratings recorded live are provisional. Use replay() for authoritative ratings.
+    """
+
     def __init__(self, cfg: Config | None = None):
         self.cfg = cfg or Config()
         self.players: dict[str, Player] = {}
@@ -682,41 +805,44 @@ class RatingEngine:
     # -- players and identity ------------------------------------------------
 
     def player(self, player_id: str) -> Player:
+        """The player record for player_id, created empty if it does not exist."""
         if not player_id or not player_id.strip():
-            raise ValueError("player_id is required")
+            raise PlayerError("player_id is required")
         if player_id not in self.players:
             self.players[player_id] = Player(id=player_id)
         return self.players[player_id]
 
     def add_player(self, player: Player) -> None:
+        """Add a copy of a player record. Raises PlayerError if the id exists."""
         if player.id in self.players:
-            raise ValueError(f"Player already exists: {player.id}")
+            raise PlayerError(f"Player already exists: {player.id}")
         self.players[player.id] = clone_player(player)
 
     def link_account(self, player_id: str, account_user_id: str) -> None:
         """Claim an existing external-only player profile for an OPEN account."""
         if not account_user_id:
-            raise ValueError("account_user_id is required")
+            raise PlayerError("account_user_id is required")
         player = self.player(player_id)
         if player.account_user_id not in (None, account_user_id):
-            raise ValueError("Player profile is already linked to another account")
+            raise PlayerError("Player profile is already linked to another account")
         if any(
             p.account_user_id == account_user_id and p.id != player_id
             for p in self.players.values()
         ):
-            raise ValueError("This account is already linked to another player profile")
+            raise PlayerError("This account is already linked to another player profile")
         player.account_user_id = account_user_id
 
     def attach_external_id(self, player_id: str, source: str, external_player_id: str) -> None:
+        """Link an external identity to a player. Each identity links to one player."""
         if not source or not external_player_id:
-            raise ValueError("source and external_player_id are required")
+            raise PlayerError("source and external_player_id are required")
         player = self.player(player_id)
         existing = player.external_ids.get(source)
         if existing not in (None, external_player_id):
-            raise ValueError("A different external identity is already linked")
+            raise PlayerError("A different external identity is already linked")
         for other in self.players.values():
             if other.id != player_id and other.external_ids.get(source) == external_player_id:
-                raise ValueError("This external identity is already linked to another player")
+                raise PlayerError("This external identity is already linked to another player")
         player.external_ids[source] = external_player_id
 
     # -- seeding ---------------------------------------------------------------
@@ -735,22 +861,26 @@ class RatingEngine:
 
         The external rating is an initial condition, not a live dependency.
         Once OPEN matches exist, external refreshes cannot overwrite the rating.
+
+        Raises InvalidSeedError when the snapshot or the existing rating does
+        not allow the seed, and PlayerError when player_id is blank or the
+        snapshot's external identity cannot be linked (see attach_external_id).
         """
         cfg = self.cfg
         if not cfg.min_rating <= snapshot.rating <= cfg.max_rating:
-            raise ValueError("External rating is outside the configured scale")
+            raise InvalidSeedError("External rating is outside the configured scale")
         if snapshot.reliability is not None and not 0 <= snapshot.reliability <= 100:
-            raise ValueError("External reliability must be between 0 and 100")
+            raise InvalidSeedError("External reliability must be between 0 and 100")
 
         player = self.player(player_id)
         existing = player.ratings.get(rating_format)
         if existing is not None:
             if existing.matches_played > 0:
-                raise ValueError(
+                raise InvalidSeedError(
                     "Cannot replace an OPEN rating after OPEN matches have been processed"
                 )
             if not replace_unplayed_seed:
-                raise ValueError(
+                raise InvalidSeedError(
                     "A rating already exists; explicitly allow replacing an unplayed seed"
                 )
 
@@ -764,7 +894,7 @@ class RatingEngine:
             rd = cfg.external_seed_rd
 
         if not cfg.rd_min <= rd <= cfg.rd_max:
-            raise ValueError("Seed RD is outside configured bounds")
+            raise InvalidSeedError("Seed RD is outside configured bounds")
 
         if snapshot.external_player_id:
             self.attach_external_id(player_id, snapshot.source, snapshot.external_player_id)
@@ -784,6 +914,7 @@ class RatingEngine:
         return state
 
     def seed_provisional_rating(self, player_id: str, rating_format: RatingFormat) -> RatingState:
+        """The player's state in a format. Creates a new unplayed state if it is missing."""
         player = self.player(player_id)
         if rating_format not in player.ratings:
             player.ratings[rating_format] = self._new_state(player_id, rating_format)
@@ -825,17 +956,19 @@ class RatingEngine:
         return self._new_state(player_id, rating_format)
 
     def state(self, player_id: str, rating_format: RatingFormat) -> RatingState:
+        """The player's current state in a format. Same as seed_provisional_rating."""
         return self.seed_provisional_rating(player_id, rating_format)
 
     # -- prediction ------------------------------------------------------------
 
-    def predict(
+    def predict_point_share(
         self,
         team_a: Sequence[str],
         team_b: Sequence[str],
         rating_format: RatingFormat,
         scoring: ScoringType = ScoringType.SIDE_OUT,
     ) -> float:
+        """Expected share of points won by team A, from current team-average ratings."""
         self._validate_teams(team_a, team_b, rating_format)
         ratings_a = [self._peek_state(pid, rating_format).rating for pid in team_a]
         ratings_b = [self._peek_state(pid, rating_format).rating for pid in team_b]
@@ -845,7 +978,7 @@ class RatingEngine:
             self.cfg.scale_by_scoring[scoring],
         )
 
-    def win_probability(
+    def predict_win_probability(
         self,
         team_a: Sequence[str],
         team_b: Sequence[str],
@@ -854,7 +987,7 @@ class RatingEngine:
         best_of: int = 1,
     ) -> float:
         """Calibrated probability that team A wins the match."""
-        share = self.predict(team_a, team_b, rating_format, game_format.scoring)
+        share = self.predict_point_share(team_a, team_b, rating_format, game_format.scoring)
         raw = match_win_probability(share, game_format, best_of)
         return calibrate_win_probability(
             raw, self.cfg.win_calibration_by_scoring[game_format.scoring]
@@ -865,10 +998,12 @@ class RatingEngine:
     ) -> None:
         size = rating_format.team_size
         if len(team_a) != size or len(team_b) != size:
-            raise ValueError(f"{rating_format.value} requires {size} player(s) per team")
+            raise InvalidMatchError(f"{rating_format.value} requires {size} player(s) per team")
         ids = list(team_a) + list(team_b)
+        if not all(_is_id(pid) for pid in ids):
+            raise InvalidMatchError("Player ids must be non-empty strings")
         if len(set(ids)) != len(ids):
-            raise ValueError("A player cannot appear more than once in a match")
+            raise InvalidMatchError("A player cannot appear more than once in a match")
 
     # -- recording -------------------------------------------------------------
 
@@ -882,17 +1017,17 @@ class RatingEngine:
         """
         match.validate()
         if match.match_id in self.processed_match_ids:
-            return MatchResult(False, "duplicate match_id")
+            return MatchResult(False, match.rating_format, RejectionReason.DUPLICATE_MATCH_ID)
 
         cfg = self.cfg
         format_key = (match.game_format.scoring, match.game_format.points_to)
         if format_key not in cfg.allowed_game_formats:
-            return MatchResult(False, "game format is not accepted for rating")
+            return MatchResult(False, match.rating_format, RejectionReason.GAME_FORMAT_NOT_ACCEPTED)
 
         live = as_of is None
         as_of = as_of or match.played_on
         if as_of < match.played_on:
-            raise ValueError("as_of cannot be earlier than the match date")
+            raise InvalidMatchError("as_of cannot be earlier than the match date")
 
         repeat_factor = 1.0
         matchup = None
@@ -901,7 +1036,7 @@ class RatingEngine:
                 confirmed = set(match.confirmed_by)
                 if not (confirmed & set(match.team_a) and confirmed & set(match.team_b)):
                     return MatchResult(
-                        False, "self-reported match needs confirmation from both teams"
+                        False, match.rating_format, RejectionReason.SELF_REPORTED_UNCONFIRMED
                     )
             matchup = _matchup_key(match)
             cutoff = match.played_on - timedelta(days=cfg.self_reported_repeat_window_days)
@@ -909,7 +1044,9 @@ class RatingEngine:
                 1 for d in self.self_reported_log.get(matchup, []) if cutoff <= d <= match.played_on
             )
             if prior >= cfg.self_reported_max_repeats:
-                return MatchResult(False, "self-reported matchup repeat limit reached")
+                return MatchResult(
+                    False, match.rating_format, RejectionReason.SELF_REPORTED_REPEAT_LIMIT
+                )
             repeat_factor = cfg.self_reported_repeat_factor**prior
 
         primary, primary_updates = self._compute(match, match.rating_format, as_of, repeat_factor)
@@ -958,11 +1095,7 @@ class RatingEngine:
             and match.played_on <= baseline_date
         }
         if len(frozen) == len(ids):
-            return MatchResult(
-                False,
-                "match is on or before every participant's imported baseline",
-                rating_format=rating_format.value,
-            ), None
+            return MatchResult(False, rating_format, RejectionReason.BEFORE_IMPORTED_BASELINE), None
 
         states_a = [work[pid] for pid in match.team_a]
         states_b = [work[pid] for pid in match.team_b]
@@ -974,18 +1107,12 @@ class RatingEngine:
             and cfg.max_singles_rating_gap is not None
             and abs(rating_a - rating_b) > cfg.max_singles_rating_gap
         ):
-            return MatchResult(
-                False,
-                "singles rating gap exceeds configured limit",
-                rating_format=rating_format.value,
-            ), None
+            return MatchResult(False, rating_format, RejectionReason.SINGLES_RATING_GAP), None
         if cfg.max_doubles_partner_gap is not None and rating_format.team_size == 2:
             for team_states in (states_a, states_b):
                 if abs(team_states[0].rating - team_states[1].rating) > cfg.max_doubles_partner_gap:
                     return MatchResult(
-                        False,
-                        "doubles partner rating gap exceeds configured limit",
-                        rating_format=rating_format.value,
+                        False, rating_format, RejectionReason.DOUBLES_PARTNER_GAP
                     ), None
 
         for pid in ids:
@@ -1050,7 +1177,7 @@ class RatingEngine:
 
         result = MatchResult(
             counted=True,
-            rating_format=rating_format.value,
+            rating_format=rating_format,
             expected_a=round(expected, 5),
             actual_a=round(actual, 5),
             surprise=round(surprise, 5),
@@ -1065,7 +1192,13 @@ class RatingEngine:
 
     def player_summary(
         self, player_id: str, rating_format: RatingFormat, as_of: date | None = None
-    ) -> dict[str, Any]:
+    ) -> PlayerSummary:
+        """
+        The player's rating, reliability, and provenance in one format.
+
+        as_of sets the date that inactivity and reliability are measured at.
+        It defaults to the date of the player's last RD update, or today.
+        """
         cfg = self.cfg
         player = self.player(player_id)
         state = self.state(player_id, rating_format)
@@ -1074,7 +1207,7 @@ class RatingEngine:
 
         # Imported reliability is shown, labeled, only while it is fresh,
         # higher than what OPEN has earned, and within the carry match limit.
-        displayed, basis = earned, "open"
+        displayed, basis = earned, ReliabilityBasis.OPEN
         seed_reliability = state.initial_source_reliability
         if (
             seed_reliability is not None
@@ -1083,31 +1216,27 @@ class RatingEngine:
             and (reference - state.initial_source_date).days <= cfg.import_reliability_max_age_days
             and seed_reliability > earned
         ):
-            displayed, basis = round(seed_reliability, 1), "imported"
+            displayed, basis = round(float(seed_reliability), 1), ReliabilityBasis.IMPORTED
 
-        return {
-            "player_id": player.id,
-            "rating_format": rating_format.value,
-            "rating": round(state.rating, 3),
-            "reliability": displayed,
-            "reliability_basis": basis,
-            "open_reliability": earned,
-            "rd": round(inflated_rd(state, reference, cfg), 4),
-            "matches_played": state.matches_played,
-            "last_played": state.last_played.isoformat() if state.last_played else None,
-            "initial_rating": state.initial_rating,
-            "initial_source": state.initial_source,
-            "initial_source_date": (
-                state.initial_source_date.isoformat() if state.initial_source_date else None
-            ),
-            "initial_source_reliability": state.initial_source_reliability,
-            "calculated_as_of": (
-                self.calculated_as_of.isoformat() if self.calculated_as_of else None
-            ),
-            "live_updates_since_recalculation": state.live_updates_since_replay,
-            "config_version": cfg.version,
-            "account_linked": player.account_user_id is not None,
-        }
+        return PlayerSummary(
+            player_id=player.id,
+            rating_format=rating_format,
+            rating=round(state.rating, 3),
+            reliability=displayed,
+            reliability_basis=basis,
+            open_reliability=earned,
+            rd=round(inflated_rd(state, reference, cfg), 4),
+            matches_played=state.matches_played,
+            last_played=state.last_played,
+            initial_rating=state.initial_rating,
+            initial_source=state.initial_source,
+            initial_source_reliability=state.initial_source_reliability,
+            initial_source_date=state.initial_source_date,
+            calculated_as_of=self.calculated_as_of,
+            live_updates_since_recalculation=state.live_updates_since_replay,
+            config_version=cfg.version,
+            account_linked=player.account_user_id is not None,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1132,11 +1261,14 @@ def replay(
     value, are counted once; any other repeat raises LedgerConflictError, even when it
     falls after as_of. Seeds must be
     unplayed: imported or provisional states only.
+
+    Raises InvalidSeedError for a seed that already has OPEN matches, and
+    PlayerError when two seeds share a player id.
     """
     engine = RatingEngine(cfg)
     for player in seed_players:
         if any(state.matches_played for state in player.ratings.values()):
-            raise ValueError(f"Seed for {player.id} already contains OPEN matches")
+            raise InvalidSeedError(f"Seed for {player.id} already contains OPEN matches")
         engine.add_player(player)
 
     considered = counted = 0
@@ -1165,6 +1297,8 @@ def replay(
 
 @dataclass(frozen=True)
 class EvaluationReport:
+    """Point-share error and calibration bins for a set of prequential predictions."""
+
     scoring: str | None
     scale: float | None
     matches_scored: int
@@ -1177,6 +1311,8 @@ class EvaluationReport:
 
 @dataclass(frozen=True)
 class PrequentialPrediction:
+    """One match predicted from ratings that had not yet seen it."""
+
     match_id: str
     played_on: date
     players: tuple[str, ...]
@@ -1203,7 +1339,7 @@ def _is_established(engine: RatingEngine, match: Match, burn_in_matches: int) ->
 def _predict_match(engine: RatingEngine, match: Match) -> PrequentialPrediction:
     cfg = engine.cfg
     scoring = match.game_format.scoring
-    expected = engine.predict(match.team_a, match.team_b, match.rating_format, scoring)
+    expected = engine.predict_point_share(match.team_a, match.team_b, match.rating_format, scoring)
     if match.game_format.win_by in (1, 2):
         raw = match_win_probability(expected, match.game_format, match.best_of)
         calibrated = calibrate_win_probability(raw, cfg.win_calibration_by_scoring[scoring])
@@ -1251,7 +1387,7 @@ def prequential_predictions(
     that window are then predicted and recorded live in ledger order.
     """
     if mode not in ("live", "scheduled"):
-        raise ValueError(f"mode must be 'live' or 'scheduled', not {mode!r}")
+        raise EvaluationError(f"mode must be 'live' or 'scheduled', not {mode!r}")
     cfg = cfg or Config()
     ordered = _ledger(matches)
     seeds = list(seed_players)
@@ -1352,7 +1488,7 @@ def _report_from_predictions(
     """The rounded report plus the unrounded mean squared error."""
     pairs = _scored_pairs(predictions, cfg)
     if not pairs:
-        raise ValueError("No established matches to evaluate")
+        raise EvaluationError("No established matches to evaluate")
     errors = [actual - expected for expected, actual in pairs]
     bins: list[tuple[float, float, float, int]] = []
     for index in range(10):
@@ -1384,6 +1520,12 @@ def _report_from_predictions(
 
 @dataclass(frozen=True)
 class ScaleFit:
+    """
+    Result of fit_scale for one scoring type.
+
+    A fit with at_bound set, or with a flat profile, is not identified.
+    """
+
     scoring: str
     scale: float
     default_scale: float
@@ -1471,6 +1613,12 @@ def fit_scale(
 
 @dataclass(frozen=True)
 class WinCalibrationFit:
+    """
+    Result of fit_win_calibration for one scoring type.
+
+    A fit with at_bound set is not identified.
+    """
+
     scoring: str
     a: float  # exponent on the logit of the raw win probability, rounded to 3 places
     brier: float  # at the fitted a
@@ -1499,7 +1647,7 @@ def fit_win_calibration(
     Uses the raw win probabilities computed with cfg's scale, so fit the scale
     first. Predictions without a modeled win probability (win_by not 1 or 2)
     are skipped. Same search as fit_scale: coarse grid, then golden section.
-    Raises ValueError when no prediction remains.
+    Raises EvaluationError when no prediction remains.
     """
     predictions = prequential_predictions(
         matches,
@@ -1517,7 +1665,7 @@ def fit_win_calibration(
         if not math.isnan(p.win_probability_raw)
     ]
     if not data:
-        raise ValueError("no predictions with a modeled win probability to fit")
+        raise EvaluationError("no predictions with a modeled win probability to fit")
     cache: dict[float, float] = {}
 
     def brier(a: float) -> float:

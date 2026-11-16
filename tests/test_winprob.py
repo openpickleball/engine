@@ -94,11 +94,11 @@ def test_engine_win_probability_uses_calibration() -> None:
 
     plain = build(1.0)
     expected = match_win_probability(
-        plain.predict(["a1", "a2"], ["b1", "b2"], fmt_rating, fmt.scoring), fmt, 1
+        plain.predict_point_share(["a1", "a2"], ["b1", "b2"], fmt_rating, fmt.scoring), fmt, 1
     )
-    got = plain.win_probability(["a1", "a2"], ["b1", "b2"], fmt_rating, fmt)
+    got = plain.predict_win_probability(["a1", "a2"], ["b1", "b2"], fmt_rating, fmt)
     assert got == pytest.approx(expected)
-    shrunk = build(0.5).win_probability(["a1", "a2"], ["b1", "b2"], fmt_rating, fmt)
+    shrunk = build(0.5).predict_win_probability(["a1", "a2"], ["b1", "b2"], fmt_rating, fmt)
     assert 0.5 < shrunk < got
 
 

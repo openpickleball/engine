@@ -61,13 +61,21 @@ def main() -> None:
     )
 
     result = engine.record(match)
-    print("Match result:", result)
+    print("Match counted:", result.counted, "| format:", result.rating_format.value)
+    print("Rating changes:", result.deltas)
     for player_id in ("player_a", "player_b", "player_c", "player_d"):
-        print(engine.player_summary(player_id, RatingFormat.DOUBLES))
+        summary = engine.player_summary(player_id, RatingFormat.DOUBLES)
+        print(
+            f"{summary.player_id}: rating {summary.rating},"
+            f" reliability {summary.reliability} ({summary.reliability_basis.value}),"
+            f" OPEN reliability {summary.open_reliability},"
+            f" matches {summary.matches_played}, last played {summary.last_played},"
+            f" seeded from {summary.initial_source}"
+        )
     print(
         "Team A win probability (before calibration data):",
         round(
-            engine.win_probability(
+            engine.predict_win_probability(
                 match.team_a, match.team_b, match.rating_format, match.game_format, match.best_of
             ),
             3,

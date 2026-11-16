@@ -71,10 +71,6 @@ src = ["src", "tests", "examples"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
-# UP042 would turn the `str, Enum` enums into StrEnum. That changes str() and
-# format() of members, and so any printed or stringified output. Keep `str, Enum`;
-# switching is a separate decision with its own changelog entry.
-ignore = ["UP042"]
 
 [tool.ruff.format]
 quote-style = "double"
