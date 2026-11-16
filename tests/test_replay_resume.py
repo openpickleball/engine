@@ -164,9 +164,11 @@ def test_resume_equals_full_replay(seed: int) -> None:
 
     whole = replay(ledger, as_of=as_of, from_snapshot=snapshot)
     rest = replay([m for m in ledger if m.played_on > cut], as_of=as_of, from_snapshot=snapshot)
+    checked = replay(ledger, as_of=as_of, from_snapshot=snapshot, whole_ledger=True)
 
     assert _text(whole) == _text(full)
     assert _text(rest) == _text(full)
+    assert _text(checked) == _text(full)
 
 
 def test_the_property_ledgers_exercise_what_they_should() -> None:
