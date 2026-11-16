@@ -112,6 +112,7 @@ from ._errors import InvalidSeedError as InvalidSeedError
 from ._errors import LedgerConflictError as LedgerConflictError
 from ._errors import OpenEngineError as OpenEngineError
 from ._errors import PlayerError as PlayerError
+from ._errors import SnapshotError as SnapshotError
 from ._version import __version__
 from .winprob import calibrate_win_probability, match_win_probability
 
@@ -623,6 +624,62 @@ def _strict(value: object) -> object:
     return (type(value), value)
 
 
+def _match_digest(match: Match) -> str:
+    """
+    SHA-256 hex digest of a validated row, equal only for interchangeable rows.
+
+    It mirrors _canonical in JSON form: every field but played_at, tagged
+    with its exact type, and played_at as its UTC instant and UTC offset.
+    A checkpoint stores it for each row it considered, so resume can tell
+    whether a row it is given is the row the checkpoint saw.
+    """
+    others = [
+        [f.name, _json_form(getattr(match, f.name))] for f in fields(match) if f.name != "played_at"
+    ]
+    timing: list[object] | None = None
+    if match.played_at is not None:
+        instant = _utc_instant(match.played_at)
+        offset = match.played_at.utcoffset()
+        timing = [instant.isoformat(), None if offset is None else offset.total_seconds()]
+    return hashlib.sha256(_json_text([others, timing]).encode()).hexdigest()
+
+
+def _json_text(form: object) -> str:
+    """Compact JSON text with sorted keys, for hashing and for sorting forms."""
+    return json.dumps(form, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _json_form(value: object) -> object:
+    """
+    value as JSON data tagged with its exact type, recursing like _strict.
+
+    Ints are written in hex, which has no digit limit. A float is written as
+    a number with negative zero folded into zero (as == does), or as its
+    repr when it is not finite. A frozenset's members are sorted by their
+    JSON text, so the form never depends on set order.
+    """
+    tag = f"{type(value).__module__}.{type(value).__qualname__}"
+    if is_dataclass(value) and not isinstance(value, type):
+        return [tag, [[f.name, _json_form(getattr(value, f.name))] for f in fields(value)]]
+    if isinstance(value, (tuple, list)):
+        return [tag, [_json_form(item) for item in value]]
+    if isinstance(value, frozenset):
+        return [tag, sorted((_json_form(item) for item in value), key=_json_text)]
+    if isinstance(value, Enum):
+        return [tag, _json_form(value.value)]
+    if isinstance(value, date):
+        return [tag, value.isoformat()]
+    if isinstance(value, bool) or value is None:
+        return [tag, value]
+    if isinstance(value, int):
+        return [tag, hex(value)]
+    if isinstance(value, float):
+        return [tag, value + 0.0 if math.isfinite(value) else repr(value)]
+    if isinstance(value, str):
+        return [tag, str(value)]
+    return [tag, repr(value)]
+
+
 class RejectionReason(_StrEnum):
     """Why record() did not count a match."""
 
@@ -932,6 +989,405 @@ def _validate_seed(player: Player, cfg: Config) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Snapshots
+# ---------------------------------------------------------------------------
+
+SNAPSHOT_VERSION = 1
+
+_TOP_KEYS = frozenset(
+    {
+        "snapshot_version",
+        "engine_version",
+        "config_version",
+        "config_fingerprint",
+        "calculated_as_of",
+        "replay_info",
+        "players",
+        "processed_match_ids",
+        "self_reported_log",
+        "ledger_digests",
+    }
+)
+_REPLAY_INFO_KEYS = frozenset(
+    {"as_of", "config_version", "config_fingerprint", "matches_considered", "matches_counted"}
+)
+_PLAYER_KEYS = frozenset({"id", "account_user_id", "external_ids", "ratings"})
+_STATE_KEYS = frozenset(
+    {
+        "rating",
+        "rd",
+        "matches_played",
+        "last_played",
+        "rd_as_of",
+        "initial_rating",
+        "initial_source",
+        "initial_source_date",
+        "initial_source_reliability",
+        "initial_external_player_id",
+        "initial_evidence_reference",
+        "live_updates_since_replay",
+        "partners",
+        "opponents",
+    }
+)
+_LOG_KEYS = frozenset({"rating_format", "teams", "dates"})
+_HEX = frozenset("0123456789abcdef")
+
+
+@dataclass
+class _Snapshot:
+    """Engine state read from a validated snapshot."""
+
+    players: dict[str, Player]
+    processed_match_ids: set[str]
+    self_reported_log: dict[MatchupKey, list[date]]
+    calculated_as_of: date | None
+    replay_info: ReplayInfo | None
+    ledger_digests: dict[str, str]
+
+
+def _iso(value: object) -> object:
+    """A plain date as ISO text. Anything else is left for the validator to reject."""
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
+def _sorted_dict(items: Iterable[tuple[object, object]]) -> dict[object, object]:
+    """A dict with keys inserted in sorted order (by their text), so output is stable."""
+    return dict(sorted(items, key=lambda item: str(item[0])))
+
+
+def _date_map_form(value: object) -> object:
+    if not isinstance(value, dict):
+        return value
+    return _sorted_dict((key, _iso(on)) for key, on in value.items())
+
+
+def _state_form(state: RatingState) -> dict[object, object]:
+    items: list[tuple[object, object]] = [
+        (name, getattr(state, name)) for name in sorted(_STATE_KEYS)
+    ]
+    return _sorted_dict(
+        (name, _date_map_form(value) if name in ("partners", "opponents") else _iso(value))
+        for name, value in items
+    )
+
+
+def _player_form(player: Player) -> dict[object, object]:
+    ratings: object = player.ratings
+    if isinstance(ratings, dict):
+        ratings = _sorted_dict(
+            (fmt.value if isinstance(fmt, RatingFormat) else fmt, _state_form(state))
+            for fmt, state in ratings.items()
+        )
+    external_ids: object = player.external_ids
+    if isinstance(external_ids, dict):
+        external_ids = _sorted_dict(external_ids.items())
+    return _sorted_dict(
+        [
+            ("account_user_id", player.account_user_id),
+            ("external_ids", external_ids),
+            ("id", player.id),
+            ("ratings", ratings),
+        ]
+    )
+
+
+def _log_form(log: dict[MatchupKey, list[date]]) -> list[dict[object, object]]:
+    rows: list[tuple[str, list[list[str]], list[object]]] = []
+    for (fmt, teams), dates in log.items():
+        rows.append(
+            (
+                str(fmt),
+                sorted(sorted(team) for team in teams),
+                [_iso(on) for on in dates],
+            )
+        )
+    rows.sort(key=lambda row: (row[0], row[1]))
+    return [
+        _sorted_dict([("dates", dates), ("rating_format", fmt), ("teams", teams)])
+        for fmt, teams, dates in rows
+    ]
+
+
+def _snap_object(value: object, path: str, keys: frozenset[str]) -> Mapping[object, object]:
+    """value as a mapping with exactly keys; SnapshotError otherwise."""
+    if not isinstance(value, Mapping):
+        raise SnapshotError(f"{path} must be an object")
+    missing = sorted(keys - set(value))
+    if missing:
+        raise SnapshotError(f"{path}: missing key {missing[0]!r}")
+    unknown = sorted(repr(key) for key in value if key not in keys)
+    if unknown:
+        raise SnapshotError(f"{path}: unknown key {unknown[0]}")
+    return value
+
+
+def _snap_list(value: object, path: str) -> Sequence[object]:
+    if not isinstance(value, (list, tuple)):
+        raise SnapshotError(f"{path} must be a list")
+    return value
+
+
+def _snap_str(value: object, path: str) -> str:
+    if not isinstance(value, str):
+        raise SnapshotError(f"{path} must be a str")
+    return value
+
+
+def _snap_opt_str(value: object, path: str) -> str | None:
+    if value is not None and not isinstance(value, str):
+        raise SnapshotError(f"{path} must be a str or null")
+    return value
+
+
+def _snap_id(value: object, path: str) -> str:
+    if not isinstance(value, str) or not _is_id(value):
+        raise SnapshotError(f"{path} must be a non-blank str")
+    return value
+
+
+def _snap_date(value: object, path: str) -> date:
+    """A date written as exact YYYY-MM-DD text."""
+    message = f"{path} must be a date in YYYY-MM-DD form"
+    if not isinstance(value, str):
+        raise SnapshotError(message)
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        raise SnapshotError(message) from None
+    if parsed.isoformat() != value:
+        raise SnapshotError(message)
+    return parsed
+
+
+def _snap_opt_date(value: object, path: str) -> date | None:
+    return None if value is None else _snap_date(value, path)
+
+
+def _snap_number(value: object, path: str) -> float:
+    if isinstance(value, (int, float)) and _is_finite_number(value):
+        return value
+    raise SnapshotError(f"{path} must be a finite number (an int or float, not bool)")
+
+
+def _snap_count(value: object, path: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise SnapshotError(f"{path} must be a nonnegative int")
+    return value
+
+
+def _snap_format(value: object, path: str) -> RatingFormat:
+    if not isinstance(value, str) or value not in {fmt.value for fmt in RatingFormat}:
+        raise SnapshotError(f"{path} {value!r} is not a RatingFormat")
+    return RatingFormat(value)
+
+
+def _snap_date_map(value: object, path: str) -> dict[str, date]:
+    if not isinstance(value, Mapping):
+        raise SnapshotError(f"{path} must be an object")
+    result: dict[str, date] = {}
+    for key, on in value.items():
+        if not isinstance(key, str) or not _is_id(key):
+            raise SnapshotError(f"{path} has an id that is not a non-blank str")
+        result[key] = _snap_date(on, f"{path}[{key!r}]")
+    return result
+
+
+def _snap_state(value: object, path: str, cfg: Config) -> RatingState:
+    raw = _snap_object(value, path, _STATE_KEYS)
+    rating = _snap_number(raw["rating"], f"{path}.rating")
+    if not cfg.min_rating <= rating <= cfg.max_rating:
+        raise SnapshotError(f"{path}.rating must be between min_rating and max_rating")
+    rd = _snap_number(raw["rd"], f"{path}.rd")
+    if not cfg.rd_min <= rd <= cfg.rd_max:
+        raise SnapshotError(f"{path}.rd must be between rd_min and rd_max")
+    imported = raw["initial_source_reliability"]
+    if imported is not None:
+        if not isinstance(imported, (int, float)) or not _is_finite_number(imported):
+            raise SnapshotError(
+                f"{path}.initial_source_reliability must be a finite number or null"
+            )
+        if not 0 <= imported <= 100:
+            raise SnapshotError(f"{path}.initial_source_reliability must be between 0 and 100")
+    return RatingState(
+        rating=rating,
+        rd=rd,
+        matches_played=_snap_count(raw["matches_played"], f"{path}.matches_played"),
+        last_played=_snap_opt_date(raw["last_played"], f"{path}.last_played"),
+        rd_as_of=_snap_opt_date(raw["rd_as_of"], f"{path}.rd_as_of"),
+        initial_rating=_snap_number(raw["initial_rating"], f"{path}.initial_rating"),
+        initial_source=_snap_str(raw["initial_source"], f"{path}.initial_source"),
+        initial_source_date=_snap_opt_date(
+            raw["initial_source_date"], f"{path}.initial_source_date"
+        ),
+        initial_source_reliability=imported,
+        initial_external_player_id=_snap_opt_str(
+            raw["initial_external_player_id"], f"{path}.initial_external_player_id"
+        ),
+        initial_evidence_reference=_snap_opt_str(
+            raw["initial_evidence_reference"], f"{path}.initial_evidence_reference"
+        ),
+        live_updates_since_replay=_snap_count(
+            raw["live_updates_since_replay"], f"{path}.live_updates_since_replay"
+        ),
+        partners=_snap_date_map(raw["partners"], f"{path}.partners"),
+        opponents=_snap_date_map(raw["opponents"], f"{path}.opponents"),
+    )
+
+
+def _snap_player(value: object, path: str, cfg: Config) -> Player:
+    raw = _snap_object(value, path, _PLAYER_KEYS)
+    player_id = _snap_id(raw["id"], f"{path}.id")
+    external_raw = raw["external_ids"]
+    if not isinstance(external_raw, Mapping):
+        raise SnapshotError(f"{path}.external_ids must map str to str")
+    external_ids: dict[str, str] = {}
+    for source, external_id in external_raw.items():
+        if not isinstance(source, str) or not isinstance(external_id, str):
+            raise SnapshotError(f"{path}.external_ids must map str to str")
+        external_ids[source] = external_id
+    ratings = raw["ratings"]
+    if not isinstance(ratings, Mapping):
+        raise SnapshotError(f"{path}.ratings must be an object")
+    states: dict[RatingFormat, RatingState] = {}
+    for key, state in ratings.items():
+        fmt = _snap_format(key, f"{path}.ratings key")
+        states[fmt] = _snap_state(state, f"{path}.ratings.{fmt.value}", cfg)
+    return Player(
+        id=player_id,
+        ratings=states,
+        external_ids=external_ids,
+        account_user_id=_snap_opt_str(raw["account_user_id"], f"{path}.account_user_id"),
+    )
+
+
+def _snap_log_entry(value: object, path: str) -> tuple[MatchupKey, list[date]]:
+    raw = _snap_object(value, path, _LOG_KEYS)
+    fmt = _snap_format(raw["rating_format"], f"{path}.rating_format")
+    teams = _snap_list(raw["teams"], f"{path}.teams")
+    if len(teams) != 2:
+        raise SnapshotError(f"{path}.teams must be two teams")
+    members: list[frozenset[str]] = []
+    for index, team in enumerate(teams):
+        team_path = f"{path}.teams[{index}]"
+        message = f"{team_path} must be a team of {fmt.team_size} player id(s)"
+        if not isinstance(team, (list, tuple)) or len(team) != fmt.team_size:
+            raise SnapshotError(message)
+        if not all(isinstance(pid, str) and _is_id(pid) for pid in team):
+            raise SnapshotError(message)
+        ids = frozenset(str(pid) for pid in team)
+        if len(ids) != fmt.team_size:
+            raise SnapshotError(message)
+        members.append(ids)
+    if members[0] & members[1]:
+        raise SnapshotError(f"{path}.teams has a player in both teams")
+    dates = raw["dates"]
+    if not isinstance(dates, (list, tuple)) or not dates:
+        raise SnapshotError(f"{path}.dates must be a non-empty list")
+    return (
+        (fmt, frozenset(members)),
+        [_snap_date(on, f"{path}.dates[{index}]") for index, on in enumerate(dates)],
+    )
+
+
+def _snap_replay_info(
+    value: object, calculated_as_of: date | None, version: str, fingerprint: str
+) -> ReplayInfo | None:
+    path = "snapshot.replay_info"
+    if calculated_as_of is None:
+        if value is not None:
+            raise SnapshotError(f"{path} must be null when calculated_as_of is null")
+        return None
+    if value is None:
+        raise SnapshotError(f"{path} is required when calculated_as_of is set")
+    raw = _snap_object(value, path, _REPLAY_INFO_KEYS)
+    if _snap_date(raw["as_of"], f"{path}.as_of") != calculated_as_of:
+        raise SnapshotError(f"{path}.as_of must equal calculated_as_of")
+    if raw["config_version"] != version:
+        raise SnapshotError(f"{path}.config_version must equal config_version")
+    if raw["config_fingerprint"] != fingerprint:
+        raise SnapshotError(f"{path}.config_fingerprint must equal config_fingerprint")
+    considered = _snap_count(raw["matches_considered"], f"{path}.matches_considered")
+    counted = _snap_count(raw["matches_counted"], f"{path}.matches_counted")
+    if counted > considered:
+        raise SnapshotError(f"{path}.matches_counted must not exceed matches_considered")
+    return ReplayInfo(calculated_as_of, version, fingerprint, considered, counted)
+
+
+def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
+    """Validate a snapshot against cfg and read it. Raises SnapshotError naming the bad value."""
+    if not isinstance(snapshot, Mapping):
+        raise SnapshotError("snapshot must be an object")
+    if "snapshot_version" in snapshot:
+        version = snapshot["snapshot_version"]
+        if type(version) is not int or version != SNAPSHOT_VERSION:
+            raise SnapshotError(
+                f"snapshot.snapshot_version must be {SNAPSHOT_VERSION}, not {version!r}"
+            )
+    raw = _snap_object(snapshot, "snapshot", _TOP_KEYS)
+    _snap_str(raw["engine_version"], "snapshot.engine_version")
+    config_version = _snap_str(raw["config_version"], "snapshot.config_version")
+    if config_version != cfg.version:
+        raise SnapshotError(
+            f"snapshot.config_version {config_version!r} does not match the Config "
+            f"({cfg.version!r})"
+        )
+    fingerprint = _snap_str(raw["config_fingerprint"], "snapshot.config_fingerprint")
+    if fingerprint != cfg.fingerprint():
+        raise SnapshotError(
+            f"snapshot.config_fingerprint {fingerprint!r} does not match the Config "
+            f"({cfg.fingerprint()!r})"
+        )
+    calculated_as_of = _snap_opt_date(raw["calculated_as_of"], "snapshot.calculated_as_of")
+    replay_info = _snap_replay_info(
+        raw["replay_info"], calculated_as_of, config_version, fingerprint
+    )
+
+    players: dict[str, Player] = {}
+    for index, value in enumerate(_snap_list(raw["players"], "snapshot.players")):
+        path = f"snapshot.players[{index}]"
+        player = _snap_player(value, path, cfg)
+        if player.id in players:
+            raise SnapshotError(f"{path}: duplicate player id {player.id!r}")
+        players[player.id] = player
+
+    processed: set[str] = set()
+    ids = _snap_list(raw["processed_match_ids"], "snapshot.processed_match_ids")
+    for index, value in enumerate(ids):
+        path = f"snapshot.processed_match_ids[{index}]"
+        match_id = _snap_id(value, path)
+        if match_id in processed:
+            raise SnapshotError(f"{path}: duplicate match id {match_id!r}")
+        processed.add(match_id)
+
+    log: dict[MatchupKey, list[date]] = {}
+    entries = _snap_list(raw["self_reported_log"], "snapshot.self_reported_log")
+    for index, value in enumerate(entries):
+        path = f"snapshot.self_reported_log[{index}]"
+        key, dates = _snap_log_entry(value, path)
+        if key in log:
+            raise SnapshotError(f"{path} repeats a matchup")
+        log[key] = dates
+
+    digests_raw = raw["ledger_digests"]
+    if not isinstance(digests_raw, Mapping):
+        raise SnapshotError("snapshot.ledger_digests must be an object")
+    digests: dict[str, str] = {}
+    for key, digest in digests_raw.items():
+        if not isinstance(key, str) or not _is_id(key):
+            raise SnapshotError("snapshot.ledger_digests has an id that is not a non-blank str")
+        if not isinstance(digest, str) or len(digest) != 64 or not set(digest) <= _HEX:
+            raise SnapshotError(
+                f"snapshot.ledger_digests[{key!r}] must be 64 lowercase hex characters"
+            )
+        digests[key] = digest
+
+    return _Snapshot(players, processed, log, calculated_as_of, replay_info, digests)
+
+
+# ---------------------------------------------------------------------------
 # Rating engine
 # ---------------------------------------------------------------------------
 
@@ -950,6 +1406,91 @@ class RatingEngine:
         self.self_reported_log: dict[MatchupKey, list[date]] = {}
         self.calculated_as_of: date | None = None
         self.replay_info: ReplayInfo | None = None
+        # Digest of each ledger row a replay considered, by match_id. Only
+        # replay fills it; resume compares rows against it.
+        self._ledger_digests: dict[str, str] = {}
+
+    # -- snapshots -------------------------------------------------------------
+
+    def to_snapshot(self) -> dict[str, object]:
+        """
+        The engine's whole state as JSON-safe data (schema version 1).
+
+        json.dumps(snapshot, allow_nan=False) works with no custom encoder,
+        and RatingEngine.from_snapshot rebuilds the engine from it, or from
+        json.loads of its text. Every dict is emitted with sorted keys and
+        every list in a fixed order, so the same state always gives the same
+        text. Numbers keep their type: an int stays an int.
+
+        Keys: snapshot_version (1), engine_version (informational),
+        config_version and config_fingerprint (of this engine's Config),
+        calculated_as_of (ISO date or null), replay_info (null, or its
+        fields with as_of as an ISO date), players (sorted by id: id,
+        account_user_id, external_ids, and ratings by format value, each
+        state with every RatingState field, dates as ISO text, and partners
+        and opponents as id to ISO date), processed_match_ids (sorted),
+        self_reported_log (sorted by format then teams: rating_format,
+        teams as two sorted id lists, and dates in stored order), and
+        ledger_digests (match_id to the SHA-256 digest of each row the last
+        replay or resume considered). The README lists the schema in full.
+
+        The snapshot is checked with the rules from_snapshot applies, so
+        state that could not load back (a value of the wrong type, a
+        rating out of bounds) raises SnapshotError naming the field
+        instead of being returned.
+        """
+        info = self.replay_info
+        replay_info: object = None
+        if info is not None:
+            replay_info = _sorted_dict((f.name, _iso(getattr(info, f.name))) for f in fields(info))
+        snapshot: dict[str, object] = {
+            "calculated_as_of": _iso(self.calculated_as_of),
+            "config_fingerprint": self.cfg.fingerprint(),
+            "config_version": self.cfg.version,
+            "engine_version": __version__,
+            "ledger_digests": _sorted_dict(self._ledger_digests.items()),
+            "players": [
+                _player_form(player)
+                for player in sorted(self.players.values(), key=lambda p: str(p.id))
+            ],
+            "processed_match_ids": sorted(self.processed_match_ids, key=str),
+            "replay_info": replay_info,
+            "self_reported_log": _log_form(self.self_reported_log),
+            "snapshot_version": SNAPSHOT_VERSION,
+        }
+        _read_snapshot(snapshot, self.cfg)
+        return snapshot
+
+    @classmethod
+    def from_snapshot(
+        cls, snapshot: Mapping[str, object], cfg: Config | None = None
+    ) -> RatingEngine:
+        """
+        Rebuild an engine from to_snapshot() output, or json.loads of its text.
+
+        cfg must be the Config the snapshot was taken under (default
+        Config()): its version and fingerprint must equal the snapshot's.
+        The whole snapshot is validated before anything is built: exactly
+        the schema's keys at every level, snapshot_version 1, dates as
+        YYYY-MM-DD text, non-blank str ids with no repeated player or match
+        id, RatingFormat values as format keys, ratings within min_rating
+        and max_rating, RD within rd_min and rd_max, an imported
+        reliability between 0 and 100, nonnegative int counts, replay_info
+        present exactly when calculated_as_of is and consistent with it,
+        self-reported matchups of two disjoint teams of the format's size,
+        and ledger digests of 64 lowercase hex characters. Raises
+        SnapshotError naming the first bad value. The engine shares no
+        state with the snapshot.
+        """
+        engine = cls(cfg)
+        state = _read_snapshot(snapshot, engine.cfg)
+        engine.players = state.players
+        engine.processed_match_ids = state.processed_match_ids
+        engine.self_reported_log = state.self_reported_log
+        engine.calculated_as_of = state.calculated_as_of
+        engine.replay_info = state.replay_info
+        engine._ledger_digests = state.ledger_digests
+        return engine
 
     # -- players and identity ------------------------------------------------
 
@@ -1498,6 +2039,7 @@ def _replay(
         if match.played_on > as_of:
             continue
         considered += 1
+        engine._ledger_digests[match.match_id] = _match_digest(match)
         if engine.record(match, as_of=as_of).counted:
             counted += 1
 

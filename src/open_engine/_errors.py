@@ -36,6 +36,10 @@ class EvaluationError(OpenEngineError):
     """An evaluation, calibration fit, or win probability cannot be computed."""
 
 
+class SnapshotError(OpenEngineError):
+    """A snapshot cannot be loaded or resumed from."""
+
+
 class LedgerConflictError(OpenEngineError):
     """Two or more ledger rows share a match_id but differ."""
 

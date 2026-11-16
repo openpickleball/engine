@@ -133,6 +133,7 @@ Errors (every class is a `ValueError`):
 - `PlayerError`: a player identity, account link, or external identity is not valid. `seed_external_rating` raises it for a blank player id or when the snapshot's external identity cannot be linked (it names no source, it is already linked to another player, or the player already has a different id from that source), and `replay` and `prequential_predictions` raise it when two seeds share a player id.
 - `EvaluationError`: an evaluation, fit, or win probability cannot be computed.
 - `LedgerConflictError`: ledger rows share a `match_id` but differ. Its `match_ids` lists them.
+- `SnapshotError`: a snapshot cannot be loaded or resumed from. `RatingEngine.from_snapshot` raises it for a malformed snapshot or one taken under another `Config`, `RatingEngine.to_snapshot` for state that could not load back, and `replay(from_snapshot=...)` for a checkpoint it cannot resume from.
 <!-- public-api:end -->
 
 ## Ledger order
