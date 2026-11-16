@@ -207,5 +207,8 @@ FAILED tests/test_own_k.py::test_frozen_teammate_moves_by_own_k - AssertionEr...
 ```
 
 Every case fails because main splits a shared match K, so each delta differs from the
-player's own-K step. The third case also shows the new-partner effect: on main, e1 beside new
-partner n2 moved +0.02466; with own K it moves +0.02856.
+player's own-K step. The third case shows that on main a partner's or opponent's K changed a
+player's step: e1 beside new partner n2 against established opponents moved +0.02466 (smaller),
+while the same pair against new opponents moved +0.03246 (larger). The old step was
+`K_i * (mean K of all players) / (mean K of their own team)`. With own K, e1 moves +0.02856 in
+both.

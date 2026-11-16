@@ -35,8 +35,10 @@ Published behavior notes:
   players can add rating to the pool or remove it. Colluding accounts can
   exploit this: a new account can gain rating by beating a low-K account
   again and again, or lose rating faster on purpose. `imbalance` is a
-  per-match value. The backend should total it per pool (and per replay)
-  and monitor it.
+  per-match value in team-average units, so a match adds
+  `team_size * imbalance` to the pool's total rating (twice the value in
+  doubles). The backend should total it per pool (and per replay) and
+  monitor it.
 - Authoritative ratings come from scheduled replays (see
   `Config.replay_interval_days`). Live updates between replays are
   provisional and are labeled with the count of live updates since the last
@@ -631,7 +633,9 @@ class MatchResult:
     imbalance is the mean team A delta plus the mean team B delta, from the
     unrounded changes, rounded to 5 places. Each delta is rounded on its
     own, so imbalance can differ from the same sum of the rounded deltas by
-    up to 1.5e-5. It is 0.0 when both teams have the same mean K and no
+    up to 1.5e-5. imbalance is in team-average units, so a match adds
+    team_size * imbalance to the pool's total rating (twice the value in
+    doubles). It is 0.0 when both teams have the same mean K and no
     player is clamped or frozen, and for a match that did not count. It can
     be nonzero when the teams' mean K differ or a player is clamped or
     frozen. A value of 0.0 does not mean nothing was clamped or frozen: read
