@@ -1348,12 +1348,8 @@ def _snap_player(value: object, path: str, cfg: Config) -> Player:
     for source, external_id in external_raw.items():
         if not isinstance(source, str) or not isinstance(external_id, str):
             raise SnapshotError(f"{path}.external_ids must map str to str")
-        if not _is_id(source) or not _is_id(external_id):
-            raise SnapshotError(f"{path}.external_ids must not hold a blank source or id")
         external_ids[source] = external_id
     account_user_id = _snap_opt_str(raw["account_user_id"], f"{path}.account_user_id")
-    if account_user_id is not None and not _is_id(account_user_id):
-        raise SnapshotError(f"{path}.account_user_id must not be blank")
     ratings = raw["ratings"]
     if not isinstance(ratings, Mapping):
         raise SnapshotError(f"{path}.ratings must be an object")
@@ -1367,26 +1363,6 @@ def _snap_player(value: object, path: str, cfg: Config) -> Player:
         external_ids=external_ids,
         account_user_id=account_user_id,
     )
-
-
-def _check_identities(players: Mapping[str, Player], paths: Mapping[str, str]) -> None:
-    """Raise SnapshotError for an account or external id linked to two players."""
-    accounts: dict[str, str] = {}
-    external: dict[tuple[str, str], str] = {}
-    for player_id, player in players.items():
-        account = player.account_user_id
-        if account is not None:
-            if accounts.setdefault(account, player_id) != player_id:
-                raise SnapshotError(
-                    f"{paths[player_id]}: account_user_id {account!r} is linked to more "
-                    "than one player"
-                )
-        for source, external_id in player.external_ids.items():
-            if external.setdefault((source, external_id), player_id) != player_id:
-                raise SnapshotError(
-                    f"{paths[player_id]}: external id {external_id!r} from {source!r} is "
-                    "linked to more than one player"
-                )
 
 
 def _check_resumable(snap: _Snapshot, paths: Mapping[str, str]) -> None:
@@ -1522,7 +1498,6 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
             raise SnapshotError(f"{path}: duplicate player id {player.id!r}")
         players[player.id] = player
         player_paths[player.id] = path
-    _check_identities(players, player_paths)
 
     processed: set[str] = set()
     ids = _snap_list(raw["processed_match_ids"], "snapshot.processed_match_ids")
@@ -1728,8 +1703,10 @@ class RatingEngine:
         opponents, or live updates; matches_played 0 exactly when
         last_played is null; live updates no more than matches played; no
         player their own partner or opponent; an imported reliability only
-        with an initial_source_date. Account and external ids are non-blank
-        and each links to one player. A resumable snapshot also holds no
+        with an initial_source_date. Identities are only type checked
+        (account_user_id a str or null, external_ids str to str), since
+        the engine's own methods can build shared or blank ones and they
+        do not affect ratings. A resumable snapshot also holds no
         date after calculated_as_of, and its replay_info counts equal the
         number of ledger digests and processed match ids. These checks
         cover shape and invariants, not authenticity. Raises SnapshotError

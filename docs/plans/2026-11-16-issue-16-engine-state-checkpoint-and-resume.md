@@ -76,7 +76,7 @@ Validates everything before building, raising `SnapshotError` with the path of t
   - Unplayed state (`matches_played` 0): `rd` is `new_player_rd` or `external_seed_rd`, or at least `category_seed_rd` (a derived category state); no partners, opponents, or live updates. An imported reliability only with an `initial_source_date`.
   - `matches_played == 0` exactly when `last_played` is null; `live_updates_since_replay <= matches_played`; a player is never their own partner or opponent.
   - `initial_rating` within `min_rating`/`max_rating`. Every count at most `2**63 - 1`, so `json.dumps` can always write it.
-  - `account_user_id` (when set) and every external source and id are non-blank; no account and no (source, external id) is linked to two players.
+  - (Removed in fix round 2, D2-F1: blank-id and uniqueness checks for `account_user_id` and `external_ids`. Only their types are checked, str or null and str to str, because the engine's own methods build shared and blank identities and identities do not affect ratings.)
   - For a resumable snapshot only: no state, partner, opponent, or self-reported date after `calculated_as_of`; `matches_considered == len(ledger_digests)` and `matches_counted == len(processed_match_ids)`. A live engine can hold later dates, so a non-resumable snapshot is not held to this.
 
 Then builds `Player`/`RatingState` objects, sets `processed_match_ids`, `self_reported_log` (keys `(RatingFormat, frozenset({frozenset(team_a), frozenset(team_b)}))`), `calculated_as_of`, `replay_info`, `_ledger_digests`.
