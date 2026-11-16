@@ -99,8 +99,10 @@ browser work; this is a standard-library Python package.
    use the new names.
 8. Ratings do not change: every existing rating, replay, and calibration test passes
    with only the mechanical edits this plan names (renamed methods, `reason` and
-   summary access, import paths for hidden helpers). No `Config` default and no rating
-   math changes, so `Config.version` and the fingerprint are untouched.
+   summary access, import paths for hidden helpers). This branch changes no `Config`
+   default and no rating math, so it does not change `Config.version` or the
+   fingerprint. (Main's issue 11 single-sources the version in `_version.py` and bumped
+   it to 0.3.0.dev0, which changed the fingerprint independently of this branch.)
 9. Docs: CHANGELOG entries under `[Unreleased]`, each API break marked **Breaking**; the
    `engine.py` module docstring no longer says plain `ValueError` where a specific class
    now applies. (CHANGELOG and CLAUDE.md are done by the coordinator after review; the
@@ -130,7 +132,8 @@ browser work; this is a standard-library Python package.
   exception classes in a new private module `src/open_engine/_errors.py` that both
   import, and re-export them from `engine.py` with explicit `X as X` imports, so
   `from open_engine.engine import LedgerConflictError` still passes `mypy --strict`).
-- `src/open_engine/_errors.py`: new, the six exception classes plus nothing else.
+- `src/open_engine/_errors.py`: new, `OpenEngineError` and the six classes under it,
+  plus nothing else.
   `LedgerConflictError` moves here too.
 - `src/open_engine/__init__.py`: new `__all__` and imports; helpers removed.
 - `tests/test_engine.py`, `tests/test_calibration.py`, `tests/test_winprob.py`: the
