@@ -13,6 +13,7 @@ The engine is a demonstration. Its outputs are not OPEN ratings.
 - `RejectionReason`, a string enum with one member per reason a match is not counted.
 - `PlayerSummary`, the frozen dataclass `player_summary` returns, and `ReliabilityBasis` (`open` or `imported`).
 - Docstrings on every public name and on the public methods of public classes. A test checks them.
+- `MatchResult.imbalance`: the mean team A delta plus the mean team B delta, from the rounded deltas. It is nonzero when the teams' mean K differ or a player is clamped or frozen, and 0.0 for a match that did not count. A category match's `parent` result has its own value. The field comes after `clamped` and before `parent` (issue #14).
 
 ### Changed
 
@@ -28,6 +29,7 @@ The engine is a demonstration. Its outputs are not OPEN ratings.
 
   Such rows now raise in `record`, `replay`, and `prequential_predictions` (and so in `evaluate`, `fit_scale`, and `fit_win_calibration`). Every ledger that still replays gives the same ratings.
 - **Breaking:** replay recency decay is removed. `Config.recency_half_life_days` is gone, so `Config(recency_half_life_days=...)` raises `TypeError`, and the `recency_multiplier` helper is gone. A replay now gives the same ratings as recording the same ledger live in ledger order, and the replay date no longer changes any update. Inactivity still widens RD through `inflated_rd`. Under the old default (a 365-day half-life), any counted match older than the replay date now has a larger `MatchResult.effective_weight`, so replayed ratings and RDs can change. A config that used to set `recency_half_life_days=None` gives the same ratings without the field. `Config.fingerprint()` changes for every config, since the field is no longer hashed.
+- **Breaking:** each player now moves by their own K: `sign * K * effective_weight * surprise`. The shared match K (the mean K of all players) and the split of a team's change by K share are removed. An established player's step no longer grows against a new opponent or beside a new partner. Team average movement is no longer always zero-sum: the team with the higher mean K moves more, and `MatchResult.imbalance` reports the net. When every player in a match has the same K, deltas are unchanged. Ratings from any ledger with mixed K change (issue #14).
 - **Breaking:** `RatingFormat`, `MatchType`, and `ScoringType` are `StrEnum`s, so `str()` and f-strings give the value (`"doubles"`, not `"RatingFormat.DOUBLES"`). Comparison with the value, `repr`, pickling, and `Config.fingerprint()` are unchanged.
 
 ### Fixed
