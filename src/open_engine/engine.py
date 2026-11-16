@@ -262,7 +262,6 @@ class Config:
     new_player_rd: float = 0.80
     external_seed_rd: float = 0.42
     category_seed_rd: float = 0.50
-    external_reliability_maps_to_rd: bool = False
     rd_shrink_per_match: float = 0.08
     rd_growth_per_day: float = 0.012
 
@@ -925,7 +924,6 @@ class RatingEngine:
         rating_format: RatingFormat,
         snapshot: ExternalRatingSnapshot,
         *,
-        rd_override: float | None = None,
         replace_unplayed_seed: bool = False,
     ) -> RatingState:
         """
@@ -933,6 +931,9 @@ class RatingEngine:
 
         The external rating is an initial condition, not a live dependency.
         Once OPEN matches exist, external refreshes cannot overwrite the rating.
+        The seed's RD is always Config.external_seed_rd: an external
+        reliability is kept for display (imported_reliability), never turned
+        into OPEN RD.
 
         Raises InvalidSeedError when the snapshot or the existing rating does
         not allow the seed, and PlayerError when player_id is blank or the
@@ -956,24 +957,12 @@ class RatingEngine:
                     "A rating already exists; explicitly allow replacing an unplayed seed"
                 )
 
-        if rd_override is not None:
-            rd = rd_override
-        elif cfg.external_reliability_maps_to_rd and snapshot.reliability is not None:
-            # Must be empirically calibrated before production use.
-            fraction = snapshot.reliability / 100.0
-            rd = cfg.rd_max - fraction * (cfg.rd_max - cfg.rd_min)
-        else:
-            rd = cfg.external_seed_rd
-
-        if not cfg.rd_min <= rd <= cfg.rd_max:
-            raise InvalidSeedError("Seed RD is outside configured bounds")
-
         if snapshot.external_player_id:
             self.attach_external_id(player_id, snapshot.source, snapshot.external_player_id)
 
         state = RatingState(
             rating=snapshot.rating,
-            rd=rd,
+            rd=cfg.external_seed_rd,
             rd_as_of=snapshot.captured_on,
             initial_rating=snapshot.rating,
             initial_source=snapshot.source,
