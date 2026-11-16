@@ -16,6 +16,7 @@ from open_engine import (
     ReliabilityBasis,
     ScoringType,
 )
+from open_engine.engine import _StrEnum
 
 ENUMS: list[type[Enum]] = [
     RatingFormat,
@@ -45,5 +46,18 @@ def test_other_enum_behavior_is_unchanged(member: Enum) -> None:
     assert isinstance(member, str)
 
 
-def test_config_fingerprint_is_unchanged() -> None:
-    assert Config().fingerprint() == "53951e80d62a242c"
+def test_config_fingerprint_does_not_depend_on_enum_printing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The five enums take __str__ and __format__ from _StrEnum, so patching
+    # _StrEnum restores the default Enum printing on all of them.
+    for cls in ENUMS:
+        assert "__str__" not in vars(cls)
+        assert "__format__" not in vars(cls)
+    assert str(RatingFormat.DOUBLES) == "doubles"
+    printed_as_value = Config().fingerprint()
+
+    monkeypatch.setattr(_StrEnum, "__str__", Enum.__str__)
+    monkeypatch.setattr(_StrEnum, "__format__", Enum.__format__)
+    assert str(RatingFormat.DOUBLES) != "doubles"
+    assert Config().fingerprint() == printed_as_value

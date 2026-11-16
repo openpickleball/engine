@@ -108,7 +108,8 @@ browser work; this is a standard-library Python package.
 10. The five public `str` enums (`RatingFormat`, `MatchType`, `ScoringType`,
     `RejectionReason`, `ReliabilityBasis`) share a private `_StrEnum` base, so `str(m)`
     and `f"{m}"` give `m.value` on every supported Python. repr, pickle, `json.dumps`,
-    `== "value"`, and `Config().fingerprint()` do not change (`tests/test_enum_str.py`).
+    and `== "value"` do not change, and `Config().fingerprint()` does not depend on how
+    the enums print (`tests/test_enum_str.py`).
 11. `Match.validate` raises `InvalidMatchError` when `match_id` or any team player id is
     not a non-empty, non-whitespace `str`, and `RatingEngine._validate_teams` applies the
     same id check, so `predict_point_share` and `predict_win_probability` raise too.
@@ -227,6 +228,32 @@ ratings); docstrings on internal helpers; a `to_dict()` on `PlayerSummary`
   for one with an imported baseline; trigger one error of each class and print
   `type(e).__mro__`; confirm `from open_engine import clone_player` fails with
   `ImportError`.
+- Criterion 10, fingerprint: `test_config_fingerprint_does_not_depend_on_enum_printing`
+  computes the fingerprint, patches `_StrEnum.__str__` and `__format__` back to the
+  `Enum` defaults (the five enums define neither, so the patch covers them, and the test
+  checks that `str(RatingFormat.DOUBLES)` changes), and asserts the fingerprint is equal.
+  The maintainer approved replacing the earlier test, which pinned
+  `Config().fingerprint() == "53951e80d62a242c"`: the version bump on main (issue 11)
+  changed it to `f3dbb6f1bb2dca03`, and a pinned hash would break at every release. The
+  rewritten test is frozen. It catches the defect it guards: in a scratch copy of the
+  package with `norm()` changed from `return value.value` to `return str(value)`,
+
+  ```
+  PYTHONPATH=<scratch>/src .venv/bin/python -m pytest -q -p no:cacheprovider \
+    --rootdir=<scratch> \
+    tests/test_enum_str.py::test_config_fingerprint_does_not_depend_on_enum_printing
+  ```
+
+  fails with
+
+  ```
+  >       assert Config().fingerprint() == printed_as_value
+  E       AssertionError: assert 'b36cce779a8a7817' == 'f3dbb6f1bb2dca03'
+  FAILED tests/test_enum_str.py::test_config_fingerprint_does_not_depend_on_enum_printing
+  1 failed in 0.02s
+  ```
+
+  and it passes on the branch, where `norm()` uses `.value`.
 
 Measured on `origin/main` at 1a624ab, missing docstrings among exported names and the
 public methods of exported classes (a scratch script checking each class's own
