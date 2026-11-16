@@ -1,0 +1,129 @@
+# Plan: Engine state cannot be checkpointed, and replay cannot resume (issue #16)
+
+Risk tier: High. It changes the replay path, which CLAUDE.md lists as security-sensitive (determinism and provenance). It adds a public API and an exported error. A loaded snapshot sets every rating, so loose validation would let stored data change ratings.
+
+Domain skills: superpowers:test-driven-development: invoke (implementer). Django, Celery, Ninja, FastAPI, allauth, React, Expo: not applicable because this is a standard-library-only Python package with no framework, UI, auth, payments, or email.
+
+## Acceptance criteria
+
+1. `RatingEngine.to_snapshot()` returns a JSON-safe dict (`json.dumps(..., allow_nan=False)` works with no custom encoder). `RatingEngine.from_snapshot(snapshot, cfg=None)` rebuilds an engine from it, or from `json.loads` of its JSON text.
+2. Round trip preserves every player's every `RatingState` field (rating, RD, `rd_as_of`, `matches_played`, `last_played`, provenance fields, `live_updates_since_replay`, partner and opponent dates), each player's `external_ids` and `account_user_id`, `processed_match_ids`, `self_reported_log`, `calculated_as_of`, and `replay_info`. `to_snapshot(from_snapshot(s)) == s`. Numbers keep their type (an int stays an int).
+3. The output is deterministic: two engines built from the same ledger in different input orders give identical `json.dumps(snapshot, sort_keys=True)` text.
+4. The schema is versioned (`snapshot_version`, 1) and carries `config_version`, `config_fingerprint`, and `calculated_as_of`. `from_snapshot` raises `SnapshotError` for another `snapshot_version`, for a fingerprint or config version that does not match the `Config` it is given, and for any missing key, unknown key, or value of the wrong type or out of range.
+5. `replay(matches, seed_players, *, cfg, as_of, from_snapshot=snapshot)` continues from a checkpoint. For any ledger and any checkpoint taken by `replay(..., as_of=C)` with `C <= as_of`, the resumed engine's snapshot equals the snapshot of a full `replay(..., as_of=as_of)`, whether the caller passes the whole ledger or only the rows after `C`. A property-style test checks this over many random synthetic ledgers and cut dates.
+6. Resume never silently differs from a full replay. It raises instead when it cannot match one:
+   - `SnapshotError` when the snapshot is not from a replay, when it has live updates since that replay, when `as_of` is before the checkpoint date, or when a ledger row dated on or before the checkpoint date is not in the checkpoint.
+   - `LedgerConflictError` when a row dated on or before the checkpoint date differs from the row the checkpoint counted under that `match_id`, or a row dated after it reuses one of those ids.
+   - `PlayerError` for a seed whose player is already in the snapshot, as `add_player` does.
+7. The snapshot schema is documented (README section, and the `to_snapshot` docstring). `SnapshotError` is exported, listed in `__all__` and the README "Public API", and has a docstring. `CHANGELOG.md` has an Added entry. The module docstring's behavior notes and production notes describe checkpoints.
+
+## Design
+
+### New error
+
+`SnapshotError(OpenEngineError)` in `_errors.py`: "A snapshot cannot be loaded or resumed from." Exported from `engine.py` (explicit re-export, like the others) and `open_engine`.
+
+### Engine state additions
+
+`RatingEngine.__init__` gains one internal attribute, `self._ledger_digests: dict[str, str] = {}`: for each ledger row a replay considered (`played_on <= as_of`), its `match_id` mapped to `_match_digest(row)`. Only `_replay` fills it. Live `record` does not.
+
+`_match_digest(match: Match) -> str`: SHA-256 hex (64 chars) of `json.dumps(form, sort_keys=True, separators=(",", ":"), allow_nan=False)`, where `form` mirrors `_canonical`: every field except `played_at`, each value tagged with its exact type's `__module__` and `__qualname__`, recursing into dataclasses (as a list of `[name, form]` pairs), tuples, and frozensets (members sorted by their own JSON text); enums as `[type, value]`; dates as `[type, isoformat]`; `played_at` as `None` or `[UTC instant isoformat, utcoffset total seconds]`. Two validated rows get the same digest exactly when `_canonical` treats them as equal. A test checks pairs that `_canonical` separates (int vs float `best_of`, str vs enum, different UTC offsets for the same instant) and pairs it joins (same instant and offset with different zone objects).
+
+### `RatingEngine.to_snapshot(self) -> dict[str, object]`
+
+Schema version 1. Keys:
+
+```
+snapshot_version: 1
+engine_version: open_engine.__version__ (informational, not checked)
+config_version: cfg.version
+config_fingerprint: cfg.fingerprint()
+calculated_as_of: ISO date or null
+replay_info: null or {as_of, config_version, config_fingerprint, matches_considered, matches_counted}
+players: list sorted by id of
+  {id, account_user_id (str or null), external_ids {str: str},
+   ratings {RatingFormat value: state}}  (ratings keys sorted)
+  state: {rating, rd, matches_played, last_played, rd_as_of, initial_rating,
+          initial_source, initial_source_date, initial_source_reliability,
+          initial_external_player_id, initial_evidence_reference,
+          live_updates_since_replay, partners {id: ISO date}, opponents {id: ISO date}}
+processed_match_ids: sorted list
+self_reported_log: list sorted by (rating_format, teams) of
+  {rating_format, teams: [[ids sorted], [ids sorted]] (the two teams sorted), dates: [ISO dates, in stored order]}
+ledger_digests: {match_id: digest}
+```
+
+Dicts are emitted with sorted keys so output is deterministic. After building the dict, `to_snapshot` runs the same validator `from_snapshot` uses, so it raises `SnapshotError` (naming the field) instead of returning a snapshot that cannot load (for example a non-str `initial_evidence_reference` set by hand).
+
+### `RatingEngine.from_snapshot(cls, snapshot: Mapping[str, object], cfg: Config | None = None) -> RatingEngine` (classmethod)
+
+Validates everything before building, raising `SnapshotError` with the path of the bad value:
+- `snapshot` is a Mapping with exactly the schema's keys (no missing, no unknown), at every level.
+- `snapshot_version == 1` (an int, not bool).
+- `config_fingerprint == cfg.fingerprint()` and `config_version == cfg.version`.
+- Dates are str in exact `YYYY-MM-DD` form (`date.fromisoformat(s).isoformat() == s`).
+- Ids (`id`, partner and opponent keys, team members, match ids) satisfy `_is_id`. Player ids are unique.
+- Rating format keys are `RatingFormat` values. Each `self_reported_log` entry has two teams of the format's team size, no player in both, and nonempty `dates`.
+- `rating` and `initial_rating`: int or finite float, not bool, `rating` within `min_rating`/`max_rating`. `rd` within `rd_min`/`rd_max`. `initial_source_reliability`: null or finite number in 0..100. Counts: int, not bool, nonnegative. `initial_source`: str. `initial_external_player_id`, `initial_evidence_reference`, `account_user_id`: str or null. `external_ids`: str to str.
+- `replay_info` is null exactly when `calculated_as_of` is null; otherwise its `as_of` equals `calculated_as_of`, its config fields equal the snapshot's, its counts are nonnegative ints with `matches_counted <= matches_considered`.
+- `ledger_digests`: str id to 64-char lowercase hex.
+
+Then builds `Player`/`RatingState` objects, sets `processed_match_ids`, `self_reported_log` (keys `(RatingFormat, frozenset({frozenset(team_a), frozenset(team_b)}))`), `calculated_as_of`, `replay_info`, `_ledger_digests`.
+
+### `replay(..., from_snapshot: Mapping[str, object] | None = None)`
+
+`_replay` gains an optional starting engine. With `from_snapshot`:
+1. `engine = RatingEngine.from_snapshot(from_snapshot, cfg)`.
+2. `SnapshotError` unless `engine.calculated_as_of` is set, every `processed_match_id` is in `_ledger_digests`, and every state has `live_updates_since_replay == 0`.
+3. `SnapshotError` if `as_of < checkpoint`.
+4. Seeds go through `add_player` and the `as_of` date check, as in a full replay (`PlayerError` for an id already in the snapshot).
+5. `rows = _ledger(matches)`. Pre-pass over every row before any `record`: a row dated on or before the checkpoint must have its id in `_ledger_digests` (else collect as missing) with the same digest (else collect as conflict); a row dated after the checkpoint whose id is in `_ledger_digests` is a conflict. Raise `LedgerConflictError(conflicts)` first if any, then `SnapshotError` naming the missing ids (sorted).
+6. Record each row dated after the checkpoint and on or before `as_of`, add its digest, count it.
+7. `calculated_as_of = as_of`; `replay_info` counts are the snapshot's plus this run's.
+
+A seed check order note: seeds are added before the ledger pre-pass, matching full replay, where seeds are checked before the ledger.
+
+The full replay path also fills `_ledger_digests`, so a full replay's snapshot and a resumed one are byte-identical (criterion 5). `prequential_predictions` is unchanged in behavior.
+
+## Files that change
+
+- `src/open_engine/_errors.py`: `SnapshotError`.
+- `src/open_engine/engine.py`: re-export, `_match_digest`, `_ledger_digests`, `to_snapshot`, `from_snapshot`, validator helpers, `replay`/`_replay` resume, module docstring (Errors note gets `SnapshotError`; new behavior note on snapshots and resume; production note on persisting snapshots for live state).
+- `src/open_engine/__init__.py`: export `SnapshotError`.
+- `tests/test_snapshot.py`: new (round trip, schema, validation, determinism, coverage guard).
+- `tests/test_replay_resume.py`: new (property test and resume rejections).
+- `README.md`: Public API entries (`SnapshotError`; `RatingEngine` and `replay` lines mention the new methods/argument), new "Snapshots and checkpoints" section with schema v1.
+- `CHANGELOG.md`: Added entry under Unreleased.
+- `CLAUDE.md` (Phase 8): rule that new engine state goes into the snapshot schema with a `snapshot_version` bump.
+
+No new module, so `scripts/check_wheel.py` `PACKAGE_FILES` does not change. No new dependency: the property test uses `random.Random(seed)` in a parametrized test, not a new dev package.
+
+## Order of work
+
+1. Red tests for `SnapshotError` export and the round trip (test_snapshot.py), commit failing tests.
+2. `SnapshotError`, `_match_digest`, `_ledger_digests` filled by `_replay`, `to_snapshot`, `from_snapshot` with validation. Green.
+3. Coverage guard test: `set(vars(RatingEngine()))` equals the attributes the snapshot covers, and `RatingState` fields equal the state keys. Validation table tests.
+4. Red resume tests (test_replay_resume.py), then `replay(from_snapshot=...)`. Green.
+5. Docs: module docstring, README, CHANGELOG.
+6. Full gate.
+
+## Risks
+
+- Riskiest step: the resume pre-pass. A wrong boundary (`<` vs `<=` at the checkpoint date) silently double-counts or drops a day's matches. The property test cuts at dates that have matches on them, and a targeted test puts matches on the checkpoint date itself.
+- Digest drift from `_canonical`: if they disagree, resume would accept a row full replay rejects, or the reverse. Covered by paired tests.
+- A snapshot taken after a live update and then resumed would double-count; criterion 6 rejects it.
+- JSON float round trip: Python's `repr` round trips floats exactly; ints stay ints. A test asserts type and value after `json.loads`.
+- Unordered iteration: `to_snapshot` sorts every set and dict, so the hash-seeded order of `processed_match_ids` and frozensets never reaches output.
+- Not done: snapshots of `prequential_predictions` state, compression, schema migration from future versions (version 1 only), checkpoint support in `record` itself, and storing the full `Config` in the snapshot (the caller passes it; the fingerprint proves it matches).
+
+## Proof
+
+- Criteria 1, 2: `test_snapshot.py` round trip through `json.dumps`/`json.loads`, field-by-field equality, type checks, `to_snapshot(from_snapshot(s)) == s`.
+- Criterion 3: two input orders, identical JSON text.
+- Criterion 4: parametrized malformed-snapshot table, config mismatch, version mismatch, each `pytest.raises(SnapshotError, match=...)`.
+- Criterion 5: parametrized property test over random seeds: random synthetic ledger (singles, doubles, categories, every match type, self-reported repeats, an external seed and a category seed), random checkpoint date, compare `to_snapshot()` of the full replay to the resumed replay, both with the whole ledger and with only rows after the checkpoint, including a checkpoint date that has matches on it.
+- Criterion 6: one test per rejection.
+- Criterion 7: existing `tests/test_api.py` checks of `__all__`, README, and docstrings; changelog entry by review.
+- Live drive: run a script that replays a synthetic ledger to a checkpoint, writes `to_snapshot()` to a JSON file, loads it in a new process, resumes with the remaining rows, and prints that the resumed and full snapshots are equal; then shows each rejection path (live update, late row, changed row, config mismatch) raising the documented error.
+
+Measured on the default branch (b5fe113), for the "checkpoint plus remaining matches equals full replay" assumption: a scratch script built a 400-match synthetic ledger (singles, doubles, mixed doubles, every match type, an external doubles seed), ran `replay(ms, [seed], as_of=cut)` for cuts 2025-06-15 and 2025-10-01, then `record(m, as_of=2025-12-31)` for every `_ledger(ms)` row after the cut, and compared every player's `ratings`, `processed_match_ids`, and `self_reported_log` with `replay(ms, [seed], as_of=2025-12-31)`. Result: `players 12 counted 381 diffs 0`. A cut before the seed's capture date raised `InvalidSeedError` (seed dated after `as_of`), which is why resume adds seeds through the same check.
