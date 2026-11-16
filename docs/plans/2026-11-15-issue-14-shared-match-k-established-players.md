@@ -52,14 +52,14 @@ so the issue stays open until that backtest is done.
    opponents.
 3. When every participant has the same K, deltas are identical to `origin/main` (values measured
    below).
-4. `MatchResult.imbalance` equals `mean(team_a deltas) + mean(team_b deltas)` (within 1e-5) on
-   every counted match, is 0.0 when K is equal and nothing is clamped or frozen, is nonzero with
+4. `MatchResult.imbalance` is computed from the unrounded changes, rounded to 5 places, and is
+   within 1.5e-5 of `mean(team_a deltas) + mean(team_b deltas)` on every counted match, is 0.0 when K is equal and nothing is clamped or frozen, is nonzero with
    the expected sign when K differs (the higher-K team moves more), and is 0.0 on a rejected
    match. A category match's `parent` result carries its own `imbalance`.
 5. A frozen player's teammate moves by their own K only (unchanged documented `frozen` behavior:
    the team moves less).
 6. The conservation rule is documented: the module docstring's "Published behavior notes", the
-   `Config` K comment, the `MatchResult` docstring, the `CLAUDE.md` "Zero-sum exceptions" engine
+   `Config` K comment, the `MatchResult` docstring, the `CLAUDE.md` "Own K and imbalance" engine
    rule, and a `CHANGELOG.md` entry under `## [Unreleased]` (a rating behavior change and a new
    public field on `MatchResult`).
 7. The full gate passes: `ruff check .`, `ruff format --check .`, `mypy src`, `pytest`.
@@ -79,7 +79,7 @@ so the issue stays open until that backtest is done.
 - `tests/test_imbalance_rounding.py`: frozen tests for the imbalance rounding defect.
 - `CHANGELOG.md`: `## [Unreleased]` entry under Changed (own K, no longer zero-sum) and Added
   (`MatchResult.imbalance`).
-- `CLAUDE.md`: rewrite the "Zero-sum exceptions" engine rule.
+- `CLAUDE.md`: rewrite the "Zero-sum exceptions" engine rule as "Own K and imbalance".
 - `README.md`: only if a line becomes false. The current text does not mention zero-sum, so
   probably no change.
 
@@ -109,6 +109,13 @@ so the issue stays open until that backtest is done.
   construction would break if the field went before an existing one, so it goes after `clamped`
   and before `parent`. Check that `test_api.py` does not pin the field list; if it does, update
   it and note it in the changelog.
+- Imbalance tolerance (decision 2026-11-15: keep the unrounded computation, loosen the
+  promise). Each delta is rounded on its own, so `imbalance` can differ from
+  `mean(team_a deltas) + mean(team_b deltas)` by up to 1.5e-5, not 1e-5. Repro from review:
+  `Config(max_singles_rating_gap=None)`, singles, a at rating 3.2 RD 0.73, c at 4.72 RD 0.79,
+  `rd_as_of` and match on 2026-10-29, one game 11-1. Deltas +0.28417 and -0.30536 (sum
+  -0.02119), imbalance -0.02118. Criterion 4, the `MatchResult` docstring, and the changelog
+  state the 1.5e-5 bound. The existing tests keep their tighter bound on fixed inputs.
 - Collusion can create rating (decision 2026-11-15: accepted and documented). Without zero-sum,
   matches between high-K and low-K players add rating to the pool or remove it. Example from
   review: a new account (K 0.6) at 3.5 beats a low-K imported feeder at 4.0 ten times, 11-5,
@@ -151,6 +158,12 @@ doubles n1,n2 vs n3,n4    all K .6                 n1,n2 +0.05  n3,n4 -0.05
 Command: the scratch script `measure.py` (reproduced in the criterion 3 test), run with the
 worktree venv on `origin/main`. Rows 2, 3 and 5 are the equal-K "behave alike" cases for
 criterion 3. Row 1 reproduces the issue: 0.03928 / 0.02856 = 1.375.
+
+### Criterion 2 rounding note
+
+Criterion 2's exact check rounds `raw = sign * K * weight * surprise`. The engine rounds
+`(old + raw) - old`. The two can differ by 1 ulp, which could flip a rounding that falls exactly
+on a 5e-6 half point. No test input lands on one.
 
 ### Criterion 2 tests rewritten (approved 2026-11-15)
 
