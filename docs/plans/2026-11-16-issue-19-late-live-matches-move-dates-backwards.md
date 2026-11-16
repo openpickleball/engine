@@ -39,7 +39,7 @@ Live processing applies results in arrival order, not play order. That stays tru
 
 - `src/open_engine/engine.py`
   - `MatchResult`: add `late: bool = False  # dated before a player's last match in this format` after `imbalance`. Extend the docstring: what late means, that it compares dates only, that it is `False` for a match that did not count, that `parent` has its own, and that the backend should schedule a replay when it sees one.
-  - `_compute`: before any update, compute `late = any(work[pid].last_played is not None and match.played_on < work[pid].last_played for pid in ids)`. In the update loop, replace the four assignments:
+  - `_compute`: before any update, compute `late = any(_is_late(work[pid], match.played_on) for pid in ids)`. `_is_late(state, on)` is True when `state.last_played is not None and on < state.last_played`, or when `state.rd_as_of is not None and state.rd_as_of != state.initial_source_date and on < state.rd_as_of`. Changed after review: the plan first used the `last_played` check alone, which missed a category rating copied from overall doubles (see Decisions). In the update loop, replace the four assignments:
     - `state.rd_as_of = match.played_on if state.rd_as_of is None else max(state.rd_as_of, match.played_on)`
     - `state.last_played` the same way.
     - partners and opponents: for each other id, set the date to `max(existing, match.played_on)` when present, else `match.played_on`. Write a small helper `_seen(interactions: dict[str, date], ids: Iterable[str], on: date) -> None` and use it for both maps. Keep iteration over the match's id tuples, which are ordered.

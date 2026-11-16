@@ -849,7 +849,7 @@ class MatchResult:
     frozen: tuple[str, ...] = ()  # predates the player's imported baseline
     clamped: tuple[str, ...] = ()  # hit the rating floor or ceiling
     imbalance: float = 0.0  # mean team A delta plus mean team B delta
-    late: bool = False  # dated before a player's last match in this format
+    late: bool = False  # dated before what a player's rating here reflects
     parent: MatchResult | None = None  # overall doubles update for categories
 
 
@@ -2113,7 +2113,9 @@ class RatingEngine:
         Nothing is changed unless the match counts. Live results apply in
         arrival order: MatchResult.late (and parent.late, for a category
         match) flags a match dated before a player's last match in that
-        format, and stored dates never move back.
+        format, or before the date that player's rating in that format
+        already reflects (for a category rating copied from overall
+        doubles). Stored dates never move back.
         """
         match.validate()
         if match.match_id in self.processed_match_ids:
