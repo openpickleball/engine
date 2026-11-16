@@ -55,7 +55,9 @@ engine. No code path in the package reads the wall clock.
 ## Files that change
 
 - `src/open_engine/_errors.py`: add `class ReferenceDateError(OpenEngineError)` with the
-  docstring "No reference date to measure inactivity and reliability at." Place it after
+  docstring "No usable reference date to measure inactivity and reliability at.", naming
+  both causes (no as_of on a never-replayed engine, and an as_of that is not a plain date,
+  added after review). Place it after
   `SnapshotError`, before `LedgerConflictError` or at the end, whichever keeps the module
   readable; update the module docstring if it lists classes.
 - `src/open_engine/engine.py`:
@@ -89,7 +91,7 @@ engine. No code path in the package reads the wall clock.
   `__all__`). The quick start's live `player_summary` call passes `as_of=date(2026, 10, 29)`.
   (README prose is reconciled again in Phase 8.)
 - `examples/basic_match.py`: pass `as_of=` the match date to `player_summary`.
-- `CHANGELOG.md` under `## [Unreleased]`: Added `ReferenceDateError`; Changed
+- `CHANGELOG.md` under `## [Unreleased]`: Added `ReferenceDateError` (both causes); Changed
   (**Breaking**) `reliability` requires `as_of`; `player_summary` defaults `as_of` to
   the later of `calculated_as_of` and the player's `last_played` (refinement approved by
   the maintainer after review) and raises `ReferenceDateError` when the engine was never
