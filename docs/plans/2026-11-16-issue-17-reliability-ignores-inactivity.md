@@ -21,7 +21,10 @@ engine. No code path in the package reads the wall clock.
 1. No `date.today()`, `datetime.now()`, `datetime.utcnow()`, `datetime.today()`, or
    `time.time()` call anywhere in `src/open_engine`. A test scans every module for them.
 2. Reliability reflects inactivity by default: `player_summary` without `as_of` measures
-   at `engine.calculated_as_of`, never at the player's own `rd_as_of` and never at today.
+   at the later of `engine.calculated_as_of` and the player's `last_played` (the maintainer
+   approved this after review: a stale player is measured at the replay date, a player with
+   live matches since at their last match). Never at the player's own `rd_as_of`, so an
+   unplayed import captured after the replay stays hidden, and never at today.
 3. Test: an inactive player's reliability drops over time without passing `as_of` to
    `player_summary`. The same ledger replayed at a later `as_of` gives a lower default
    reliability (and a wider default `rd`) for a player with no matches since.
@@ -107,12 +110,14 @@ engine. No code path in the package reads the wall clock.
 
 - Backend callers that call `player_summary` on a live engine without `as_of` now get an
   error. That is the intended breaking change, called out in the changelog.
-- Live matches after the last replay: a player whose `rd_as_of` is after
-  `calculated_as_of` is measured at the earlier replay date. `inflated_rd` returns the
-  stored RD for a date on or before `rd_as_of`, and the variety window counts partners
-  seen after the date, so reliability is not inflated or shrunk by this. A seed captured
-  after the replay date is not carried until the next replay or an explicit `as_of`. Both
-  documented.
+- Live matches after the last replay: measuring such a player at the earlier replay date
+  mixed the stored RD from the live match with a partner window cut at the replay date,
+  which inflated reliability (75.4 against 52.8) and kept a stale import carried. Review
+  found this; the default is now the later of `calculated_as_of` and `last_played`
+  (`tests/test_reference_date_live.py`). So players in one engine can be measured at
+  different dates by default, and a backdated live match moves `last_played` back. An
+  unplayed seed captured after the replay date is not carried until the next replay or an
+  explicit `as_of`. All documented.
 - `player_summary` creates a missing category state; raising after creation would change
   state on a failed call (and clear the snapshot `resumable` mark). The check must come
   first; a test asserts no state is created and the snapshot stays resumable.

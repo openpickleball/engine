@@ -2198,6 +2198,8 @@ class RatingEngine:
         cfg = self.cfg
         player = self.player(player_id)
         state = self.state(player_id, rating_format)
+        if as_of is None and state.last_played is not None:
+            reference = max(reference, state.last_played)
         earned = reliability(state, cfg, reference)
 
         # Imported reliability is shown, separately, only while it is fresh,
