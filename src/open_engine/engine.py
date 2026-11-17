@@ -780,7 +780,8 @@ class Match:
             raise InvalidMatchError("confirmed_by may only contain match participants")
         if not _is_plain_date(self.played_on):
             raise InvalidMatchError(
-                f"played_on must be a date, not {type(self.played_on).__name__}"
+                "played_on must be a plain date (not a datetime), "
+                f"not {type(self.played_on).__name__}"
             )
         if self.played_at is not None:
             _utc_instant(self.played_at)
@@ -1266,7 +1267,7 @@ def _content_score(score: int) -> int | str:
     """
     A validated game score in the content key's JSON form.
 
-    int() folds a bool into its int. A score below 10**600 stays a JSON
+    int() folds an int subclass into a plain int. A score below 10**600 stays a JSON
     number; a larger one is hex text, which has no digit limit and never
     equals a number.
     """
@@ -1288,7 +1289,7 @@ def _content_key(match: Match) -> str:
     played_at, sequence, confirmed_by), since two reports of one match
     often disagree on labels. The digest is over JSON text, so it never
     depends on set order or the hash seed. Scores go through
-    _content_score, so a bool score equals its int and a huge score never
+    _content_score, so an int subclass equals its int and a huge score never
     hits the int to text digit limit.
     """
     team_a = sorted(match.team_a)
@@ -2679,6 +2680,10 @@ class RatingEngine:
         checks, so a rejected duplicate never enters the self-reported log.
         """
         match.validate()
+        if as_of is not None and not _is_plain_date(as_of):
+            raise InvalidMatchError(
+                f"as_of must be a plain date (not a datetime), not {type(as_of).__name__}"
+            )
         if match.match_id in self.processed_match_ids:
             return MatchResult(False, match.rating_format, RejectionReason.DUPLICATE_MATCH_ID)
         if match.status is not MatchStatus.COMPLETED:

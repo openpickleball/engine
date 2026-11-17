@@ -45,7 +45,11 @@ Other `Match` fields with no type check (`sequence`, `best_of`, `rating_format`,
 
 ## Proof
 
-- Criterion 1: `test_blank_player_id_changes_nothing` (passes on main; regression guard).
-- Criterion 2: `test_non_date_played_on_is_rejected` (record and replay, parametrized over datetime, str, None).
-- Criterion 3: `test_bool_score_is_rejected`.
+- Criterion 1: `test_bad_player_id_changes_nothing` (passes on main; regression guard).
+- Criterion 2: `test_non_date_played_on_is_rejected_by_validate`, `test_non_date_played_on_changes_nothing_live`, `test_non_date_played_on_is_rejected_in_a_ledger` (datetime, str, None, int), and `test_prequential_rejects_the_new_cases`.
+- Criterion 3: `test_bool_score_is_rejected`, `test_bool_score_is_rejected_in_a_ledger`, `test_a_bool_score_is_rejected_before_the_content_key`.
 - Criterion 4: the existing suite.
+
+## Revision after review
+
+Review found that `record(match, as_of=...)` raised a bare `TypeError` for a `datetime` or str `as_of` (and returned `DUPLICATE_MATCH_ID` for a processed id). Same area and small, so it is folded in: `record` raises `InvalidMatchError` for an `as_of` that is not a plain `date`, right after `match.validate()`. Test: `test_record_rejects_an_as_of_that_is_not_a_plain_date`. The `played_on` message now reads "played_on must be a plain date (not a datetime)", and the `_content_score` and `_content_key` docstrings no longer mention bool scores.

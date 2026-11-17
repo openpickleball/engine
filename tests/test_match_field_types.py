@@ -11,7 +11,14 @@ from datetime import date, datetime
 
 import pytest
 
-from open_engine import InvalidMatchError, Match, RatingEngine, RatingFormat, replay
+from open_engine import (
+    InvalidMatchError,
+    Match,
+    RatingEngine,
+    RatingFormat,
+    prequential_predictions,
+    replay,
+)
 
 D = RatingFormat.DOUBLES
 ON = date(2026, 3, 2)
@@ -61,7 +68,7 @@ NOT_DATES = [datetime(2026, 3, 2, 10), "2026-03-02", None, 20260302]
 
 @pytest.mark.parametrize("played_on", NOT_DATES, ids=["datetime", "str", "none", "int"])
 def test_non_date_played_on_is_rejected_by_validate(played_on: object) -> None:
-    with pytest.raises(InvalidMatchError, match="played_on must be a date"):
+    with pytest.raises(InvalidMatchError, match="played_on must be a plain date"):
         _m("syn-m1", played_on=played_on).validate()
 
 
@@ -69,7 +76,7 @@ def test_non_date_played_on_is_rejected_by_validate(played_on: object) -> None:
 def test_non_date_played_on_changes_nothing_live(played_on: object) -> None:
     eng = _engine()
     before = _state(eng)
-    with pytest.raises(InvalidMatchError, match="played_on must be a date"):
+    with pytest.raises(InvalidMatchError, match="played_on must be a plain date"):
         eng.record(_m("syn-m1", played_on=played_on))
     assert _state(eng) == before
 
@@ -79,7 +86,7 @@ def test_non_date_played_on_changes_nothing_live(played_on: object) -> None:
 def test_non_date_played_on_is_rejected_in_a_ledger(played_on: object, first: bool) -> None:
     good = _m("syn-m1")
     bad = _m("syn-m2", played_on=played_on)
-    with pytest.raises(InvalidMatchError, match="played_on must be a date"):
+    with pytest.raises(InvalidMatchError, match="played_on must be a plain date"):
         replay([bad, good] if first else [good, bad], as_of=AS_OF)
 
 
@@ -95,3 +102,27 @@ def test_bool_score_is_rejected(games: tuple[tuple[object, object], ...]) -> Non
 def test_bool_score_is_rejected_in_a_ledger() -> None:
     with pytest.raises(InvalidMatchError, match="Game scores must be integers"):
         replay([_m("syn-m1"), _m("syn-m2", games=((11, True),))], as_of=AS_OF)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [_m("syn-m2", played_on=datetime(2026, 3, 2, 10)), _m("syn-m2", games=((11, True),))],
+    ids=["datetime_played_on", "bool_score"],
+)
+def test_prequential_rejects_the_new_cases(bad: Match) -> None:
+    with pytest.raises(InvalidMatchError):
+        prequential_predictions([_m("syn-m1"), bad])
+
+
+NOT_AS_OF = [datetime(2026, 3, 31, 10), "2026-03-31"]
+
+
+@pytest.mark.parametrize("as_of", NOT_AS_OF, ids=["datetime", "str"])
+@pytest.mark.parametrize("repeat", [False, True], ids=["new_id", "processed_id"])
+def test_record_rejects_an_as_of_that_is_not_a_plain_date(as_of: object, repeat: bool) -> None:
+    eng = _engine()
+    before = _state(eng)
+    match_id = "syn-m0" if repeat else "syn-m1"
+    with pytest.raises(InvalidMatchError, match="as_of must be a plain date"):
+        eng.record(_m(match_id), as_of=as_of)  # type: ignore[arg-type]
+    assert _state(eng) == before
