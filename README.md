@@ -98,7 +98,8 @@ Rating:
 Inputs:
 
 - `Config`: every rating parameter, with a fingerprint for provenance.
-- `Match`: one completed match with its teams, game scores, date, and format.
+- `Match`: one match with its teams, game scores, date, format, and status. Only a completed match can count.
+- `MatchStatus`: how a match ended: completed, forfeit, retired, or incomplete (see "Match status").
 - `GameFormat`: how each game is scored (scoring type, points to, win by, cap).
 - `RatingFormat`: the rating pool (singles, doubles, and the doubles categories).
 - `MatchType`: how a match was organized and verified, which sets its weight.
@@ -110,7 +111,7 @@ Inputs:
 Results:
 
 - `MatchResult`: what `record` did with a match, including the rating changes.
-- `RejectionReason`: why a match was not counted.
+- `RejectionReason`: why a match was not counted. `MATCH_NOT_COMPLETED` covers every status other than completed.
 - `PlayerSummary`: a player's rating, reliability, established flag, and provenance in one format.
 - `ReplayInfo`: the date, config version, and config fingerprint of a replay.
 
@@ -163,6 +164,27 @@ A match moves ratings by how the result compared with the expectation.
 - `win_weight = 1.0` scores the result only, so a winner never loses rating. Values between 0 and 1 make a rating loss less likely. Only values close to 1 rule it out, and how close depends on the rating range and scale and on the lowest point share a winner can have.
 - The default is a declared choice, not a validated one. It changes only when out-of-sample evaluation shows another value predicts better.
 
+## Match status
+
+`Match.status` says how a match ended. It is a `MatchStatus` and defaults to `COMPLETED`.
+
+- `COMPLETED`: at least one game and a decided winner. Nothing changes for these matches.
+- `FORFEIT`: the match was not played, so it has no games.
+- `RETIRED`: a player stopped, for example through injury, before a winner was decided.
+- `INCOMPLETE`: the match stopped for another reason, such as time or weather.
+
+A retired or incomplete match records zero or more finished games, each valid in its game format, and no decided winner. A partial game in progress, such as `(7, 4)` to 11, is not recorded. Any other status value, including the plain text `"forfeit"`, raises `InvalidMatchError`.
+
+A match that is not completed is never rated:
+
+- `record` returns a result that is not counted, with `RejectionReason.MATCH_NOT_COMPLETED`, and changes nothing. Its `match_id` is not marked processed, so a later completed match with that id can still count live.
+- `replay` accepts the row. It counts toward `matches_considered`, not `matches_counted`. Each player's ratings are the same as in a replay of the ledger without those rows. In one ledger, a non-completed row and a completed row with the same `match_id` conflict (`LedgerConflictError`), so replace the row instead.
+- `prequential_predictions`, `evaluate`, `fit_scale`, and `fit_win_calibration` never predict it.
+
+Rating a retirement on its finished games would change how ratings move. It is not done here. It would need a declared `Config` parameter backed by out-of-sample evaluation.
+
+A status keeps a match from moving any rating, so a team could report a loss as a forfeit or an unfinished match. The engine cannot tell. The backend should verify a status as it verifies scores, and store which team forfeited or retired, which the engine does not record.
+
 ## Snapshots and checkpoints
 
 `RatingEngine.to_snapshot()` returns the engine's whole state as plain JSON data. `json.dumps(snapshot, allow_nan=False)` works with no custom encoder. `RatingEngine.from_snapshot(snapshot, cfg)` builds the engine back, from the dict or from `json.loads` of its text. Every value comes back with its type: an int stays an int. The same state always gives the same JSON text.
@@ -186,9 +208,9 @@ Resume gives the same result as a full replay of the ledger and seeds its rows c
 
 A stored snapshot sets every rating when it is loaded. Give it the same write protection as the ratings themselves. `from_snapshot` checks its shape and the engine's rules, not that it is authentic.
 
-Schema, version 2. Dates are `YYYY-MM-DD` text. Every object has exactly these keys, and `from_snapshot` rejects a missing key, an unknown key, or a value of the wrong type or out of range. It also rejects a state the engine cannot produce: an initial rating outside the rating bounds, an unplayed state with a played state's RD or with partners, opponents, or live updates, `matches_played` and `last_played` that disagree, more live updates than matches, a player listed as their own partner or opponent, or an imported reliability with no import date. Account and external ids are only type checked, since the engine can build shared or blank ones and they do not affect ratings. Each `content_keys` value must be a processed match id, and no two keys may name the same id. In a resumable snapshot, no date may be after `calculated_as_of`, and the replay counts must match `ledger_digests` and `processed_match_ids`. Counts are at most `2**63 - 1`.
+Schema, version 3. Dates are `YYYY-MM-DD` text. Every object has exactly these keys, and `from_snapshot` rejects a missing key, an unknown key, or a value of the wrong type or out of range. It also rejects a state the engine cannot produce: an initial rating outside the rating bounds, an unplayed state with a played state's RD or with partners, opponents, or live updates, `matches_played` and `last_played` that disagree, more live updates than matches, a player listed as their own partner or opponent, or an imported reliability with no import date. Account and external ids are only type checked, since the engine can build shared or blank ones and they do not affect ratings. Each `content_keys` value must be a processed match id, and no two keys may name the same id. In a resumable snapshot, no date may be after `calculated_as_of`, and the replay counts must match `ledger_digests` and `processed_match_ids`. Counts are at most `2**63 - 1`.
 
-- `snapshot_version`: `2`. A version 1 snapshot does not load. Run a full replay to make a new one.
+- `snapshot_version`: `3`. A version 1 or 2 snapshot does not load. Run a full replay to make a new one. Version 3 adds no key: it marks that each row digest in `ledger_digests` now covers `Match.status`.
 - `engine_version`: the package version that wrote it. Informational, not checked.
 - `config_version`, `config_fingerprint`: of the `Config` it was taken under. `from_snapshot` checks both against the `Config` it is given.
 - `calculated_as_of`: the date of the last replay, or `null`.
