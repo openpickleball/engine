@@ -154,7 +154,7 @@ Published behavior notes:
   `player_summary` call with no date to measure at or with an as_of that
   is not a plain date.
 - Snapshots and checkpoints: `RatingEngine.to_snapshot()` gives the whole
-  engine state as JSON-safe data (schema version 1) with sorted keys and
+  engine state as JSON-safe data (schema version 2) with sorted keys and
   lists, and `RatingEngine.from_snapshot` loads it back after validating
   every key, type, and range and checking the config version and
   fingerprint. A replay's snapshot is a checkpoint:
@@ -177,9 +177,32 @@ Published behavior notes:
   voided row on or before the checkpoint, and given only the newer rows
   it cannot see a backdated row either. No flag lets it see a seed
   withdrawn or corrected after the checkpoint. Those need a full replay.
+- Likely duplicates: the same match can be reported twice under different
+  match ids. Two matches have the same content when they have the same
+  `played_on`, the same two teams as sets of players (either side may be
+  team A), and the same game scores in order, read from the same side.
+  The match_id, match type, rating format, game format, best_of,
+  played_at, sequence, and confirmed_by are left out, since two reports
+  of one match often disagree on labels. The later match in processing
+  order is the possible duplicate: arrival order live, ledger order in a
+  replay, so a replay gives the same answer whatever order rows arrive
+  in. Under the default `Config.reject_content_duplicates=False` it is
+  not rejected for this: it goes through the other checks and, if it
+  counts, its MatchResult has `possible_duplicate_of` set to the match_id
+  of the first counted match with that content. With True it is not
+  counted, with `RejectionReason.POSSIBLE_DUPLICATE` and
+  `possible_duplicate_of` set. Only counted matches are compared against,
+  so a third copy points to the first, and a match that was rejected for
+  any reason is not a target. A real rematch on the same date between
+  the same teams with the same scores looks the same: the default flags
+  it, and True does not count it, so keep the default where that matters
+  and let the backend confirm. Reports that disagree on the date are not
+  caught.
 - `record` validates every match first. A valid match whose `match_id` was
   already processed returns a result that is not counted, with
-  `RejectionReason.DUPLICATE_MATCH_ID`, instead of raising.
+  `RejectionReason.DUPLICATE_MATCH_ID`, instead of raising. A match with
+  the same content as an earlier counted match under another match_id is
+  flagged or, by config, rejected (see the note on likely duplicates).
 
 Production notes:
 - Persist the match ledger and player identities in a database. This module's
@@ -455,10 +478,11 @@ class Config:
 
     # Likely duplicates: a match with the same played_on, the same two teams
     # (either side may be team A), and the same game scores as an earlier
-    # counted match, under another match_id. False counts it and sets
-    # MatchResult.possible_duplicate_of. True does not count it
-    # (RejectionReason.POSSIBLE_DUPLICATE). A real same-day rematch with the
-    # same scores is caught too, so the default only flags.
+    # counted match, under another match_id. False does not reject it for
+    # this, and a counted one has MatchResult.possible_duplicate_of set.
+    # True does not count it (RejectionReason.POSSIBLE_DUPLICATE). A real
+    # same-day rematch with the same scores is caught too, so the default
+    # only flags.
     reject_content_duplicates: bool = False
 
     # Imported reliability display.
@@ -885,11 +909,13 @@ class MatchResult:
     engine has seen with the same content: the same played_on, the same two
     teams (either side may be team A, in any player order), and the same
     game scores read from the same side. Other fields, the match_id and
-    rating format included, are left out. It is set on a counted match and
-    on a match rejected with RejectionReason.POSSIBLE_DUPLICATE (under
-    Config.reject_content_duplicates), and None on every other result and
-    on parent. A real rematch on the same date with the same scores is
-    flagged too, so it is a signal for the backend to check, not proof.
+    rating format included, are left out. It is None when there is no such
+    earlier match. Only a counted match and a match rejected with
+    RejectionReason.POSSIBLE_DUPLICATE (under
+    Config.reject_content_duplicates) carry it; it is None on every other
+    result and on parent. A real rematch on the same date with the same
+    scores is flagged too, so it is a signal for the backend to check, not
+    proof.
     """
 
     counted: bool
@@ -2234,6 +2260,14 @@ class RatingEngine:
         format, or before the date that player's rating in that format
         already reflects (for a category rating copied from overall
         doubles). Stored dates never move back.
+
+        A match with the same content as an earlier counted match (same
+        played_on, teams, and scores; see MatchResult.possible_duplicate_of)
+        goes through the other checks by default and, if it counts, has
+        possible_duplicate_of set. With Config.reject_content_duplicates it
+        is not counted, with RejectionReason.POSSIBLE_DUPLICATE. That check runs after the
+        match_id and game format checks and before the self-reported
+        checks, so a rejected duplicate never enters the self-reported log.
         """
         match.validate()
         if match.match_id in self.processed_match_ids:
