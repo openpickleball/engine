@@ -46,6 +46,18 @@ Published behavior notes:
   ledger live in ledger order: the replay date labels the result but never
   changes an update. Inactivity widens RD (`inflated_rd`) but never shrinks
   or discounts an old match's update.
+- Live recording applies matches in arrival order. Only a replay gives play
+  order. A live match is late when it is dated before a player's last
+  match in its format, or before the date that player's rating in that
+  format already reflects (for a category rating copied from overall
+  doubles). It still counts, but it never moves last_played, rd_as_of, or
+  a partner or opponent date back, and its MatchResult has `late` set to
+  True. The backend should check `late` and, for a category match,
+  `parent.late`, and schedule a replay when either is True. The engine
+  stores dates, not times, so two matches on the same date that arrive
+  out of played_at order are not flagged. Because dates never move back,
+  a future-dated live match holds every date of its players at that
+  future date until the next replay (see the production notes).
 - PlayerSummary.reliability is always OPEN-earned. An imported external
   reliability is shown separately, in PlayerSummary.imported_reliability,
   only until OPEN-earned reliability exceeds it or the carry limits in
@@ -157,6 +169,15 @@ Production notes:
   rating once OPEN matches have been processed.
 - Store each replay's `ReplayInfo` (as_of date, config version, config
   fingerprint) for auditability.
+- Reject a match whose `played_on` is after the date it was submitted.
+  The engine never reads the clock, so it cannot tell. A future-dated
+  live match, by typo or on purpose, holds last_played, rd_as_of, and
+  partner and opponent dates at that future date for every player in it
+  until the next replay: RD stops growing, reliability is held up, and
+  player_summary's default reference date jumps ahead. A later honest
+  match with those players that counts in the same rating format comes
+  back with `late` set to True. For a category match, `parent.late` covers the
+  overall doubles rating.
 - To avoid replaying the whole ledger every time, persist the snapshot of
   each scheduled replay and resume the next one from it. Take the
   snapshot right after the replay, before any other call on the engine.
@@ -807,6 +828,19 @@ class MatchResult:
     frozen. A value of 0.0 does not mean nothing was clamped or frozen: read
     clamped and frozen for that. parent holds the overall doubles update for
     a category match, with its own imbalance.
+
+    late is True for a counted match dated before a player's last match in
+    this rating format, or before the date that player's rating in this
+    format already reflects (for a category rating copied from overall
+    doubles). Frozen players count. Live recording applies matches in
+    arrival order, so the backend should check late and, for a category
+    match, parent.late, and schedule a replay when either is True. It
+    compares dates only, so a match on the same date as a player's last
+    match is not late. It is False for a match that did not count. parent
+    has its own value, measured against the overall doubles dates. A late
+    category match leaves its rd_as_of at the date that player's rating
+    already reflects, so later live category matches dated before that
+    date are late too.
     """
 
     counted: bool
@@ -820,6 +854,7 @@ class MatchResult:
     frozen: tuple[str, ...] = ()  # predates the player's imported baseline
     clamped: tuple[str, ...] = ()  # hit the rating floor or ceiling
     imbalance: float = 0.0  # mean team A delta plus mean team B delta
+    late: bool = False  # dated before what a player's rating here reflects
     parent: MatchResult | None = None  # overall doubles update for categories
 
 
@@ -930,6 +965,34 @@ def _actual_point_share(match: Match, cfg: Config) -> tuple[float, bool]:
 def _rolling_unique_count(interactions: dict[str, date], on: date, window_days: int) -> int:
     cutoff = on - timedelta(days=window_days)
     return sum(1 for last_seen in interactions.values() if last_seen >= cutoff)
+
+
+def _latest(current: date | None, on: date) -> date:
+    """The later of a stored date and a match date, so a date never moves back."""
+    return on if current is None else max(current, on)
+
+
+def _is_late(state: RatingState, on: date) -> bool:
+    """
+    True when a match on `on` is dated before what the state already reflects.
+
+    That is its last match, or its rd_as_of when that is not just the
+    imported capture date: a category rating copied from overall doubles
+    keeps the doubles rd_as_of but has no last_played.
+    """
+    if state.last_played is not None and on < state.last_played:
+        return True
+    return (
+        state.rd_as_of is not None
+        and state.rd_as_of != state.initial_source_date
+        and on < state.rd_as_of
+    )
+
+
+def _seen(interactions: dict[str, date], ids: Iterable[str], on: date) -> None:
+    """Record each id as seen on `on`, keeping a later date already stored."""
+    for other in ids:
+        interactions[other] = _latest(interactions.get(other), on)
 
 
 def reliability(state: RatingState, cfg: Config, as_of: date) -> float:
@@ -2052,7 +2115,12 @@ class RatingEngine:
         next replay). replay() passes a fixed as_of for authoritative rebuilds.
         `as_of` only labels the update as part of a replay and must not be
         earlier than the match date; the update itself does not depend on it.
-        Nothing is changed unless the match counts.
+        Nothing is changed unless the match counts. Live results apply in
+        arrival order: MatchResult.late (and parent.late, for a category
+        match) flags a match dated before a player's last match in that
+        format, or before the date that player's rating in that format
+        already reflects (for a category rating copied from overall
+        doubles). Stored dates never move back.
         """
         match.validate()
         if match.match_id in self.processed_match_ids:
@@ -2134,6 +2202,11 @@ class RatingEngine:
         if len(frozen) == len(ids):
             return MatchResult(False, rating_format, RejectionReason.BEFORE_IMPORTED_BASELINE), None
 
+        # Live results apply in arrival order. A match dated before any
+        # player's last match here, or before the date a copied category
+        # rating already reflects (frozen players included), arrived late.
+        late = any(_is_late(work[pid], match.played_on) for pid in ids)
+
         states_a = [work[pid] for pid in match.team_a]
         states_b = [work[pid] for pid in match.team_b]
         rating_a = sum(s.rating for s in states_a) / len(states_a)
@@ -2188,13 +2261,15 @@ class RatingEngine:
                     cfg.rd_min,
                     state.rd * (1.0 - cfg.rd_shrink_per_match * effective_weight),
                 )
-                state.rd_as_of = match.played_on
+                # Dates never move back, so a late match does not rerun
+                # inactivity or drop a recent partner from the window.
+                state.rd_as_of = _latest(state.rd_as_of, match.played_on)
                 state.matches_played += 1
-                state.last_played = match.played_on
-                state.partners.update(
-                    {other: match.played_on for other in team_ids if other != pid}
+                state.last_played = _latest(state.last_played, match.played_on)
+                _seen(
+                    state.partners, (other for other in team_ids if other != pid), match.played_on
                 )
-                state.opponents.update({other: match.played_on for other in opponent_ids})
+                _seen(state.opponents, opponent_ids, match.played_on)
                 applied[pid] = state.rating - old_rating
                 deltas[pid] = round(applied[pid], 5)
 
@@ -2220,6 +2295,7 @@ class RatingEngine:
             frozen=tuple(sorted(frozen)),
             clamped=tuple(clamped),
             imbalance=imbalance,
+            late=late,
         )
         return result, {pid: work[pid] for pid in ids if pid not in frozen}
 
@@ -2236,8 +2312,8 @@ class RatingEngine:
         last replay date) and the player's last_played. So a stale player is
         measured at the replay date, and a player with live matches since at
         their last match. Players in one engine can be measured at different
-        dates by default. A backdated live match moves last_played back, and
-        so the default date with it. The engine never reads the wall clock.
+        dates by default. A late live match never moves last_played back.
+        The engine never reads the wall clock.
 
         An as_of earlier than the player's last match does not rebuild past
         state: RD and partner variety stay as of the stored state.
