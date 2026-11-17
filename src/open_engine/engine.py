@@ -197,12 +197,16 @@ Published behavior notes:
   the same teams with the same scores looks the same: the default flags
   it, and True does not count it, so keep the default where that matters
   and let the backend confirm. Reports that disagree on the date are not
-  caught. RatingEngine.possible_duplicates maps each flagged or rejected
-  copy to the match_id it repeats, live and after a replay.
+  caught. RatingEngine.possible_duplicates maps each match flagged or
+  rejected as a copy to the match_id it repeats, live and after a replay.
+  An entry stays until that match_id later counts with no twin, which
+  only a copy rejected under True can do.
   Which report wins is set by processing order alone. With True, the
   report that survives is the first one to count in processing order
-  (arrival order live; in a replay, ledger order, where untimed rows on a
-  date sort before timed ones and then sequence and match_id decide),
+  (arrival order live; in a replay, ledger order as in the ledger order
+  note: untimed rows on a date first, by sequence then match_id, then
+  timed rows by the UTC instant of played_at, then sequence and
+  match_id),
   whatever its match type, rating format, or game format. So a weaker or
   relabeled copy (for example an untimed self-report of a timed
   tournament match, or a mixed doubles copy of a doubles row) can count
@@ -1941,8 +1945,9 @@ class RatingEngine:
         # Content key (see _content_key) of each counted match, to the
         # match_id of the first one counted with it. Never overwritten.
         self._content_keys: dict[str, str] = {}
-        # match_id of every match flagged or rejected as a possible
+        # match_id of each match flagged or rejected as a possible
         # duplicate, to the match_id it repeats (its possible_duplicate_of).
+        # An entry stays until that match_id later counts with no twin.
         self.possible_duplicates: dict[str, str] = {}
         # Digest of each ledger row a replay considered, by match_id. Only
         # replay fills it; resume compares rows against it.
@@ -2001,7 +2006,8 @@ class RatingEngine:
         MatchResult.possible_duplicate_of, to the match_id first counted
         with it, sorted by digest), possible_duplicates (sorted by
         match_id: each match flagged or rejected as a possible duplicate,
-        to the match_id it repeats), ledger_digests (match_id to the
+        to the match_id it repeats, until that match_id later counts with
+        no twin), ledger_digests (match_id to the
         SHA-256 digest of every row any replay behind this engine
         considered, cumulative across resumes),
         ledger_player_ids (sorted ids of every player named in those rows,
