@@ -1239,7 +1239,7 @@ def _validate_seed(player: Player, cfg: Config) -> None:
 # Snapshots
 # ---------------------------------------------------------------------------
 
-SNAPSHOT_VERSION = 1
+SNAPSHOT_VERSION = 2
 
 _TOP_KEYS = frozenset(
     {
@@ -1252,6 +1252,7 @@ _TOP_KEYS = frozenset(
         "players",
         "processed_match_ids",
         "self_reported_log",
+        "content_keys",
         "ledger_digests",
         "ledger_player_ids",
         "resumable",
@@ -1290,6 +1291,7 @@ class _Snapshot:
     players: dict[str, Player]
     processed_match_ids: set[str]
     self_reported_log: dict[MatchupKey, list[date]]
+    content_keys: dict[str, str]
     calculated_as_of: date | None
     replay_info: ReplayInfo | None
     ledger_digests: dict[str, str]
@@ -1661,6 +1663,33 @@ def _snap_replay_info(
     return ReplayInfo(calculated_as_of, version, fingerprint, considered, counted)
 
 
+def _snap_content_keys(value: object, processed: set[str]) -> dict[str, str]:
+    """
+    Content keys read from a snapshot: digest to the match_id first counted with it.
+
+    Each key is 64 lowercase hex characters, each id a processed match, and
+    no id appears twice, since a match has one content key.
+    """
+    if not isinstance(value, Mapping):
+        raise SnapshotError("snapshot.content_keys must be an object")
+    keys: dict[str, str] = {}
+    owners: set[str] = set()
+    for key, match_id in value.items():
+        if not isinstance(key, str) or len(key) != 64 or not set(key) <= _HEX:
+            raise SnapshotError(
+                f"snapshot.content_keys has a key that is not 64 lowercase hex characters: {key!r}"
+            )
+        path = f"snapshot.content_keys[{key!r}]"
+        match_id = _snap_id(match_id, path)
+        if match_id not in processed:
+            raise SnapshotError(f"{path} names {match_id!r}, which is not in processed_match_ids")
+        if match_id in owners:
+            raise SnapshotError(f"snapshot.content_keys maps more than one key to {match_id!r}")
+        owners.add(match_id)
+        keys[key] = match_id
+    return keys
+
+
 def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
     """Validate a snapshot against cfg and read it. Raises SnapshotError naming the bad value."""
     if not isinstance(snapshot, Mapping):
@@ -1718,6 +1747,8 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
             raise SnapshotError(f"{path} repeats a matchup")
         log[key] = dates
 
+    content_keys = _snap_content_keys(raw["content_keys"], processed)
+
     digests_raw = raw["ledger_digests"]
     if not isinstance(digests_raw, Mapping):
         raise SnapshotError("snapshot.ledger_digests must be an object")
@@ -1748,6 +1779,7 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
         players,
         processed,
         log,
+        content_keys,
         calculated_as_of,
         replay_info,
         digests,
@@ -1817,7 +1849,7 @@ class RatingEngine:
 
     def to_snapshot(self) -> dict[str, object]:
         """
-        The engine's whole state as JSON-safe data (schema version 1).
+        The engine's whole state as JSON-safe data (schema version 2).
 
         json.dumps(snapshot, allow_nan=False) works with no custom encoder,
         and RatingEngine.from_snapshot rebuilds the engine from it, or from
@@ -1825,7 +1857,7 @@ class RatingEngine:
         every list in a fixed order, so the same state always gives the same
         text. Numbers keep their type: an int stays an int.
 
-        Keys: snapshot_version (1), engine_version (informational),
+        Keys: snapshot_version (2), engine_version (informational),
         config_version and config_fingerprint (of this engine's Config),
         calculated_as_of (ISO date or null), replay_info (null, or its
         fields with as_of as an ISO date), players (sorted by id: id,
@@ -1834,7 +1866,9 @@ class RatingEngine:
         and opponents as id to ISO date), processed_match_ids (sorted),
         self_reported_log (sorted by format then teams: rating_format,
         teams as two sorted id lists, and dates in stored order),
-        ledger_digests (match_id to the SHA-256 digest of every row any
+        content_keys (the content key digest of each counted match, see
+        MatchResult.possible_duplicate_of, to the match_id first counted
+        with it, sorted by digest), ledger_digests (match_id to the SHA-256 digest of every row any
         replay behind this engine considered, cumulative across resumes),
         ledger_player_ids (sorted ids of every player named in those rows,
         counted or not), and resumable (true only while the engine is
@@ -1866,6 +1900,7 @@ class RatingEngine:
             "calculated_as_of": _iso(self.calculated_as_of),
             "config_fingerprint": self.cfg.fingerprint(),
             "config_version": self.cfg.version,
+            "content_keys": _sorted_dict(self._content_keys.items()),
             "engine_version": __version__,
             "ledger_digests": _sorted_dict(self._ledger_digests.items()),
             "ledger_player_ids": sorted(self._ledger_player_ids, key=str),
@@ -1892,15 +1927,16 @@ class RatingEngine:
         cfg must be the Config the snapshot was taken under (default
         Config()): its version and fingerprint must equal the snapshot's.
         The whole snapshot is validated before anything is built: exactly
-        the schema's keys at every level, snapshot_version 1, dates as
+        the schema's keys at every level, snapshot_version 2, dates as
         YYYY-MM-DD text, non-blank str ids with no repeated player or match
         id, RatingFormat values as format keys, ratings within min_rating
         and max_rating, RD within rd_min and rd_max, an imported
         reliability between 0 and 100, nonnegative int counts no larger
         than 2**63 - 1, replay_info present exactly when calculated_as_of
         is and consistent with it, self-reported matchups of two disjoint
-        teams of the format's size, ledger digests of 64 lowercase hex
-        characters, and a bool resumable that is false without a replay.
+        teams of the format's size, content keys and ledger digests of 64
+        lowercase hex characters, content keys that each name a different
+        processed match id, and a bool resumable that is false without a replay.
         Every state must be one the engine can produce: initial_rating
         within the rating bounds; an unplayed state with RD new_player_rd,
         external_seed_rd, or at least category_seed_rd, and no partners,
@@ -1922,6 +1958,7 @@ class RatingEngine:
         engine.players = state.players
         engine.processed_match_ids = state.processed_match_ids
         engine.self_reported_log = state.self_reported_log
+        engine._content_keys = state.content_keys
         engine.calculated_as_of = state.calculated_as_of
         engine.replay_info = state.replay_info
         engine._ledger_digests = state.ledger_digests
