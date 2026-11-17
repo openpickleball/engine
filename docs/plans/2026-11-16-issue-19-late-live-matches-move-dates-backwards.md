@@ -48,6 +48,7 @@ Live processing applies results in arrival order, not play order. That stays tru
   - `player_summary` docstring: drop the backdated sentence. Say instead that a late live match never moves `last_played` back.
   - Module docstring: extend the provisional versus authoritative note as in criterion 6.
 - `tests/test_late_live_match.py` (new): the tests in Proof.
+- `tests/test_late_live_category.py` (new, added in review): the widened criterion 4 tests, the new-partner test, the ledger-order test with seeds, and the future-dated match test.
 - `README.md`: one sentence where live recording or `MatchResult` is described.
 - `CHANGELOG.md`: the two entries in criterion 6.
 
