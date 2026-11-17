@@ -52,6 +52,7 @@ Two real matches with the same players and the same scores on one day are possib
 - `tests/test_duplicate_order.py` (new, after review): pins the documented processing-order limit.
 - `tests/test_snapshot_possible_duplicates.py` (new, after the delta review): `from_snapshot` enforces the `possible_duplicates` invariants under both configs.
 - `tests/test_content_key_scores.py` (new, after review): huge and bool scores in the content key.
+- `tests/test_resumable_possible_duplicates.py` (new, after the third delta review): a resumable snapshot refuses a `possible_duplicates` key that is not in `ledger_digests`, under both configs; live snapshots keep the earlier rules.
 - `tests/test_api.py`: `POSSIBLE_DUPLICATE` in the rejection member list and a case that produces it (added during implementation: the existing member test lists every reason).
 - `tests/test_snapshot.py`: version 2, the new top-level key in its key list and attribute list, the version test cases.
 - `README.md`: quick start paragraph sentence; snapshot schema section (`content_keys`, `snapshot_version: 2`).
