@@ -689,15 +689,15 @@ class RatingState:
     # Live updates applied since the last authoritative replay.
     live_updates_since_replay: int = 0
 
+    # Most recent interaction date by player ID, allowing rolling diversity.
+    partners: dict[str, date] = field(default_factory=dict)
+    opponents: dict[str, date] = field(default_factory=dict)
+
     # Live updates since the last replay that were already in the parent
     # state when this category state was derived from it. Set once, at
     # derivation; 0 for a state not derived from its parent. A replay
     # gives 0, since no state has live updates during a replay.
     inherited_live_updates: int = 0
-
-    # Most recent interaction date by player ID, allowing rolling diversity.
-    partners: dict[str, date] = field(default_factory=dict)
-    opponents: dict[str, date] = field(default_factory=dict)
 
 
 @dataclass
@@ -1766,7 +1766,10 @@ def _check_inherited_live_updates(
 
     Only a category state derived from its parent inherits a count, and the
     parent's own count only grows until the next replay, so it is never
-    below what the category inherited.
+    below what the category inherited. A derived state takes the parent's
+    initial_source_date and no other provenance, and a parent with live
+    updates has been played, so it can no longer be reseeded: a state with
+    a nonzero count still has its parent's initial_source_date.
     """
     for fmt in sorted(states, key=lambda f: f.value):
         inherited = states[fmt].inherited_live_updates
@@ -1783,9 +1786,27 @@ def _check_inherited_live_updates(
                 f"{state_path} must be 0 unless the state is derived from its parent"
             )
         base = states.get(parent)
-        if base is None or inherited > base.live_updates_since_replay:
+        if base is None:
+            raise SnapshotError(f"{state_path} needs a {parent.value} state, which is missing")
+        if inherited > base.live_updates_since_replay:
             raise SnapshotError(
                 f"{state_path} must not exceed the parent's live_updates_since_replay"
+            )
+        state = states[fmt]
+        if (
+            state.initial_source_reliability is not None
+            or state.initial_external_player_id is not None
+            or state.initial_evidence_reference is not None
+        ):
+            raise SnapshotError(
+                f"{path}.ratings.{fmt.value}: a state with inherited_live_updates must have "
+                "no initial_source_reliability, initial_external_player_id, or "
+                "initial_evidence_reference"
+            )
+        if state.initial_source_date != base.initial_source_date:
+            raise SnapshotError(
+                f"{path}.ratings.{fmt.value}.initial_source_date must equal the parent "
+                "state's initial_source_date when inherited_live_updates is nonzero"
             )
 
 
@@ -2242,8 +2263,10 @@ class RatingEngine:
         player their own partner or opponent; an imported reliability only
         with an initial_source_date; a nonzero inherited_live_updates only
         on a category state derived from its parent (category_feeds_parent
-        on, initial_source "open_parent:" plus the parent's value) and no
-        more than the parent state's live updates. Identities are only type checked
+        on, initial_source "open_parent:" plus the parent's value) with a
+        parent state, no more than the parent state's live updates, the
+        parent's initial_source_date, and no imported reliability, external
+        player id, or evidence reference. Identities are only type checked
         (account_user_id a str or null, external_ids str to str), since
         the engine's own methods can build shared or blank ones and they
         do not affect ratings. A resumable snapshot also holds no
@@ -2370,8 +2393,8 @@ class RatingEngine:
         """
         Claim an existing external-only player profile for an OPEN account.
 
-        Raises PlayerError for a blank id or account, or when the player or
-        the account is already linked elsewhere. Every check runs before
+        Raises PlayerError for a blank player id, an empty account, or when
+        the player or the account is already linked elsewhere. Every check runs before
         anything changes, so a failed call creates no player.
         """
         self._check_account(player_id, account_user_id)
@@ -2383,8 +2406,8 @@ class RatingEngine:
         """
         Link an external identity to a player. Each identity links to one player.
 
-        Raises PlayerError for a blank id, source, or external id, when the
-        player already has a different id from that source, or when the
+        Raises PlayerError for a blank player id, an empty source or external
+        id, when the player already has a different id from that source, or when the
         identity is linked to another player. Every check runs before
         anything changes, so a failed call creates no player.
         """

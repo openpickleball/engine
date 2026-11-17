@@ -176,6 +176,8 @@ Tests go in a new `tests/test_inherited_live_updates.py`, plus the schema update
 - The version guards in `tests/test_snapshot.py`, `tests/test_match_status.py`, and `tests/test_content_duplicates.py` move from 3 to 4. `test_snapshot_version_is_3` becomes `test_snapshot_version_is_4`, and the float version case uses 4.0, so it still tests a float equal to the version.
 - The Part A changelog entry landed in its own commit, after the fix commit left it out.
 
+- Addendum review round 1. AD1: the changelog's version 3 line is now past tense. AD2: `inherited_live_updates` moved to the last `RatingState` field, after `opponents`, so positional calls keep their meaning; the snapshot form is unchanged, since its keys are sorted. AD3: the `link_account` and `attach_external_id` docstrings say an empty account, source, or external id raises (only the player id strips whitespace), with no behavior change. AD4: a nonzero `inherited_live_updates` also needs a parent state (with a message that names it), the parent state's `initial_source_date`, and no imported reliability, external player id, or evidence reference. The rule does not apply at count 0, since a category state derived from an unplayed seeded parent keeps its date when that parent is reseeded. Tests are in `tests/test_addendum_review_fixes.py`, with guards for empty fields on an existing player and a `prequential_predictions` seed.
+
 ### Order of work (addendum)
 
 1. Part A red tests, committed alone. Then the fix.
