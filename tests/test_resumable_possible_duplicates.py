@@ -33,6 +33,14 @@ def _reject() -> Config:
 
 
 CONFIGS = pytest.mark.parametrize("cfg_factory", [Config, _reject], ids=["default", "reject"])
+# Under the default an unprocessed key is reported as not processed first
+# (tests/test_snapshot_possible_duplicates.py pins that message for the
+# same input), so the default case accepts either reason.
+UNCONSIDERED = pytest.mark.parametrize(
+    ("cfg_factory", "message"),
+    [(Config, r"snapshot\.possible_duplicates has key 'ghost'"), (_reject, MESSAGE)],
+    ids=["default", "reject"],
+)
 
 
 def _snap(engine: RatingEngine) -> dict[str, object]:
@@ -40,18 +48,18 @@ def _snap(engine: RatingEngine) -> dict[str, object]:
     return snap
 
 
-@CONFIGS
+@UNCONSIDERED
 def test_resumable_snapshot_refuses_an_unconsidered_key(
-    cfg_factory: Callable[[], Config],
+    cfg_factory: Callable[[], Config], message: str
 ) -> None:
     cfg = cfg_factory()
     snap = _snap(replay([M1, M2], cfg=cfg, as_of=AS_OF))
     assert snap["resumable"] is True
     snap["possible_duplicates"] = {"ghost": "m1"}
-    with pytest.raises(SnapshotError, match=MESSAGE):
+    with pytest.raises(SnapshotError, match=message):
         RatingEngine.from_snapshot(snap, cfg)
     for whole in (False, True):
-        with pytest.raises(SnapshotError, match=MESSAGE):
+        with pytest.raises(SnapshotError, match=message):
             replay([M1, M2, LATE], cfg=cfg, as_of=END, from_snapshot=snap, whole_ledger=whole)
 
 
