@@ -155,7 +155,7 @@ A match moves ratings by how the result compared with the expectation.
 - Performance is team A's share of all points across the match's games, blended with the match result by `Config.win_weight`. The default, 0.0, uses point share only.
 - So a team can win and still lose rating. That happens when it wins by less than expected, such as a 5.0 team beating a 4.0 team 11-9 in doubles. It can also happen when a team wins a best of 3 (or 5) with fewer total points.
 - There is no floor on a winner's change, other than the rating range (`min_rating` to `max_rating`).
-- Recorded against the same engine state, changing only a match's game scores, while keeping its number of games and its result, never gives a team a worse change for a higher point share. Longer games and more games carry more weight, so across game formats and game counts a slightly wider winning margin can still cost more rating.
+- For one engine state, raising a team's point share by changing only the match's game scores, with the same number of games and the same result, never gives that team a worse change. Longer games and more games can carry more weight (up to `Config.max_information_multiplier`), so across game formats and game counts a slightly wider winning margin can still cost more rating.
 - `win_weight = 1.0` scores the result only, so a winner never loses rating. Values between 0 and 1 make a rating loss less likely. Only values close to 1 rule it out, and how close depends on the rating range and scale and on the lowest point share a winner can have.
 - The default is a declared choice, not a validated one. It changes only when out-of-sample evaluation shows another value predicts better.
 
