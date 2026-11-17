@@ -163,6 +163,7 @@ REJECTIONS = [
     "BEFORE_IMPORTED_BASELINE",
     "SINGLES_RATING_GAP",
     "DOUBLES_PARTNER_GAP",
+    "POSSIBLE_DUPLICATE",
 ]
 
 
@@ -226,6 +227,12 @@ def _partner_gap() -> tuple[MatchResult, RatingFormat]:
     return eng.record(_match()), D
 
 
+def _possible_duplicate() -> tuple[MatchResult, RatingFormat]:
+    eng = RatingEngine(Config(reject_content_duplicates=True))
+    eng.record(_match())
+    return eng.record(Match("m2", ("d", "c"), ("b", "a"), ((7, 11),), ON, D)), D
+
+
 REJECTION_CASES: dict[str, Callable[[], tuple[MatchResult, RatingFormat]]] = {
     "DUPLICATE_MATCH_ID": _duplicate,
     "GAME_FORMAT_NOT_ACCEPTED": _format_rejected,
@@ -234,6 +241,7 @@ REJECTION_CASES: dict[str, Callable[[], tuple[MatchResult, RatingFormat]]] = {
     "BEFORE_IMPORTED_BASELINE": _before_baseline,
     "SINGLES_RATING_GAP": _singles_gap,
     "DOUBLES_PARTNER_GAP": _partner_gap,
+    "POSSIBLE_DUPLICATE": _possible_duplicate,
 }
 
 

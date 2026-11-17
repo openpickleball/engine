@@ -105,6 +105,8 @@ def _engine_state(eng: RatingEngine) -> dict[str, object]:
         "players": eng.players,
         "processed_match_ids": eng.processed_match_ids,
         "self_reported_log": eng.self_reported_log,
+        "content_keys": eng._content_keys,
+        "possible_duplicates": eng.possible_duplicates,
         "calculated_as_of": eng.calculated_as_of,
         "replay_info": eng.replay_info,
         "ledger_digests": eng._ledger_digests,
@@ -204,7 +206,7 @@ def test_restored_engine_does_not_share_state_with_the_snapshot(
 
 
 def test_snapshot_top_level_values(engine: RatingEngine, snapshot: dict[str, object]) -> None:
-    assert snapshot["snapshot_version"] == 1
+    assert snapshot["snapshot_version"] == 2
     assert snapshot["engine_version"] == open_engine.__version__
     assert snapshot["config_version"] == engine.cfg.version
     assert snapshot["config_fingerprint"] == engine.cfg.fingerprint()
@@ -235,6 +237,8 @@ TOP_LEVEL_KEYS = {
     "players",
     "processed_match_ids",
     "self_reported_log",
+    "content_keys",
+    "possible_duplicates",
     "ledger_digests",
     "ledger_player_ids",
     "resumable",
@@ -251,6 +255,8 @@ def test_snapshot_covers_every_engine_attribute(snapshot: dict[str, object]) -> 
         "self_reported_log",
         "calculated_as_of",
         "replay_info",
+        "_content_keys",
+        "possible_duplicates",
         "_ledger_digests",
         "_ledger_player_ids",
         "_resumable",
@@ -409,11 +415,21 @@ def _blank_digest_id(snap: Snap) -> None:
     digests[""] = "0" * 64
 
 
+def _set_dup(key: object, value: object) -> Callable[[Snap], None]:
+    def mutate(snap: Snap) -> None:
+        dups = snap["possible_duplicates"]
+        assert isinstance(dups, dict)
+        dups[key] = value
+
+    return mutate
+
+
 MALFORMED: list[tuple[str, Callable[[Snap], None], str]] = [
     ("missing key", _delete("players"), r"snapshot: missing key 'players'"),
     ("unknown key", _set("extra", 1), r"snapshot: unknown key 'extra'"),
-    ("version", _set("snapshot_version", 2), r"snapshot_version must be 1"),
-    ("version bool", _set("snapshot_version", True), r"snapshot_version must be 1"),
+    ("version", _set("snapshot_version", 1), r"snapshot_version must be 2"),
+    ("version bool", _set("snapshot_version", True), r"snapshot_version must be 2"),
+    ("version float", _set("snapshot_version", 2.0), r"snapshot_version must be 2"),
     ("engine version", _set("engine_version", 3), r"engine_version must be a str"),
     ("config version type", _set("config_version", None), r"config_version must be a str"),
     ("date form", _set("calculated_as_of", "2025-6-30"), r"calculated_as_of must be a date"),
@@ -478,6 +494,32 @@ MALFORMED: list[tuple[str, Callable[[Snap], None], str]] = [
     ("digest", _bad_digest, r"ledger_digests\['syn-m01'\] must be 64 lowercase hex"),
     ("digest id", _blank_digest_id, r"ledger_digests has an id that is not a non-blank str"),
     ("digests type", _set("ledger_digests", []), r"ledger_digests must be an object"),
+    ("dups type", _set("possible_duplicates", []), r"possible_duplicates must be an object"),
+    (
+        "dup blank key",
+        _set_dup(" ", "syn-m01"),
+        r"possible_duplicates has a key that is not a non-blank str",
+    ),
+    (
+        "dup blank value",
+        _set_dup("syn-x1", ""),
+        r"possible_duplicates\['syn-x1'\] must be a non-blank str",
+    ),
+    (
+        "dup int value",
+        _set_dup("syn-x1", 3),
+        r"possible_duplicates\['syn-x1'\] must be a non-blank str",
+    ),
+    (
+        "dup names itself",
+        _set_dup("syn-m01", "syn-m01"),
+        r"possible_duplicates\['syn-m01'\] names the match itself",
+    ),
+    (
+        "dup twin not a content key value",
+        _set_dup("syn-x1", "syn-x2"),
+        r"possible_duplicates\['syn-x1'\] names 'syn-x2', which is not a content_keys value",
+    ),
 ]
 
 

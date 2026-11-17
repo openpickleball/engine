@@ -154,7 +154,7 @@ Published behavior notes:
   `player_summary` call with no date to measure at or with an as_of that
   is not a plain date.
 - Snapshots and checkpoints: `RatingEngine.to_snapshot()` gives the whole
-  engine state as JSON-safe data (schema version 1) with sorted keys and
+  engine state as JSON-safe data (schema version 2) with sorted keys and
   lists, and `RatingEngine.from_snapshot` loads it back after validating
   every key, type, and range and checking the config version and
   fingerprint. A replay's snapshot is a checkpoint:
@@ -177,13 +177,60 @@ Published behavior notes:
   voided row on or before the checkpoint, and given only the newer rows
   it cannot see a backdated row either. No flag lets it see a seed
   withdrawn or corrected after the checkpoint. Those need a full replay.
+- Likely duplicates: the same match can be reported twice under different
+  match ids. Two matches have the same content when they have the same
+  `played_on`, the same two teams as sets of players (either side may be
+  team A), and the same game scores in order, read from the same side.
+  The match_id, match type, rating format, game format, best_of,
+  played_at, sequence, and confirmed_by are left out, since two reports
+  of one match often disagree on labels. The later match in processing
+  order is the possible duplicate: arrival order live, ledger order in a
+  replay, so a replay gives the same answer whatever order rows arrive
+  in. Under the default `Config.reject_content_duplicates=False` it is
+  not rejected for this: it goes through the other checks and, if it
+  counts, its MatchResult has `possible_duplicate_of` set to the match_id
+  of the first counted match with that content. With True it is not
+  counted, with `RejectionReason.POSSIBLE_DUPLICATE` and
+  `possible_duplicate_of` set. Only counted matches are compared against,
+  so a third copy points to the first, and a match that was rejected for
+  any reason is not a target. A real rematch on the same date between
+  the same teams with the same scores looks the same: the default flags
+  it, and True does not count it, so keep the default where that matters
+  and let the backend confirm. Reports that disagree on the date are not
+  caught. RatingEngine.possible_duplicates maps each match flagged or
+  rejected as a copy to the match_id it repeats, live and after a replay.
+  An entry stays until that match_id later counts with no twin, which
+  only a copy rejected under True can do.
+  Which report wins is set by processing order alone. With True, the
+  report that survives is the first one to count in processing order
+  (arrival order live; in a replay, ledger order as in the ledger order
+  note: untimed rows on a date first, by sequence then match_id, then
+  timed rows by the UTC instant of played_at, then sequence and
+  match_id),
+  whatever its match type, rating format, or game format. So a weaker or
+  relabeled copy (for example an untimed self-report of a timed
+  tournament match, or a mixed doubles copy of a doubles row) can count
+  while the stronger report is rejected, a category copy that counts
+  first can keep the other row from updating its rating format, and live
+  recording and a replay can keep different rows. Under the default the
+  same order decides which report is flagged, so the flagged row can be
+  the stronger one. Use True only when the backend trusts who files
+  reports; otherwise resolve flags in the backend. Under the default, a
+  category copy of a doubles match can count twice in overall doubles: once
+  directly and once through its `parent` update. `parent` has
+  `possible_duplicate_of` None, so read the top-level field.
 - `record` validates every match first. A valid match whose `match_id` was
   already processed returns a result that is not counted, with
-  `RejectionReason.DUPLICATE_MATCH_ID`, instead of raising.
+  `RejectionReason.DUPLICATE_MATCH_ID`, instead of raising. A match with
+  the same content as an earlier counted match under another match_id is
+  flagged or, by config, rejected (see the note on likely duplicates).
 
 Production notes:
 - Persist the match ledger and player identities in a database. This module's
   in-memory dictionaries are an engine, not a persistence layer.
+- Do not show `possible_duplicate_of` (or possible_duplicates) to whoever
+  submitted the match. It reveals another report's match_id and that
+  those players played that result on that date.
 - Require verified identity and authorized evidence before importing an
   external rating. An external refresh can never overwrite an OPEN-earned
   rating once OPEN matches have been processed.
@@ -453,6 +500,18 @@ class Config:
     self_reported_repeat_factor: float = 0.5
     self_reported_max_repeats: int = 4
 
+    # Likely duplicates: a match with the same played_on, the same two teams
+    # (either side may be team A), and the same game scores as an earlier
+    # counted match, under another match_id. False does not reject it for
+    # this, and a counted one has MatchResult.possible_duplicate_of set.
+    # True does not count it (RejectionReason.POSSIBLE_DUPLICATE). A real
+    # same-day rematch with the same scores is caught too, so the default
+    # only flags. Under True the first report to count in processing order
+    # survives, whatever its match type or format, so a weaker or
+    # relabeled copy can win. Use True only when the backend trusts who
+    # files reports. See the likely duplicates note in the module docstring.
+    reject_content_duplicates: bool = False
+
     # Imported reliability display.
     import_reliability_carry_matches: int = 10
     import_reliability_max_age_days: int = 365
@@ -510,6 +569,8 @@ class Config:
             raise ConfigError("import reliability limits must be nonnegative")
         if not 0.0 <= self.established_reliability_threshold <= 100.0:
             raise ConfigError("established_reliability_threshold must be between 0 and 100")
+        if not isinstance(self.reject_content_duplicates, bool):
+            raise ConfigError("reject_content_duplicates must be a bool")
 
     def fingerprint(self) -> str:
         """Stable hash of every parameter, stored with each replay."""
@@ -836,6 +897,7 @@ class RejectionReason(_StrEnum):
     BEFORE_IMPORTED_BASELINE = "before_imported_baseline"
     SINGLES_RATING_GAP = "singles_rating_gap"
     DOUBLES_PARTNER_GAP = "doubles_partner_gap"
+    POSSIBLE_DUPLICATE = "possible_duplicate"
 
 
 @dataclass
@@ -869,6 +931,23 @@ class MatchResult:
     category match leaves its rd_as_of at the date that player's rating
     already reflects, so later live category matches dated before that
     date are late too.
+
+    possible_duplicate_of is the match_id of the earliest counted match the
+    engine has seen with the same content: the same played_on, the same two
+    teams (either side may be team A, in any player order), and the same
+    game scores read from the same side. Other fields, the match_id and
+    rating format included, are left out. It is None when there is no such
+    earlier match. Only a counted match and a match rejected with
+    RejectionReason.POSSIBLE_DUPLICATE (under
+    Config.reject_content_duplicates) carry it; it is None on every other
+    result and on parent. A real rematch on the same date with the same
+    scores is flagged too, so it is a signal for the backend to check, not
+    proof. Processing order alone decides which report is the copy, so the
+    flagged or rejected one can be the stronger report (see the module
+    docstring). A category copy of a doubles match also reaches overall
+    doubles through parent, whose possible_duplicate_of is None, so read
+    this top-level field. Do not show it to whoever submitted the match:
+    it names another report.
     """
 
     counted: bool
@@ -884,6 +963,7 @@ class MatchResult:
     imbalance: float = 0.0  # mean team A delta plus mean team B delta
     late: bool = False  # dated before what a player's rating here reflects
     parent: MatchResult | None = None  # overall doubles update for categories
+    possible_duplicate_of: str | None = None  # earlier counted match, same content
 
 
 @dataclass(frozen=True)
@@ -1068,6 +1148,51 @@ def _matchup_key(match: Match) -> MatchupKey:
     )
 
 
+# Scores below this are written as JSON numbers. It is under the lowest
+# int to text digit limit Python allows (640 digits), so the key never
+# depends on sys.set_int_max_str_digits.
+_CONTENT_SCORE_DECIMAL_LIMIT = 10**600
+
+
+def _content_score(score: int) -> int | str:
+    """
+    A validated game score in the content key's JSON form.
+
+    int() folds a bool into its int. A score below 10**600 stays a JSON
+    number; a larger one is hex text, which has no digit limit and never
+    equals a number.
+    """
+    value = int(score)
+    if value < _CONTENT_SCORE_DECIMAL_LIMIT:
+        return value
+    return hex(value)
+
+
+def _content_key(match: Match) -> str:
+    """
+    SHA-256 hex digest of what makes two reports the same match.
+
+    It uses played_on, the two teams as sets of players, and the game
+    scores in order, read from the same side. Each team is a sorted list
+    of ids, and the two teams are put in sorted order; when that swaps
+    them, every game score is swapped too. Everything else is left out on
+    purpose (match_id, match_type, rating_format, game_format, best_of,
+    played_at, sequence, confirmed_by), since two reports of one match
+    often disagree on labels. The digest is over JSON text, so it never
+    depends on set order or the hash seed. Scores go through
+    _content_score, so a bool score equals its int and a huge score never
+    hits the int to text digit limit.
+    """
+    team_a = sorted(match.team_a)
+    team_b = sorted(match.team_b)
+    games = [[_content_score(a), _content_score(b)] for a, b in match.games]
+    if team_b < team_a:
+        team_a, team_b = team_b, team_a
+        games = [[score_b, score_a] for score_a, score_b in games]
+    form = [match.played_on.isoformat(), team_a, team_b, games]
+    return hashlib.sha256(_json_text(form).encode()).hexdigest()
+
+
 def _is_finite_number(value: object) -> bool:
     """
     True for an int (not bool) or a finite float.
@@ -1194,7 +1319,7 @@ def _validate_seed(player: Player, cfg: Config) -> None:
 # Snapshots
 # ---------------------------------------------------------------------------
 
-SNAPSHOT_VERSION = 1
+SNAPSHOT_VERSION = 2
 
 _TOP_KEYS = frozenset(
     {
@@ -1207,6 +1332,8 @@ _TOP_KEYS = frozenset(
         "players",
         "processed_match_ids",
         "self_reported_log",
+        "content_keys",
+        "possible_duplicates",
         "ledger_digests",
         "ledger_player_ids",
         "resumable",
@@ -1245,6 +1372,8 @@ class _Snapshot:
     players: dict[str, Player]
     processed_match_ids: set[str]
     self_reported_log: dict[MatchupKey, list[date]]
+    content_keys: dict[str, str]
+    possible_duplicates: dict[str, str]
     calculated_as_of: date | None
     replay_info: ReplayInfo | None
     ledger_digests: dict[str, str]
@@ -1616,6 +1745,84 @@ def _snap_replay_info(
     return ReplayInfo(calculated_as_of, version, fingerprint, considered, counted)
 
 
+def _snap_content_keys(value: object, processed: set[str]) -> dict[str, str]:
+    """
+    Content keys read from a snapshot: digest to the match_id first counted with it.
+
+    Each key is 64 lowercase hex characters, each id a processed match, and
+    no id appears twice, since a match has one content key.
+    """
+    if not isinstance(value, Mapping):
+        raise SnapshotError("snapshot.content_keys must be an object")
+    keys: dict[str, str] = {}
+    owners: set[str] = set()
+    for key, match_id in value.items():
+        if not isinstance(key, str) or len(key) != 64 or not set(key) <= _HEX:
+            raise SnapshotError(
+                f"snapshot.content_keys has a key that is not 64 lowercase hex characters: {key!r}"
+            )
+        path = f"snapshot.content_keys[{key!r}]"
+        match_id = _snap_id(match_id, path)
+        if match_id not in processed:
+            raise SnapshotError(f"{path} names {match_id!r}, which is not in processed_match_ids")
+        if match_id in owners:
+            raise SnapshotError(f"snapshot.content_keys maps more than one key to {match_id!r}")
+        owners.add(match_id)
+        keys[key] = match_id
+    return keys
+
+
+def _snap_possible_duplicates(
+    value: object,
+    twins: set[str],
+    processed: set[str],
+    reject: bool,
+    considered: Mapping[str, str] | None,
+) -> dict[str, str]:
+    """
+    Possible duplicates read from a snapshot: copy match_id to the match it repeats.
+
+    Each id is a non-blank str, a copy never names itself, and each twin is
+    a content_keys value (twins). A copy is a processed match id under the
+    default config, which counts it, and is not one under
+    reject_content_duplicates, which does not. A copy never registers its
+    own content, so it is never a content_keys value. considered is the
+    ledger digests of a resumable snapshot, else None: a replay records a
+    copy only for a row it considered, so each copy must be one of them.
+    """
+    if not isinstance(value, Mapping):
+        raise SnapshotError("snapshot.possible_duplicates must be an object")
+    duplicates: dict[str, str] = {}
+    for key, twin in value.items():
+        if not isinstance(key, str) or not _is_id(key):
+            raise SnapshotError(
+                "snapshot.possible_duplicates has a key that is not a non-blank str"
+            )
+        path = f"snapshot.possible_duplicates[{key!r}]"
+        twin = _snap_id(twin, path)
+        if twin == key:
+            raise SnapshotError(f"{path} names the match itself")
+        if twin not in twins:
+            raise SnapshotError(f"{path} names {twin!r}, which is not a content_keys value")
+        where = "snapshot.possible_duplicates has key"
+        if reject and key in processed:
+            raise SnapshotError(
+                f"{where} {key!r}, which is in processed_match_ids; under "
+                "reject_content_duplicates a possible duplicate is never counted"
+            )
+        if not reject and key not in processed:
+            raise SnapshotError(
+                f"{where} {key!r}, which is not in processed_match_ids; under the "
+                "default config a possible duplicate is counted"
+            )
+        if key in twins:
+            raise SnapshotError(f"{where} {key!r}, which is a content_keys value")
+        if considered is not None and key not in considered:
+            raise SnapshotError(f"{where} {key!r}, which is not in ledger_digests")
+        duplicates[key] = twin
+    return duplicates
+
+
 def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
     """Validate a snapshot against cfg and read it. Raises SnapshotError naming the bad value."""
     if not isinstance(snapshot, Mapping):
@@ -1673,6 +1880,7 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
             raise SnapshotError(f"{path} repeats a matchup")
         log[key] = dates
 
+    content_keys = _snap_content_keys(raw["content_keys"], processed)
     digests_raw = raw["ledger_digests"]
     if not isinstance(digests_raw, Mapping):
         raise SnapshotError("snapshot.ledger_digests must be an object")
@@ -1699,10 +1907,20 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
     if not isinstance(resumable, bool):
         raise SnapshotError("snapshot.resumable must be a bool")
 
+    possible_duplicates = _snap_possible_duplicates(
+        raw["possible_duplicates"],
+        set(content_keys.values()),
+        processed,
+        cfg.reject_content_duplicates,
+        digests if resumable else None,
+    )
+
     snap = _Snapshot(
         players,
         processed,
         log,
+        content_keys,
+        possible_duplicates,
         calculated_as_of,
         replay_info,
         digests,
@@ -1733,6 +1951,13 @@ class RatingEngine:
         self.self_reported_log: dict[MatchupKey, list[date]] = {}
         self.calculated_as_of: date | None = None
         self.replay_info: ReplayInfo | None = None
+        # Content key (see _content_key) of each counted match, to the
+        # match_id of the first one counted with it. Never overwritten.
+        self._content_keys: dict[str, str] = {}
+        # match_id of each match flagged or rejected as a possible
+        # duplicate, to the match_id it repeats (its possible_duplicate_of).
+        # An entry stays until that match_id later counts with no twin.
+        self.possible_duplicates: dict[str, str] = {}
         # Digest of each ledger row a replay considered, by match_id. Only
         # replay fills it; resume compares rows against it.
         self._ledger_digests: dict[str, str] = {}
@@ -1769,7 +1994,7 @@ class RatingEngine:
 
     def to_snapshot(self) -> dict[str, object]:
         """
-        The engine's whole state as JSON-safe data (schema version 1).
+        The engine's whole state as JSON-safe data (schema version 2).
 
         json.dumps(snapshot, allow_nan=False) works with no custom encoder,
         and RatingEngine.from_snapshot rebuilds the engine from it, or from
@@ -1777,7 +2002,7 @@ class RatingEngine:
         every list in a fixed order, so the same state always gives the same
         text. Numbers keep their type: an int stays an int.
 
-        Keys: snapshot_version (1), engine_version (informational),
+        Keys: snapshot_version (2), engine_version (informational),
         config_version and config_fingerprint (of this engine's Config),
         calculated_as_of (ISO date or null), replay_info (null, or its
         fields with as_of as an ISO date), players (sorted by id: id,
@@ -1786,8 +2011,14 @@ class RatingEngine:
         and opponents as id to ISO date), processed_match_ids (sorted),
         self_reported_log (sorted by format then teams: rating_format,
         teams as two sorted id lists, and dates in stored order),
-        ledger_digests (match_id to the SHA-256 digest of every row any
-        replay behind this engine considered, cumulative across resumes),
+        content_keys (the content key digest of each counted match, see
+        MatchResult.possible_duplicate_of, to the match_id first counted
+        with it, sorted by digest), possible_duplicates (sorted by
+        match_id: each match flagged or rejected as a possible duplicate,
+        to the match_id it repeats, until that match_id later counts with
+        no twin), ledger_digests (match_id to the
+        SHA-256 digest of every row any replay behind this engine
+        considered, cumulative across resumes),
         ledger_player_ids (sorted ids of every player named in those rows,
         counted or not), and resumable (true only while the engine is
         exactly what a replay produced). The README lists the schema in
@@ -1818,6 +2049,7 @@ class RatingEngine:
             "calculated_as_of": _iso(self.calculated_as_of),
             "config_fingerprint": self.cfg.fingerprint(),
             "config_version": self.cfg.version,
+            "content_keys": _sorted_dict(self._content_keys.items()),
             "engine_version": __version__,
             "ledger_digests": _sorted_dict(self._ledger_digests.items()),
             "ledger_player_ids": sorted(self._ledger_player_ids, key=str),
@@ -1825,6 +2057,7 @@ class RatingEngine:
                 _player_form(player)
                 for player in sorted(self.players.values(), key=lambda p: str(p.id))
             ],
+            "possible_duplicates": _sorted_dict(self.possible_duplicates.items()),
             "processed_match_ids": sorted(self.processed_match_ids, key=str),
             "replay_info": replay_info,
             "resumable": self._resumable,
@@ -1844,15 +2077,21 @@ class RatingEngine:
         cfg must be the Config the snapshot was taken under (default
         Config()): its version and fingerprint must equal the snapshot's.
         The whole snapshot is validated before anything is built: exactly
-        the schema's keys at every level, snapshot_version 1, dates as
+        the schema's keys at every level, snapshot_version 2, dates as
         YYYY-MM-DD text, non-blank str ids with no repeated player or match
         id, RatingFormat values as format keys, ratings within min_rating
         and max_rating, RD within rd_min and rd_max, an imported
         reliability between 0 and 100, nonnegative int counts no larger
         than 2**63 - 1, replay_info present exactly when calculated_as_of
         is and consistent with it, self-reported matchups of two disjoint
-        teams of the format's size, ledger digests of 64 lowercase hex
-        characters, and a bool resumable that is false without a replay.
+        teams of the format's size, content keys and ledger digests of 64
+        lowercase hex characters, content keys that each name a different
+        processed match id, possible duplicates that each name another
+        match that is a content_keys value and whose own id is not one, a
+        possible duplicate id that is a processed match id under the
+        default config and is not one under reject_content_duplicates (and,
+        in a resumable snapshot, is a ledger_digests id), and a bool
+        resumable that is false without a replay.
         Every state must be one the engine can produce: initial_rating
         within the rating bounds; an unplayed state with RD new_player_rd,
         external_seed_rd, or at least category_seed_rd, and no partners,
@@ -1874,6 +2113,8 @@ class RatingEngine:
         engine.players = state.players
         engine.processed_match_ids = state.processed_match_ids
         engine.self_reported_log = state.self_reported_log
+        engine._content_keys = state.content_keys
+        engine.possible_duplicates = state.possible_duplicates
         engine.calculated_as_of = state.calculated_as_of
         engine.replay_info = state.replay_info
         engine._ledger_digests = state.ledger_digests
@@ -2143,12 +2384,22 @@ class RatingEngine:
         next replay). replay() passes a fixed as_of for authoritative rebuilds.
         `as_of` only labels the update as part of a replay and must not be
         earlier than the match date; the update itself does not depend on it.
-        Nothing is changed unless the match counts. Live results apply in
+        Nothing is changed unless the match counts, except that a match
+        rejected as a possible duplicate is recorded in possible_duplicates.
+        Live results apply in
         arrival order: MatchResult.late (and parent.late, for a category
         match) flags a match dated before a player's last match in that
         format, or before the date that player's rating in that format
         already reflects (for a category rating copied from overall
         doubles). Stored dates never move back.
+
+        A match with the same content as an earlier counted match (same
+        played_on, teams, and scores; see MatchResult.possible_duplicate_of)
+        goes through the other checks by default and, if it counts, has
+        possible_duplicate_of set. With Config.reject_content_duplicates it
+        is not counted, with RejectionReason.POSSIBLE_DUPLICATE. That check runs after the
+        match_id and game format checks and before the self-reported
+        checks, so a rejected duplicate never enters the self-reported log.
         """
         match.validate()
         if match.match_id in self.processed_match_ids:
@@ -2163,6 +2414,18 @@ class RatingEngine:
         as_of = as_of or match.played_on
         if as_of < match.played_on:
             raise InvalidMatchError("as_of cannot be earlier than the match date")
+
+        content_key = _content_key(match)
+        twin = self._content_keys.get(content_key)
+        if twin is not None and cfg.reject_content_duplicates:
+            self._changed()
+            self.possible_duplicates[match.match_id] = twin
+            return MatchResult(
+                False,
+                match.rating_format,
+                RejectionReason.POSSIBLE_DUPLICATE,
+                possible_duplicate_of=twin,
+            )
 
         repeat_factor = 1.0
         matchup = None
@@ -2187,6 +2450,7 @@ class RatingEngine:
         primary, primary_updates = self._compute(match, match.rating_format, repeat_factor)
         if not primary.counted or primary_updates is None:
             return primary
+        primary.possible_duplicate_of = twin
 
         parent_updates = None
         parent_format = match.rating_format.parent if cfg.category_feeds_parent else None
@@ -2199,6 +2463,12 @@ class RatingEngine:
             self._commit(parent_format, parent_updates, live)
         if matchup is not None:
             self.self_reported_log.setdefault(matchup, []).append(match.played_on)
+        self._content_keys.setdefault(content_key, match.match_id)
+        if twin is None:
+            # A match_id rejected as a copy earlier, now counted on its own.
+            self.possible_duplicates.pop(match.match_id, None)
+        else:
+            self.possible_duplicates[match.match_id] = twin
         self.processed_match_ids.add(match.match_id)
         return primary
 
