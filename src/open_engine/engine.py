@@ -1116,6 +1116,26 @@ def _matchup_key(match: Match) -> MatchupKey:
     )
 
 
+# Scores below this are written as JSON numbers. It is under the lowest
+# int to text digit limit Python allows (640 digits), so the key never
+# depends on sys.set_int_max_str_digits.
+_CONTENT_SCORE_DECIMAL_LIMIT = 10**600
+
+
+def _content_score(score: int) -> int | str:
+    """
+    A validated game score in the content key's JSON form.
+
+    int() folds a bool into its int. A score below 10**600 stays a JSON
+    number; a larger one is hex text, which has no digit limit and never
+    equals a number.
+    """
+    value = int(score)
+    if value < _CONTENT_SCORE_DECIMAL_LIMIT:
+        return value
+    return hex(value)
+
+
 def _content_key(match: Match) -> str:
     """
     SHA-256 hex digest of what makes two reports the same match.
@@ -1127,11 +1147,13 @@ def _content_key(match: Match) -> str:
     purpose (match_id, match_type, rating_format, game_format, best_of,
     played_at, sequence, confirmed_by), since two reports of one match
     often disagree on labels. The digest is over JSON text, so it never
-    depends on set order or the hash seed.
+    depends on set order or the hash seed. Scores go through
+    _content_score, so a bool score equals its int and a huge score never
+    hits the int to text digit limit.
     """
     team_a = sorted(match.team_a)
     team_b = sorted(match.team_b)
-    games = [[score_a, score_b] for score_a, score_b in match.games]
+    games = [[_content_score(a), _content_score(b)] for a, b in match.games]
     if team_b < team_a:
         team_a, team_b = team_b, team_a
         games = [[score_b, score_a] for score_a, score_b in games]
