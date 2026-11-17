@@ -1768,13 +1768,17 @@ def _snap_content_keys(value: object, processed: set[str]) -> dict[str, str]:
     return keys
 
 
-def _snap_possible_duplicates(value: object, twins: set[str]) -> dict[str, str]:
+def _snap_possible_duplicates(
+    value: object, twins: set[str], processed: set[str], reject: bool
+) -> dict[str, str]:
     """
     Possible duplicates read from a snapshot: copy match_id to the match it repeats.
 
     Each id is a non-blank str, a copy never names itself, and each twin is
-    a content_keys value. A copy may or may not be processed: flag mode
-    counts it and reject mode does not.
+    a content_keys value (twins). A copy is a processed match id under the
+    default config, which counts it, and is not one under
+    reject_content_duplicates, which does not. A copy never registers its
+    own content, so it is never a content_keys value.
     """
     if not isinstance(value, Mapping):
         raise SnapshotError("snapshot.possible_duplicates must be an object")
@@ -1790,6 +1794,19 @@ def _snap_possible_duplicates(value: object, twins: set[str]) -> dict[str, str]:
             raise SnapshotError(f"{path} names the match itself")
         if twin not in twins:
             raise SnapshotError(f"{path} names {twin!r}, which is not a content_keys value")
+        where = "snapshot.possible_duplicates has key"
+        if reject and key in processed:
+            raise SnapshotError(
+                f"{where} {key!r}, which is in processed_match_ids; under "
+                "reject_content_duplicates a possible duplicate is never counted"
+            )
+        if not reject and key not in processed:
+            raise SnapshotError(
+                f"{where} {key!r}, which is not in processed_match_ids; under the "
+                "default config a possible duplicate is counted"
+            )
+        if key in twins:
+            raise SnapshotError(f"{where} {key!r}, which is a content_keys value")
         duplicates[key] = twin
     return duplicates
 
@@ -1853,7 +1870,10 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
 
     content_keys = _snap_content_keys(raw["content_keys"], processed)
     possible_duplicates = _snap_possible_duplicates(
-        raw["possible_duplicates"], set(content_keys.values())
+        raw["possible_duplicates"],
+        set(content_keys.values()),
+        processed,
+        cfg.reject_content_duplicates,
     )
 
     digests_raw = raw["ledger_digests"]
@@ -2052,8 +2072,10 @@ class RatingEngine:
         teams of the format's size, content keys and ledger digests of 64
         lowercase hex characters, content keys that each name a different
         processed match id, possible duplicates that each name another
-        match that is a content_keys value, and a bool resumable that is
-        false without a replay.
+        match that is a content_keys value and whose own id is not one, a
+        possible duplicate id that is a processed match id under the
+        default config and is not one under reject_content_duplicates, and
+        a bool resumable that is false without a replay.
         Every state must be one the engine can produce: initial_rating
         within the rating bounds; an unplayed state with RD new_player_rd,
         external_seed_rd, or at least category_seed_rd, and no partners,
