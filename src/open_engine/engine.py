@@ -1773,7 +1773,11 @@ def _snap_content_keys(value: object, processed: set[str]) -> dict[str, str]:
 
 
 def _snap_possible_duplicates(
-    value: object, twins: set[str], processed: set[str], reject: bool
+    value: object,
+    twins: set[str],
+    processed: set[str],
+    reject: bool,
+    considered: Mapping[str, str] | None,
 ) -> dict[str, str]:
     """
     Possible duplicates read from a snapshot: copy match_id to the match it repeats.
@@ -1782,7 +1786,9 @@ def _snap_possible_duplicates(
     a content_keys value (twins). A copy is a processed match id under the
     default config, which counts it, and is not one under
     reject_content_duplicates, which does not. A copy never registers its
-    own content, so it is never a content_keys value.
+    own content, so it is never a content_keys value. considered is the
+    ledger digests of a resumable snapshot, else None: a replay records a
+    copy only for a row it considered, so each copy must be one of them.
     """
     if not isinstance(value, Mapping):
         raise SnapshotError("snapshot.possible_duplicates must be an object")
@@ -1811,6 +1817,8 @@ def _snap_possible_duplicates(
             )
         if key in twins:
             raise SnapshotError(f"{where} {key!r}, which is a content_keys value")
+        if considered is not None and key not in considered:
+            raise SnapshotError(f"{where} {key!r}, which is not in ledger_digests")
         duplicates[key] = twin
     return duplicates
 
@@ -1873,13 +1881,6 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
         log[key] = dates
 
     content_keys = _snap_content_keys(raw["content_keys"], processed)
-    possible_duplicates = _snap_possible_duplicates(
-        raw["possible_duplicates"],
-        set(content_keys.values()),
-        processed,
-        cfg.reject_content_duplicates,
-    )
-
     digests_raw = raw["ledger_digests"]
     if not isinstance(digests_raw, Mapping):
         raise SnapshotError("snapshot.ledger_digests must be an object")
@@ -1905,6 +1906,14 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
     resumable = raw["resumable"]
     if not isinstance(resumable, bool):
         raise SnapshotError("snapshot.resumable must be a bool")
+
+    possible_duplicates = _snap_possible_duplicates(
+        raw["possible_duplicates"],
+        set(content_keys.values()),
+        processed,
+        cfg.reject_content_duplicates,
+        digests if resumable else None,
+    )
 
     snap = _Snapshot(
         players,
@@ -2080,8 +2089,9 @@ class RatingEngine:
         processed match id, possible duplicates that each name another
         match that is a content_keys value and whose own id is not one, a
         possible duplicate id that is a processed match id under the
-        default config and is not one under reject_content_duplicates, and
-        a bool resumable that is false without a replay.
+        default config and is not one under reject_content_duplicates (and,
+        in a resumable snapshot, is a ledger_digests id), and a bool
+        resumable that is false without a replay.
         Every state must be one the engine can produce: initial_rating
         within the rating bounds; an unplayed state with RD new_player_rd,
         external_seed_rd, or at least category_seed_rd, and no partners,
