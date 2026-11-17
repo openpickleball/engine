@@ -45,17 +45,17 @@ Published behavior notes:
   The default win_weight is 0.0, pure pooled point share. So a team can
   win and still lose rating when it wins by less than its expected share
   (a 5.0 team beating a 4.0 team 11-9 in doubles). It can also happen
-  when it wins a best of 3 with fewer total points. There is no floor on
-  a winner's change, other than the rating range (min_rating to
-  max_rating). Among matches with the same players, the same ratings and
-  RD at match time, and the same game format, number of games, match
-  type, and result, a higher point share never gives a team a worse
-  change. Longer games and more games carry more weight, so across
-  formats a slightly wider winning margin can still cost more rating.
-  win_weight = 1.0 scores the result only, so a winner never loses
-  rating. Values between 0 and 1 make a loss less likely. Only values
-  close to 1 rule it out, and how close depends on the rating range and
-  scale. The default is a declared choice, not a validated one. It
+  when it wins a best of 3 (or 5) with fewer total points. There is no
+  floor on a winner's change, other than the rating range (min_rating to
+  max_rating). Recorded against the same engine state, a higher point
+  share in the same match (same players, format, number of games, match
+  type, and result) never gives a team a worse change. Longer games and
+  more games carry more weight, so across formats a slightly wider
+  winning margin can still cost more rating. win_weight = 1.0 scores the
+  result only, so a winner never loses rating. Values between 0 and 1
+  make a loss less likely. Only values close to 1 rule it out, and how
+  close depends on the rating range and scale and on the lowest point
+  share a winner can have. The default is a declared choice, not a validated one. It
   changes only when out-of-sample evaluation shows another value
   predicts better.
 - Authoritative ratings come from scheduled replays (see
@@ -405,10 +405,11 @@ class Config:
     # Match performance: actual = (1 - win_weight) * pooled point share
     # + win_weight * (1 if team A won else 0). The default 0.0 is pure
     # point share, so a team can win and lose rating when it wins by less
-    # than expected or wins a best of 3 with fewer total points. 1.0 scores
-    # the result only, so a winner never loses. There is no floor on a
-    # winner's change, other than the rating range. The default changes
-    # only when out-of-sample evaluation supports another value (issue #20).
+    # than expected or wins a best of 3 (or 5) with fewer total points.
+    # 1.0 scores the result only, so a winner never loses. There is no
+    # floor on a winner's change, other than the rating range. The default
+    # changes only when out-of-sample evaluation supports another value
+    # (issue #20).
     win_weight: float = 0.0
 
     # Evidence quality. These are OPEN policy choices.
