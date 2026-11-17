@@ -146,7 +146,7 @@ Published behavior notes:
   raised by `add_player`, `replay`, and `prequential_predictions`, and so
   by `evaluate`, `fit_scale`, and `fit_win_calibration`; `replay` also
   rejects a seed dated after `as_of`, and `prequential_predictions` one
-  dated after its last ledger match),
+  dated after its last completed ledger match),
   `PlayerError` covers player identities, `EvaluationError` covers
   evaluation, fits and win probabilities, `LedgerConflictError` covers
   conflicting ledger rows, `SnapshotError` covers snapshots that cannot
@@ -224,22 +224,31 @@ Published behavior notes:
   `RejectionReason.DUPLICATE_MATCH_ID`, instead of raising. A match with
   the same content as an earlier counted match under another match_id is
   flagged or, by config, rejected (see the note on likely duplicates).
-- Match status: `Match.status` is a MatchStatus. COMPLETED (the default)
-  needs at least one game and a decided winner. FORFEIT needs no games.
-  RETIRED and INCOMPLETE take zero or more finished games, each valid in
-  the game format, and no decided winner; a partial game is not recorded.
-  A match that is not completed is never rated: `record` returns
-  `RejectionReason.MATCH_NOT_COMPLETED` after the match_id check and
+- Match status: `Match.status` is a MatchStatus, and `games` is a tuple
+  or list for every status. COMPLETED (the default) needs at least one
+  game and a decided winner. A FORFEIT must have no games. RETIRED and
+  INCOMPLETE take zero or more finished games, each valid in the game
+  format, and no decided winner, so in a best of 1 they have no games; a
+  partial game is not recorded. A match that is not completed is never
+  rated: `record` returns `RejectionReason.MATCH_NOT_COMPLETED` after the
+  match_id check (a processed match_id still gets DUPLICATE_MATCH_ID) and
   changes nothing, so its match_id is not marked processed and a later
-  completed match with that id can count live. `replay` accepts such a
-  row: it counts toward `ReplayInfo.matches_considered`, not
-  `matches_counted`, and a checkpoint tracks its digest and players like
-  any rejected row. Every replay that accepts the ledger gives each
-  player the same rating states as a replay of the ledger without those
-  rows. In a ledger, a non-completed row and a completed row with the same
-  match_id conflict (LedgerConflictError); replace the row instead.
-  `prequential_predictions` (and so `evaluate`, `fit_scale`, and
-  `fit_win_calibration`) never predicts a match that is not completed.
+  completed match with that id can count live. The engine does not check
+  that the later row is the same match: different players count too.
+  `replay` accepts such a row: it counts toward
+  `ReplayInfo.matches_considered`, not `matches_counted`. A full replay
+  gives each player the same rating states as a full replay of the
+  ledger without those rows. Like any rejected row, a checkpoint tracks
+  the row's digest and players, so resume raises SnapshotError for a new
+  seed for a player named only in such a row. Replacing the row with a
+  completed one under the same match_id is an edited row: on or before a
+  checkpoint date it needs a full replay (resume raises
+  LedgerConflictError when given it). In one ledger, a non-completed row
+  and a completed row with the same match_id conflict
+  (LedgerConflictError). `prequential_predictions` (and so `evaluate`,
+  `fit_scale`, and `fit_win_calibration`) never predicts a match that is
+  not completed, and takes its seed date limit and default anchor from
+  completed rows only.
   Rating a retirement on its finished games would change how ratings
   move, so it is not done; it would need a declared Config parameter
   backed by out-of-sample evaluation.
@@ -705,10 +714,11 @@ class Match:
 
     status (last field, default MatchStatus.COMPLETED) says how the match
     ended. A completed match has at least one game and a decided winner. A
-    forfeit has no games. A retired or incomplete match has zero or more
+    forfeit must have no games. A retired or incomplete match has zero or more
     finished games, each valid in game_format, and no decided winner; a
     partial game is not recorded. record never counts a match that is not
-    completed: it returns RejectionReason.MATCH_NOT_COMPLETED.
+    completed: after the match_id check (a processed match_id gets
+    DUPLICATE_MATCH_ID), it returns RejectionReason.MATCH_NOT_COMPLETED.
     """
 
     match_id: str
@@ -763,6 +773,10 @@ class Match:
             raise InvalidMatchError("played_at must fall on played_on")
         if self.sequence < 0:
             raise InvalidMatchError("sequence must be nonnegative")
+        if not isinstance(self.games, (tuple, list)):
+            raise InvalidMatchError(
+                f"games must be a tuple or list, not {type(self.games).__name__}"
+            )
         if completed and not self.games:
             raise InvalidMatchError("At least one game score is required")
         if self.status is MatchStatus.FORFEIT and self.games:
@@ -3084,14 +3098,15 @@ def prequential_predictions(
 
     "live" records every match live in one engine, in ledger order.
     "scheduled" mirrors production: replay dates are
-    `anchor + k * cfg.replay_interval_days` (anchor defaults to the first match
-    date). A match on day d is predicted from replay(matches on or before s,
+    `anchor + k * cfg.replay_interval_days` (anchor defaults to the first
+    completed match date). A match on day d is predicted from replay(matches on or before s,
     as_of=s) for the largest replay date s strictly before d, and matches in
     that window are then predicted and recorded live in ledger order.
 
     Every seed is validated up front, in both modes, by the seed rules (see
     RatingEngine.add_player), and a seed whose initial_source_date is after
-    the last ledger match raises InvalidSeedError. A repeated seed id raises
+    the last completed ledger match raises InvalidSeedError. A ledger with
+    no completed match has no seed date check and gives no predictions. A repeated seed id raises
     PlayerError, as add_player does. A seed captured mid-ledger is accepted:
     scheduled replays before its date freeze it as usual.
     """
@@ -3099,6 +3114,9 @@ def prequential_predictions(
         raise EvaluationError(f"mode must be 'live' or 'scheduled', not {mode!r}")
     cfg = cfg or Config()
     ordered = _ledger(matches)
+    # Non-completed rows are inert: they stay in the replays and windows, but
+    # never set the seed date limit or the default anchor.
+    completed = [m for m in ordered if m.status is MatchStatus.COMPLETED]
     seeds = list(seed_players)
     seen: set[str] = set()
     for player in seeds:
@@ -3108,8 +3126,8 @@ def prequential_predictions(
             raise PlayerError(f"Player already exists: {player.id}")
         seen.add(player.id)
         _validate_seed(player, cfg)
-        if ordered:
-            _check_seed_date(player, ordered[-1].played_on, "the last ledger match")
+        if completed:
+            _check_seed_date(player, completed[-1].played_on, "the last completed ledger match")
     predictions: list[PrequentialPrediction] = []
 
     def step(engine: RatingEngine, match: Match) -> None:
@@ -3132,11 +3150,11 @@ def prequential_predictions(
             step(engine, match)
         return predictions
 
-    if not ordered:
+    if not completed:
         return predictions
     interval = cfg.replay_interval_days
     if anchor is None:
-        anchor = ordered[0].played_on
+        anchor = completed[0].played_on
     windows: dict[date, list[Match]] = {}
     for match in ordered:
         # Largest k with anchor + k * interval strictly before played_on.

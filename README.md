@@ -134,7 +134,7 @@ Errors (every class is a `ValueError`):
 - `OpenEngineError`: base class for every error the engine raises on purpose.
 - `ConfigError`: a `Config` or `GameFormat` value is not valid.
 - `InvalidMatchError`: a match, its teams, its scores, or its `played_at` is not valid.
-- `InvalidSeedError`: an external or replay seed cannot initialize a rating. `RatingEngine.add_player`, `replay`, and `prequential_predictions` (and so `evaluate`, `fit_scale`, and `fit_win_calibration`) raise it for a seed that breaks the seed rules in `add_player`'s docstring, including a seed that is not a `Player`, a field of the wrong type, or a rating outside the rating bounds. `replay` also raises it for a seed dated after `as_of`, and `prequential_predictions` for one dated after its last ledger match. `RatingEngine.seed_external_rating` raises it for a rating format of the wrong type, a snapshot whose captured date, source, or external id has the wrong type, or whose rating or reliability has the wrong type or is out of range, or an existing rating it may not replace.
+- `InvalidSeedError`: an external or replay seed cannot initialize a rating. `RatingEngine.add_player`, `replay`, and `prequential_predictions` (and so `evaluate`, `fit_scale`, and `fit_win_calibration`) raise it for a seed that breaks the seed rules in `add_player`'s docstring, including a seed that is not a `Player`, a field of the wrong type, or a rating outside the rating bounds. `replay` also raises it for a seed dated after `as_of`, and `prequential_predictions` for one dated after its last completed ledger match. `RatingEngine.seed_external_rating` raises it for a rating format of the wrong type, a snapshot whose captured date, source, or external id has the wrong type, or whose rating or reliability has the wrong type or is out of range, or an existing rating it may not replace.
 - `PlayerError`: a player identity, account link, or external identity is not valid. `seed_external_rating` raises it for a blank player id or when the snapshot's external identity cannot be linked (it names no source, it is already linked to another player, or the player already has a different id from that source), and `replay` and `prequential_predictions` raise it when two seeds share a player id. `replay(from_snapshot=...)` raises it for a seed whose player is already in the snapshot.
 - `EvaluationError`: an evaluation, fit, or win probability cannot be computed.
 - `ReferenceDateError`: no usable reference date to measure inactivity and reliability at. `RatingEngine.player_summary` raises it when it gets no `as_of` and the engine was never replayed, or an `as_of` that is not a plain date (a datetime is not one), before it creates any player or rating state.
@@ -169,17 +169,19 @@ A match moves ratings by how the result compared with the expectation.
 `Match.status` says how a match ended. It is a `MatchStatus` and defaults to `COMPLETED`.
 
 - `COMPLETED`: at least one game and a decided winner. Nothing changes for these matches.
-- `FORFEIT`: the match was not played, so it has no games.
+- `FORFEIT`: the match was not played, so it must have no games.
 - `RETIRED`: a player stopped, for example through injury, before a winner was decided.
 - `INCOMPLETE`: the match stopped for another reason, such as time or weather.
 
-A retired or incomplete match records zero or more finished games, each valid in its game format, and no decided winner. A partial game in progress, such as `(7, 4)` to 11, is not recorded. Any other status value, including the plain text `"forfeit"`, raises `InvalidMatchError`.
+A retired or incomplete match records zero or more finished games, each valid in its game format, and no decided winner. So in a best of 1 it has no games. A partial game in progress, such as `(7, 4)` to 11, is not recorded. `games` must be a tuple or list for every status. Any other status value, including the plain text `"forfeit"`, raises `InvalidMatchError`.
 
 A match that is not completed is never rated:
 
-- `record` returns a result that is not counted, with `RejectionReason.MATCH_NOT_COMPLETED`, and changes nothing. Its `match_id` is not marked processed, so a later completed match with that id can still count live.
-- `replay` accepts the row. It counts toward `matches_considered`, not `matches_counted`. Each player's ratings are the same as in a replay of the ledger without those rows. In one ledger, a non-completed row and a completed row with the same `match_id` conflict (`LedgerConflictError`), so replace the row instead.
-- `prequential_predictions`, `evaluate`, `fit_scale`, and `fit_win_calibration` never predict it.
+- `record` checks the `match_id` first: a match_id already processed gets `RejectionReason.DUPLICATE_MATCH_ID`. Otherwise it returns a result that is not counted, with `RejectionReason.MATCH_NOT_COMPLETED`, and changes nothing. The `match_id` is not marked processed, so a later completed match with that id can still count live. The engine does not check that it is the same match: different players count too.
+- `replay` accepts the row. It counts toward `matches_considered`, not `matches_counted`. A full replay gives each player the same ratings as a full replay of the ledger without those rows. In one ledger, a non-completed row and a completed row with the same `match_id` conflict (`LedgerConflictError`), so replace the row instead.
+- As for any rejected row, a checkpoint tracks the row and its players. Resume raises `SnapshotError` for a new seed for a player named only in such a row.
+- Replacing the row with a completed one under the same `match_id` is an edited row. For a row dated on or before a checkpoint, that needs a full replay (resume raises `LedgerConflictError` when given it).
+- `prequential_predictions`, `evaluate`, `fit_scale`, and `fit_win_calibration` never predict it. The seed date limit and the default scheduled anchor come from completed rows only.
 
 Rating a retirement on its finished games would change how ratings move. It is not done here. It would need a declared `Config` parameter backed by out-of-sample evaluation.
 
