@@ -2215,8 +2215,11 @@ class RatingEngine:
         The player record for player_id. Read-only: it never creates a player.
 
         Raises PlayerError for a blank player_id and UnknownPlayerError when
-        no player record exists for it. Create a player with add_player,
-        seed_provisional_rating, seed_external_rating, or record.
+        no player record exists for it. A player is created by add_player,
+        seed_provisional_rating, seed_external_rating, link_account,
+        attach_external_id, or a counted record (and so replay). An id named
+        only in uncounted rows, or in rows after a replay's as_of, has no
+        player record.
         """
         if not player_id or not player_id.strip():
             raise PlayerError("player_id is required")

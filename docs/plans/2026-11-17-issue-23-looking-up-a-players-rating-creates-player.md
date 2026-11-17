@@ -19,7 +19,7 @@ Decisions taken with the maintainer:
 5. For a known player with no state in a format, `state()` equals the state `seed_provisional_rating` would create, and `player_summary()` equals the summary after `seed_provisional_rating` on a copy of the engine, with nothing stored. Mutating the returned state changes nothing in the engine.
 6. Explicit creation still works for a new id: `seed_provisional_rating`, `seed_external_rating`, `link_account`, `attach_external_id`, `add_player`, and `record` create the player as before, and still clear the resumable mark.
 7. The unknown-player behavior is documented: the docstrings of `player`, `state`, and `player_summary`, the README (errors list, the `player_summary` paragraph where it applies, and the snapshot note that today says `player_summary` and `state` create a state), and a `CHANGELOG.md` entry under `[Unreleased]` that calls the change breaking.
-8. No rating, replay, resume, or evaluation output changes for any input that worked before. The existing suite passes, with tests changed only where they relied on a read creating a player or state.
+8. No replay, resume, or evaluation output changes for any ledger that worked before. One live rating changes: a live engine that read a missing format before that format's first match used to store a state frozen at the read; it now rates that first match from the current parent, as a replay does. A snapshot taken after such a read is now resumable. The existing suite passes, with tests changed only where they relied on a read creating a player or state.
 
 ## Files that change
 
@@ -46,6 +46,8 @@ Decisions taken with the maintainer:
 - `UnknownPlayerError` goes in `__all__` in sorted order (after `SnapshotError`), not next to `PlayerError`, since the list is sorted. `tests/test_api.py` `PUBLIC_API` gains the name, as every new export does.
 - The engine module docstring's error list names `UnknownPlayerError` under `PlayerError`.
 - Three tests that still passed relied on `state()` storing a category seed, and lost their meaning without it: `tests/test_snapshot_invariants.py` (a derived category state loads), `tests/test_external_seed_types.py` (accepted seeds replay), and `tests/test_replay_resume.py` (a category seed). They now call `seed_provisional_rating`, as the other adjusted tests do.
+
+- Review round 1. The maintainer approved keeping the live behavior change found in review (a read of a missing category format no longer freezes that format's starting state, so the first category match rates from the current parent, equal to a full replay) and narrowing criterion 8 and the changelog claim to match. The docs now say only a counted `record` creates a player, list `link_account` and `attach_external_id` as creating calls, and say an id named only in uncounted rows or rows after `as_of` has no player record. New tests go in `tests/test_read_only_lookups_followup.py`, since the first two test files are frozen: the first-category-match guard, `predict_win_probability` before and after, and the uncounted or later row ids.
 
 ## Order of work
 
@@ -78,3 +80,15 @@ Decisions taken with the maintainer:
 - Live drive: in a scratch script outside the repo, show (a) the issue repro now raises `UnknownPlayerError` with `players == {}`, (b) a known player's missing category format reports a derived rating with nothing stored, (c) a replayed engine stays resumable after reads and `replay(..., from_snapshot=...)` accepts its snapshot, and (d) `record` with brand-new ids still works.
 
 Measured on `origin/main` (878f2fa), with `/tmp/claude-1000/.../scratchpad/measure.py`: one doubles match recorded, then `player_summary("syn-a", MIXED_DOUBLES, as_of=2026-02-01)` on one deep copy vs `seed_provisional_rating` then `player_summary` on another. Result: `summary alike: True 3.55 0.7546 open_parent:doubles`, `state alike: True`. The issue repro on an empty engine: `ghost players: ['ghost']`.
+
+Review round 1, measured against `origin/main` (878f2fa) source extracted to the scratchpad and put on `PYTHONPATH`, running `test_a_read_of_a_missing_category_does_not_change_its_first_match` from `tests/test_read_only_lookups_followup.py` (import of `UnknownPlayerError` stripped):
+
+```
+E       assert 3.684435341259454 == 3.928180391780873
+E       assert 3.599565978285813 == 3.8714260743043063
+FAILED test_followup_on_main.py::test_a_read_of_a_missing_category_does_not_change_its_first_match[read after a parent match]
+FAILED test_followup_on_main.py::test_a_read_of_a_missing_category_does_not_change_its_first_match[read before any parent match]
+2 failed, 4 deselected in 0.02s
+```
+
+On the branch both cases pass: the rating with the read equals the rating without it and equals a full replay.
