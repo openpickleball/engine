@@ -146,7 +146,7 @@ Published behavior notes:
   raised by `add_player`, `replay`, and `prequential_predictions`, and so
   by `evaluate`, `fit_scale`, and `fit_win_calibration`; `replay` also
   rejects a seed dated after `as_of`, and `prequential_predictions` one
-  dated after its last ledger match),
+  dated after its last completed ledger match),
   `PlayerError` covers player identities, `EvaluationError` covers
   evaluation, fits and win probabilities, `LedgerConflictError` covers
   conflicting ledger rows, `SnapshotError` covers snapshots that cannot
@@ -154,7 +154,7 @@ Published behavior notes:
   `player_summary` call with no date to measure at or with an as_of that
   is not a plain date.
 - Snapshots and checkpoints: `RatingEngine.to_snapshot()` gives the whole
-  engine state as JSON-safe data (schema version 2) with sorted keys and
+  engine state as JSON-safe data (schema version 3) with sorted keys and
   lists, and `RatingEngine.from_snapshot` loads it back after validating
   every key, type, and range and checking the config version and
   fingerprint. A replay's snapshot is a checkpoint:
@@ -224,6 +224,34 @@ Published behavior notes:
   `RejectionReason.DUPLICATE_MATCH_ID`, instead of raising. A match with
   the same content as an earlier counted match under another match_id is
   flagged or, by config, rejected (see the note on likely duplicates).
+- Match status: `Match.status` is a MatchStatus, and `games` is a tuple
+  or list for every status. COMPLETED (the default) needs at least one
+  game and a decided winner. A FORFEIT must have no games. RETIRED and
+  INCOMPLETE take zero or more finished games, each valid in the game
+  format, and no decided winner, so in a best of 1 they have no games; a
+  partial game is not recorded. A match that is not completed is never
+  rated: `record` returns `RejectionReason.MATCH_NOT_COMPLETED` after the
+  match_id check (a processed match_id still gets DUPLICATE_MATCH_ID) and
+  changes nothing, so its match_id is not marked processed and a later
+  completed match with that id can count live. The engine does not check
+  that the later row is the same match: different players count too.
+  `replay` accepts such a row: it counts toward
+  `ReplayInfo.matches_considered`, not `matches_counted`. A full replay
+  gives each player the same rating states as a full replay of the
+  ledger without those rows. Like any rejected row, a checkpoint tracks
+  the row's digest and players, so resume raises SnapshotError for a new
+  seed for a player named only in such a row. Replacing the row with a
+  completed one under the same match_id is an edited row: on or before a
+  checkpoint date it needs a full replay (resume raises
+  LedgerConflictError when given it). In one ledger, a non-completed row
+  and a completed row with the same match_id conflict
+  (LedgerConflictError). `prequential_predictions` (and so `evaluate`,
+  `fit_scale`, and `fit_win_calibration`) never predicts a match that is
+  not completed, and takes its seed date limit and default anchor from
+  completed rows only.
+  Rating a retirement on its finished games would change how ratings
+  move, so it is not done; it would need a declared Config parameter
+  backed by out-of-sample evaluation.
 
 Production notes:
 - Persist the match ledger and player identities in a database. This module's
@@ -231,6 +259,11 @@ Production notes:
 - Do not show `possible_duplicate_of` (or possible_duplicates) to whoever
   submitted the match. It reveals another report's match_id and that
   those players played that result on that date.
+- Verify a match's status as you verify its scores. A status other than
+  completed keeps a match from moving any rating, so a team could report
+  a loss as a forfeit, retirement, or unfinished match to avoid it. The
+  engine cannot tell; the backend must. The engine does not record which
+  team forfeited or retired, so the backend stores that.
 - Require verified identity and authorized evidence before importing an
   external rating. An external refresh can never overwrite an OPEN-earned
   rating once OPEN matches have been processed.
@@ -348,6 +381,24 @@ class ScoringType(_StrEnum):
 
     SIDE_OUT = "side_out"
     RALLY = "rally"
+
+
+class MatchStatus(_StrEnum):
+    """
+    How a match ended. Only a completed match can count.
+
+    COMPLETED: played to a decided winner. FORFEIT: not played, so it has no
+    games. RETIRED: a player stopped (injury or similar) before a winner was
+    decided. INCOMPLETE: stopped for another reason, such as time or
+    weather. A retired or incomplete match records only the games that were
+    finished, and no decided winner. record never counts a match that is not
+    completed (see the module docstring).
+    """
+
+    COMPLETED = "completed"
+    FORFEIT = "forfeit"
+    RETIRED = "retired"
+    INCOMPLETE = "incomplete"
 
 
 @dataclass(frozen=True)
@@ -658,7 +709,17 @@ class Player:
 
 @dataclass(frozen=True)
 class Match:
-    """One completed match: teams, game scores, date, format, and provenance."""
+    """
+    One match: teams, game scores, date, format, provenance, and status.
+
+    status (last field, default MatchStatus.COMPLETED) says how the match
+    ended. A completed match has at least one game and a decided winner. A
+    forfeit must have no games. A retired or incomplete match has zero or more
+    finished games, each valid in game_format, and no decided winner; a
+    partial game is not recorded. record never counts a match that is not
+    completed: after the match_id check (a processed match_id gets
+    DUPLICATE_MATCH_ID), it returns RejectionReason.MATCH_NOT_COMPLETED.
+    """
 
     match_id: str
     team_a: tuple[str, ...]
@@ -682,10 +743,18 @@ class Match:
     # matches: at least one player from each team.
     confirmed_by: frozenset[str] = frozenset()
 
+    # How the match ended. Only a completed match can count.
+    status: MatchStatus = MatchStatus.COMPLETED
+
     def validate(self) -> None:
         """Raise InvalidMatchError (or ConfigError for its game format) when not valid."""
         if not _is_id(self.match_id):
             raise InvalidMatchError("match_id is required for duplicate protection")
+        if not isinstance(self.status, MatchStatus):
+            raise InvalidMatchError(
+                f"status must be a MatchStatus, not {type(self.status).__name__}"
+            )
+        completed = self.status is MatchStatus.COMPLETED
         expected_size = self.rating_format.team_size
         if len(self.team_a) != expected_size or len(self.team_b) != expected_size:
             raise InvalidMatchError(
@@ -704,8 +773,14 @@ class Match:
             raise InvalidMatchError("played_at must fall on played_on")
         if self.sequence < 0:
             raise InvalidMatchError("sequence must be nonnegative")
-        if not self.games:
+        if not isinstance(self.games, (tuple, list)):
+            raise InvalidMatchError(
+                f"games must be a tuple or list, not {type(self.games).__name__}"
+            )
+        if completed and not self.games:
             raise InvalidMatchError("At least one game score is required")
+        if self.status is MatchStatus.FORFEIT and self.games:
+            raise InvalidMatchError("A forfeit cannot have game scores")
         if not all(isinstance(game, (tuple, list)) and len(game) == 2 for game in self.games):
             raise InvalidMatchError("Each game must be a pair of scores")
         if self.best_of < 1 or self.best_of % 2 == 0:
@@ -730,8 +805,11 @@ class Match:
                 if index != len(self.games) - 1:
                     raise InvalidMatchError("No games may be recorded after the match is decided")
                 break
-        if running_a < wins_needed and running_b < wins_needed:
+        decided = running_a >= wins_needed or running_b >= wins_needed
+        if completed and not decided:
             raise InvalidMatchError("Match score does not contain a completed winner")
+        if not completed and decided:
+            raise InvalidMatchError(f"A {self.status.value} match cannot have a decided winner")
 
 
 def _is_id(value: object) -> bool:
@@ -888,7 +966,12 @@ def _json_form(value: object) -> object:
 
 
 class RejectionReason(_StrEnum):
-    """Why record() did not count a match."""
+    """
+    Why record() did not count a match.
+
+    MATCH_NOT_COMPLETED covers every MatchStatus other than COMPLETED; the
+    status itself is on the match.
+    """
 
     DUPLICATE_MATCH_ID = "duplicate_match_id"
     GAME_FORMAT_NOT_ACCEPTED = "game_format_not_accepted"
@@ -898,6 +981,7 @@ class RejectionReason(_StrEnum):
     SINGLES_RATING_GAP = "singles_rating_gap"
     DOUBLES_PARTNER_GAP = "doubles_partner_gap"
     POSSIBLE_DUPLICATE = "possible_duplicate"
+    MATCH_NOT_COMPLETED = "match_not_completed"  # forfeit, retired, or incomplete
 
 
 @dataclass
@@ -1319,7 +1403,7 @@ def _validate_seed(player: Player, cfg: Config) -> None:
 # Snapshots
 # ---------------------------------------------------------------------------
 
-SNAPSHOT_VERSION = 2
+SNAPSHOT_VERSION = 3
 
 _TOP_KEYS = frozenset(
     {
@@ -1994,7 +2078,7 @@ class RatingEngine:
 
     def to_snapshot(self) -> dict[str, object]:
         """
-        The engine's whole state as JSON-safe data (schema version 2).
+        The engine's whole state as JSON-safe data (schema version 3).
 
         json.dumps(snapshot, allow_nan=False) works with no custom encoder,
         and RatingEngine.from_snapshot rebuilds the engine from it, or from
@@ -2002,7 +2086,7 @@ class RatingEngine:
         every list in a fixed order, so the same state always gives the same
         text. Numbers keep their type: an int stays an int.
 
-        Keys: snapshot_version (2), engine_version (informational),
+        Keys: snapshot_version (3), engine_version (informational),
         config_version and config_fingerprint (of this engine's Config),
         calculated_as_of (ISO date or null), replay_info (null, or its
         fields with as_of as an ISO date), players (sorted by id: id,
@@ -2077,7 +2161,7 @@ class RatingEngine:
         cfg must be the Config the snapshot was taken under (default
         Config()): its version and fingerprint must equal the snapshot's.
         The whole snapshot is validated before anything is built: exactly
-        the schema's keys at every level, snapshot_version 2, dates as
+        the schema's keys at every level, snapshot_version 3, dates as
         YYYY-MM-DD text, non-blank str ids with no repeated player or match
         id, RatingFormat values as format keys, ratings within min_rating
         and max_rating, RD within rd_min and rd_max, an imported
@@ -2386,6 +2470,11 @@ class RatingEngine:
         earlier than the match date; the update itself does not depend on it.
         Nothing is changed unless the match counts, except that a match
         rejected as a possible duplicate is recorded in possible_duplicates.
+        A match whose status is not MatchStatus.COMPLETED is never counted:
+        after the match_id check, it returns
+        RejectionReason.MATCH_NOT_COMPLETED and changes nothing (its
+        match_id is not marked processed, so a later completed match with
+        that id can still count).
         Live results apply in
         arrival order: MatchResult.late (and parent.late, for a category
         match) flags a match dated before a player's last match in that
@@ -2404,6 +2493,9 @@ class RatingEngine:
         match.validate()
         if match.match_id in self.processed_match_ids:
             return MatchResult(False, match.rating_format, RejectionReason.DUPLICATE_MATCH_ID)
+        if match.status is not MatchStatus.COMPLETED:
+            # Changes nothing, so a later completed row with this id can count.
+            return MatchResult(False, match.rating_format, RejectionReason.MATCH_NOT_COMPLETED)
 
         cfg = self.cfg
         format_key = (match.game_format.scoring, match.game_format.points_to)
@@ -2998,20 +3090,23 @@ def prequential_predictions(
 
     A match is eligible when every participant is established in its rating
     format (imported baseline, or at least `burn_in_matches` OPEN matches),
-    its scoring equals `scoring` when given, and it is played on or after
-    `score_from` when given. Only matches that `record` counts are kept.
+    its scoring equals `scoring` when given, it is played on or after
+    `score_from` when given, and its status is MatchStatus.COMPLETED (a
+    forfeit, retired, or incomplete row is recorded, which changes nothing,
+    but never predicted). Only matches that `record` counts are kept.
     This "established" is not `PlayerSummary.established`.
 
     "live" records every match live in one engine, in ledger order.
     "scheduled" mirrors production: replay dates are
-    `anchor + k * cfg.replay_interval_days` (anchor defaults to the first match
-    date). A match on day d is predicted from replay(matches on or before s,
+    `anchor + k * cfg.replay_interval_days` (anchor defaults to the first
+    completed match date). A match on day d is predicted from replay(matches on or before s,
     as_of=s) for the largest replay date s strictly before d, and matches in
     that window are then predicted and recorded live in ledger order.
 
     Every seed is validated up front, in both modes, by the seed rules (see
     RatingEngine.add_player), and a seed whose initial_source_date is after
-    the last ledger match raises InvalidSeedError. A repeated seed id raises
+    the last completed ledger match raises InvalidSeedError. A ledger with
+    no completed match has no seed date check and gives no predictions. A repeated seed id raises
     PlayerError, as add_player does. A seed captured mid-ledger is accepted:
     scheduled replays before its date freeze it as usual.
     """
@@ -3019,6 +3114,9 @@ def prequential_predictions(
         raise EvaluationError(f"mode must be 'live' or 'scheduled', not {mode!r}")
     cfg = cfg or Config()
     ordered = _ledger(matches)
+    # Non-completed rows are inert: they stay in the replays and windows, but
+    # never set the seed date limit or the default anchor.
+    completed = [m for m in ordered if m.status is MatchStatus.COMPLETED]
     seeds = list(seed_players)
     seen: set[str] = set()
     for player in seeds:
@@ -3028,8 +3126,8 @@ def prequential_predictions(
             raise PlayerError(f"Player already exists: {player.id}")
         seen.add(player.id)
         _validate_seed(player, cfg)
-        if ordered:
-            _check_seed_date(player, ordered[-1].played_on, "the last ledger match")
+        if completed:
+            _check_seed_date(player, completed[-1].played_on, "the last completed ledger match")
     predictions: list[PrequentialPrediction] = []
 
     def step(engine: RatingEngine, match: Match) -> None:
@@ -3037,6 +3135,7 @@ def prequential_predictions(
         eligible = (
             (scoring is None or match.game_format.scoring is scoring)
             and (score_from is None or match.played_on >= score_from)
+            and match.status is MatchStatus.COMPLETED
             and _is_established(engine, match, burn_in_matches)
         )
         prediction = _predict_match(engine, match) if eligible else None
@@ -3051,11 +3150,11 @@ def prequential_predictions(
             step(engine, match)
         return predictions
 
-    if not ordered:
+    if not completed:
         return predictions
     interval = cfg.replay_interval_days
     if anchor is None:
-        anchor = ordered[0].played_on
+        anchor = completed[0].played_on
     windows: dict[date, list[Match]] = {}
     for match in ordered:
         # Largest k with anchor + k * interval strictly before played_on.

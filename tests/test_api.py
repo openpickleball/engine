@@ -164,6 +164,7 @@ REJECTIONS = [
     "SINGLES_RATING_GAP",
     "DOUBLES_PARTNER_GAP",
     "POSSIBLE_DUPLICATE",
+    "MATCH_NOT_COMPLETED",
 ]
 
 
@@ -233,6 +234,11 @@ def _possible_duplicate() -> tuple[MatchResult, RatingFormat]:
     return eng.record(Match("m2", ("d", "c"), ("b", "a"), ((7, 11),), ON, D)), D
 
 
+def _not_completed() -> tuple[MatchResult, RatingFormat]:
+    m = Match("m1", ("a",), ("c",), (), ON, S, status=open_engine.MatchStatus.FORFEIT)
+    return RatingEngine().record(m), S
+
+
 REJECTION_CASES: dict[str, Callable[[], tuple[MatchResult, RatingFormat]]] = {
     "DUPLICATE_MATCH_ID": _duplicate,
     "GAME_FORMAT_NOT_ACCEPTED": _format_rejected,
@@ -242,6 +248,7 @@ REJECTION_CASES: dict[str, Callable[[], tuple[MatchResult, RatingFormat]]] = {
     "SINGLES_RATING_GAP": _singles_gap,
     "DOUBLES_PARTNER_GAP": _partner_gap,
     "POSSIBLE_DUPLICATE": _possible_duplicate,
+    "MATCH_NOT_COMPLETED": _not_completed,
 }
 
 
@@ -429,6 +436,7 @@ PUBLIC_API = [
     "LedgerConflictError",
     "Match",
     "MatchResult",
+    "MatchStatus",
     "MatchType",
     "OpenEngineError",
     "Player",
