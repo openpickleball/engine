@@ -299,3 +299,41 @@ def test_every_mapping_field_is_frozen() -> None:
     assert mapping_fields == sorted(MAPPING_FIELDS)
     for name in mapping_fields:
         assert not isinstance(getattr(cfg, name), dict)
+
+
+# -- review round 1: keys and values that could share a fingerprint or change --------
+
+
+@pytest.mark.parametrize("key", ["11", 11.0, True, None])
+def test_game_length_keys_must_be_ints(key: object) -> None:
+    weights: dict[object, float] = {11: 1.0, 15: 1.1, 21: 1.2, key: 9.0}
+    with pytest.raises(ConfigError, match="game_length_weights keys must be whole numbers"):
+        Config(game_length_weights=weights)  # type: ignore[arg-type]
+
+
+def test_a_string_key_no_longer_shares_a_fingerprint_with_an_int_key() -> None:
+    with pytest.raises(ConfigError):
+        Config(game_length_weights={11: 1.0, 15: 1.1, 21: 1.2, "11": 9.0})  # type: ignore[dict-item]
+
+
+@pytest.mark.parametrize("name", MAPPING_FIELDS)
+@pytest.mark.parametrize("bad", [[0.9], "0.9", True, None, float("nan"), float("inf")])
+def test_mapping_values_must_be_finite_numbers(name: str, bad: object) -> None:
+    values = dict(getattr(Config(), name))
+    values[next(iter(values))] = bad
+    with pytest.raises(ConfigError, match=f"{name} values must be finite numbers"):
+        Config(**{name: values})
+
+
+def test_a_mutable_value_cannot_change_the_config() -> None:
+    weights: dict[MatchType, object] = dict(Config().match_weights)
+    weights[MatchType.LEAGUE] = [0.9]
+    with pytest.raises(ConfigError):
+        Config(match_weights=weights)  # type: ignore[arg-type]
+
+
+def test_from_dict_rejects_game_length_keys_that_name_the_same_length() -> None:
+    data = Config().to_dict()
+    data["game_length_weights"] = {"11": 1.0, "011": 3.0, "15": 1.1, "21": 1.2}
+    with pytest.raises(ConfigError, match="game_length_weights repeats"):
+        Config.from_dict(data)
