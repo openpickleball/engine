@@ -2432,12 +2432,12 @@ class RatingEngine:
         The player's current state in a format. Read-only: it never stores.
 
         For a format the player has no state in, it returns the starting state
-        the player's first match in that format would use: a category state
-        derived from overall doubles where that applies, else a provisional
-        default. That object is a new copy each call and is not engine state,
-        so changing it changes nothing. Use seed_provisional_rating to store
-        it. Raises UnknownPlayerError when no player record exists for the id,
-        and PlayerError for a blank id.
+        the player's first match in that format would use if played now: a
+        category state derived from overall doubles where that applies, else a
+        provisional default. That object is a new copy each call and is not
+        engine state, so changing it changes nothing. Use
+        seed_provisional_rating to store it. Raises UnknownPlayerError when no
+        player record exists for the id, and PlayerError for a blank id.
         """
         player = self.player(player_id)
         if rating_format in player.ratings:
@@ -2747,7 +2747,7 @@ class RatingEngine:
 
         It never changes engine state. For a known player with no state in
         the format, it reports the starting state the player's first match in
-        that format would use (see state), without storing it.
+        that format would use if played now (see state), without storing it.
 
         Raises ReferenceDateError when as_of is None and the engine was never
         replayed, or when as_of is not a plain date (a datetime is not one).
