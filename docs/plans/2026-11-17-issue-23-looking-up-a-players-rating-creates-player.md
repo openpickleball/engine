@@ -111,3 +111,75 @@ add_player(Player('syn-g')) -> raised PlayerError: Player already exists: syn-g
 ```
 
 On the branch the seed stores 4.0, `player_summary` raises `UnknownPlayerError`, and `add_player` then succeeds. `test_a_seed_after_a_state_read_needs_no_replace` and `test_add_player_after_a_failed_summary_succeeds` pin this.
+
+## Addendum: follow-ups folded in at the maintainer's request
+
+PR #64 was open and green when the maintainer asked to fold in the two follow-ups that review found. The risk tier stays High, because part B changes the snapshot schema. The maintainer chose the full scope for part B.
+
+### Part A: failed creating calls leave no player behind
+
+Today `link_account`, `attach_external_id`, and `seed_external_rating` call `_player_or_new` before their identity checks. When a check fails on a new id, a `PlayerError` is raised and an empty player record is left behind, with the resumable mark cleared. Main behaves the same way. This breaks the "validate before committing" rule in CLAUDE.md.
+
+Acceptance criteria:
+
+- A1. `link_account`, `attach_external_id`, and `seed_external_rating` run every check before they change any state. A call that raises leaves `to_snapshot()` output (including `resumable`) and the `players` keys exactly as they were. This holds for a new id and for an existing player. The cases are:
+  - `link_account` with an account already linked to another player.
+  - `link_account` for a player already linked to a different account.
+  - `attach_external_id` with an identity already linked to another player.
+  - `attach_external_id` for a player already holding a different id from that source.
+  - `seed_external_rating` whose snapshot external identity fails any of the `attach_external_id` checks above, including a missing source.
+  - `seed_external_rating` that may not replace an existing rating.
+  - A blank `player_id` or a blank `account_user_id`, `source`, or `external_player_id`.
+- A2. A successful call creates and changes exactly what it did before. Error types and messages do not change.
+
+Files: `src/open_engine/engine.py`. Add a private check that validates an external identity link without changing anything (`_check_external_id(player_id, source, external_player_id)`), and a matching account check. Use them in `attach_external_id`, `link_account`, and `seed_external_rating` before `_player_or_new`. Tests go in a new `tests/test_failed_calls_create_nothing.py`. CHANGELOG gets a `### Fixed` entry under `[Unreleased]`.
+
+### Part B: a derived category state carries the parent's provisional count
+
+A category state (mixed, men's, or women's doubles) derived from overall doubles copies the parent's rating. If the parent has live updates since the last replay, that rating carries provisional movement. Today the category state starts with `live_updates_since_replay = 0`, so `player_summary` labels it with 0 live updates before its first match, and with only its own count after its first match. Both labels are too low under the provisional-versus-authoritative rule.
+
+Design:
+
+- New `RatingState` field `inherited_live_updates: int = 0`. It counts the live updates since the last replay that were already in the parent state when this category state was derived from it.
+- `_new_state` sets it, in the derived branch only, to the parent's `live_updates_since_replay + inherited_live_updates`. The parent is overall doubles, which has no parent, so this is its own count, but the sum keeps it general. It never changes after derivation.
+- `PlayerSummary.live_updates_since_recalculation` reports `live_updates_since_replay + inherited_live_updates`. The field name and type stay the same, but its meaning widens. This is a changelog entry, and the docstring and README say so.
+- It changes no rating, RD, or reliability. A replay rebuilds every state, so it gives 0 for every state, because parents have no live updates during a replay.
+- Snapshot schema:
+  - The new key is in `_STATE_KEYS`, `_state_form`, and `_snap_state_fields`, and is read with `_snap_count`.
+  - `SNAPSHOT_VERSION` goes from 3 to 4. The README schema section lists the key and says version 3 snapshots do not load.
+  - Validation, in `_check_state_invariants` or alongside it: a nonzero `inherited_live_updates` is allowed only for a format with a parent and only when `initial_source == f"open_parent:{parent.value}"`.
+  - A resumable snapshot must have `inherited_live_updates == 0` in every state. Check this in `_check_resumable`.
+  - `_resume_start` refuses a snapshot with any nonzero `inherited_live_updates`, alongside the existing live-updates check.
+- Seed rules: `_seed_type_broken` checks that the field is an int, not a bool. `_seed_rule_broken` requires it to be 0, so `add_player`, replay seeds, and `prequential_predictions` seeds reject a nonzero value. Add the rule to the `add_player` docstring list.
+- `tests/test_snapshot.py` has attribute and field guards. Update the schema, and the attribute list only if the test requires it, as CLAUDE.md describes.
+
+Acceptance criteria:
+
+- B1. After k live overall doubles matches since the last replay (or on a never-replayed engine), a known player's first category state derived from that doubles state reports `live_updates_since_recalculation == k` in `player_summary`. This holds both before the first category match (unstored, via `state`/`player_summary`) and after a `seed_provisional_rating`. After its first live category match it reports `k + 1`, plus 1 more for each further live category match.
+- B2. A state that is not derived reports `live_updates_since_replay` alone. That covers overall doubles, singles, a category with `category_feeds_parent=False`, and a category whose parent was unplayed and unseeded at derivation. Parent live matches after derivation do not change a stored category state's inherited count.
+- B3. After `replay`, every state has `inherited_live_updates == 0`, and replay output (ratings, RDs, snapshots apart from the new key and the version) is the same as before part B.
+- B4. `to_snapshot()` includes the key with snapshot_version 4, and `from_snapshot` round-trips it. `from_snapshot` raises `SnapshotError` in these cases:
+  - a version 3 snapshot
+  - a missing key or a key of the wrong type
+  - a nonzero value on a non-category format or on a state whose `initial_source` is not its parent's `open_parent:` source
+  - a nonzero value in a resumable snapshot
+  
+  `replay(from_snapshot=...)` refuses a snapshot with a nonzero value.
+- B5. `add_player` raises `InvalidSeedError` for a seed with a nonzero or non-int `inherited_live_updates`.
+- B6. Docs: the README schema section and the `PlayerSummary`/`player_summary` text describe the widened count. The CHANGELOG has an entry under `### Changed` for the new count and the snapshot version bump, which makes stored version 3 snapshots fail to load.
+
+Tests go in a new `tests/test_inherited_live_updates.py`, plus the schema updates in the snapshot tests.
+
+### Order of work (addendum)
+
+1. Part A red tests, committed alone. Then the fix.
+2. Part B red tests, committed alone. Then the field, `_new_state`, `player_summary`, the snapshot schema and validation, the seed rules, and the version bump.
+3. README, CHANGELOG, and docstrings.
+4. The full gate and a live drive of A1, B1, B3, and B4.
+
+### Risks (addendum)
+
+- Riskiest: the snapshot version bump makes every stored version 3 snapshot fail to load. That is intended and documented, and the backend must take a new full replay after upgrading.
+- A missed field site, such as `_clone_state` (it uses `replace`, so it copies automatically), the snapshot form, validation, or seed rules, would break round-trips. The snapshot round-trip tests and the `tests/test_snapshot.py` guards catch this.
+- Part A's error order: a blank id must still raise the same error it raises today. A1's tests pin each case against origin/main's message.
+- Not done: `seed_provisional_rating` with a `rating_format` passed as a plain str still creates the player before failing in `_new_state` with `AttributeError`. That is the same as on main, and non-`RatingFormat` arguments are out of scope as before.
