@@ -14,12 +14,12 @@ The owner chose the policy on 2026-11-16: keep `Config.win_weight = 0.0` (pure p
 
 ## Acceptance criteria
 
-1. The policy is published in the `engine.py` module docstring ("Published behavior notes"), next to the `win_weight` field in `Config`, and in a short README section. It states: match performance is team A's share of all points across games, blended with the match result by `win_weight` (default 0.0); a team can win and lose rating, both when it wins by less than expected and when it wins a best-of-3 with fewer total points; there is no floor on a winner's change other than the rating range (`min_rating` to `max_rating`); among matches with the same players, game format, number of games, match type, and result, a higher point share never gives a team a worse change, but longer games and more games carry more weight, so across formats a slightly wider winning margin can still cost more rating; the default changes only when out-of-sample evaluation supports it; `win_weight = 1.0` scores the result only, so a winner never loses.
+1. The policy is published in the `engine.py` module docstring ("Published behavior notes"), next to the `win_weight` field in `Config`, and in a short README section. It states: match performance is team A's share of all points across games, blended with the match result by `win_weight` (default 0.0); a team can win and lose rating when it wins by less than expected, and it can also happen when it wins a best-of-3 with fewer total points; there is no floor on a winner's change other than the rating range (`min_rating` to `max_rating`); among matches with the same players, the same ratings and RD at match time, and the same game format, number of games, match type, and result, a higher point share never gives a team a worse change, but longer games and more games carry more weight, so across formats a slightly wider winning margin can still cost more rating; the default changes only when out-of-sample evaluation supports it; `win_weight = 1.0` scores the result only, so a winner never loses; values between 0 and 1 make a loss less likely, and only values close to 1 rule it out, depending on the rating range and scale.
 2. The default config reflects the policy: `Config().win_weight == 0.0`, pinned by a test.
 3. Property tests:
    a. At the default, the issue's repro: team A rated 5.0 beats team B rated 4.0 11-9 in doubles (all RD 0.42, no inactivity) and each team A player loses 0.03531; each team B player gains 0.03531.
    b. At the default, at equal ratings, team A wins 2-1 with 11-9, 0-11, 11-9 (fewer total points, actual 0.43137) and each team A player loses rating.
-   c. For each `win_weight` in 0.0, 0.25, 0.5, 1.0, a team's change is monotonic in its margin: over every valid one-game side-out score to 11, ordered by team A's point share, team A's delta never decreases and team B's never increases. For `win_weight < 1` team A's delta strictly increases.
+   c. For each `win_weight` in 0.0, 0.25, 0.5, 1.0, a team's change is monotonic in its margin: over the listed one-game side-out scores to 11 (up to 13-11), ordered by team A's point share, team A's delta never decreases and team B's never increases. For `win_weight < 1` team A's delta strictly increases.
    d. With `win_weight = 1.0`, the match winner never loses rating, across rating gaps where the winner is the much higher-rated team.
 4. `CHANGELOG.md` records the published policy under `## [Unreleased]`, saying it changes no rating.
 
@@ -38,7 +38,7 @@ The owner chose the policy on 2026-11-16: keep `Config.win_weight = 0.0` (pure p
 
 Test helpers: build an engine with `RatingEngine(Config(win_weight=w))`, seed each player with `seed_provisional_rating(pid, RatingFormat.DOUBLES)` and set `rating`, `rd = 0.42`, `rd_as_of = ON` on the returned state (the pattern in `tests/test_own_k.py`), then `record(Match("m", ("a1", "a2"), ("b1", "b2"), games, ON, RatingFormat.DOUBLES, best_of=...))`. Use `pytest.mark.parametrize` for the `win_weight` values and rating gaps. Use `pytest.approx` with `abs=1e-5` for the 0.03531 values.
 
-Valid one-game side-out scores to 11 for criterion 3c: team A losing `(p, 11)` for p in 0..9, `(10, 12)`, `(11, 13)`; team A winning the mirror images. Sort by `a / (a + b)`.
+The listed one-game side-out scores to 11 (up to 13-11) for criterion 3c: team A losing `(p, 11)` for p in 0..9, `(10, 12)`, `(11, 13)`; team A winning the mirror images. Sort by `a / (a + b)`.
 
 ## Risks
 

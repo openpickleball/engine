@@ -16,7 +16,7 @@ TEAM_A = ("a1", "a2")
 TEAM_B = ("b1", "b2")
 WIN_WEIGHTS = [0.0, 0.25, 0.5, 1.0]
 
-# Every valid one-game side-out score to 11, win by 2, from team A's side.
+# The listed one-game side-out scores to 11 (up to 13-11), win by 2, from team A's side.
 _A_LOSES = [(p, 11) for p in range(10)] + [(10, 12), (11, 13)]
 ONE_GAME_SCORES = sorted(
     _A_LOSES + [(b, a) for a, b in _A_LOSES],
