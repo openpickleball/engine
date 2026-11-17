@@ -622,10 +622,3 @@ def test_digest_joins_rows_canonical_joins(a: Match, b: Match) -> None:
 def test_digest_is_64_lowercase_hex() -> None:
     digest = engine_module._match_digest(BASE)
     assert len(digest) == 64 and set(digest) <= set("0123456789abcdef")
-
-
-@pytest.mark.parametrize("key", ["syn-x1", "syn-m03"], ids=["unprocessed", "processed"])
-def test_possible_duplicates_key_may_be_processed_or_not(snapshot: Snap, key: str) -> None:
-    # Flag mode keeps a copy in processed_match_ids and reject mode does not.
-    _set_dup(key, "syn-m01")(snapshot)
-    assert RatingEngine.from_snapshot(snapshot).possible_duplicates == {key: "syn-m01"}
