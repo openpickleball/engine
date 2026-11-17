@@ -309,7 +309,7 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from enum import Enum, StrEnum
-from typing import Literal, TypeVar
+from typing import Literal, TypeGuard, TypeVar
 
 # Explicit re-exports, so `from open_engine.engine import X` passes mypy --strict.
 from ._errors import ConfigError as ConfigError
@@ -487,6 +487,8 @@ class _FrozenMapping(Mapping[_K, _V]):
         return (type(self), (self._data,))
 
 
+_SCORING_VALUES = frozenset(ScoringType)
+
 # Config fields that hold a mapping. __post_init__ stores each as a read-only copy.
 _CONFIG_MAPPING_FIELDS = (
     "scale_by_scoring",
@@ -504,12 +506,19 @@ class Config:
     The defaults are uncalibrated placeholders. fingerprint() identifies the
     exact parameter set behind published ratings.
 
-    Mapping fields are stored as read-only copies, and allowed_game_formats as
-    a frozenset, so changing the dict or set a config was built from, or
-    trying to change the config's own, never changes the config. Two configs
-    are equal exactly when their fingerprint payloads are equal, and equal
-    configs hash equal, so a Config can be a dict key or a set member.
-    to_dict() and from_dict() store and load a config as JSON-safe data.
+    Mapping fields are stored as read-only copies whose values must be
+    finite numbers, and allowed_game_formats as a frozenset of (scoring
+    type, whole number) pairs. Changing the dict or set a config was built
+    from does not change the config, and changing the config's own raises
+    TypeError. Two configs are equal exactly when their fingerprint payloads
+    are equal, so equal configs share a fingerprint and a hash, and a Config
+    can be a dict key or a set member. to_dict() and from_dict() store and
+    load a config.
+
+    Only the mapping and format fields are type-checked so far. A scalar
+    field given a value JSON cannot hold (a Decimal, say) makes
+    fingerprint(), ==, and hash() raise TypeError, and a non-finite float
+    is written as NaN or Infinity, which strict JSON rejects.
     """
 
     version: str = __version__
@@ -637,10 +646,24 @@ class Config:
             value = getattr(self, name)
             if not isinstance(value, Mapping):
                 raise ConfigError(f"{name} must be a mapping")
+            if not all(_is_finite_number(item) for item in value.values()):
+                raise ConfigError(f"{name} values must be finite numbers")
             object.__setattr__(self, name, _FrozenMapping(value))
+        if not all(_is_whole_number(key) for key in self.game_length_weights):
+            raise ConfigError("game_length_weights keys must be whole numbers")
         if not isinstance(self.allowed_game_formats, (set, frozenset)):
             raise ConfigError("allowed_game_formats must be a set or frozenset")
         object.__setattr__(self, "allowed_game_formats", frozenset(self.allowed_game_formats))
+        for entry in self.allowed_game_formats:
+            if not (
+                isinstance(entry, tuple)
+                and len(entry) == 2
+                and entry[0] in _SCORING_VALUES
+                and _is_whole_number(entry[1])
+            ):
+                raise ConfigError(
+                    "allowed_game_formats entries must be (scoring type, whole number) pairs"
+                )
         if not self.min_rating < self.max_rating:
             raise ConfigError("min_rating must be less than max_rating")
         if not self.min_rating <= self.default_rating <= self.max_rating:
@@ -717,19 +740,23 @@ class Config:
 
     def to_dict(self) -> dict[str, object]:
         """
-        Every parameter as a new dict of JSON-safe data, for storage.
+        Every parameter as a new dict of JSON data, for storage.
 
         Enum keys and values become their string values, game length keys
         become strings, and allowed_game_formats becomes a sorted list of
-        [scoring, points] pairs. from_dict() turns it back into an equal
-        Config with the same fingerprint.
+        [scoring, points] pairs. Other values are passed through, so the
+        dict is plain JSON when every field has its documented type.
+        from_dict() turns it back into an equal Config with the same
+        fingerprint. A store that rewrites 8.0 as 8 changes the config: an
+        int and a float are different values to the fingerprint.
         """
         return self._payload()
 
     @classmethod
     def from_dict(cls, data: Mapping[str, object]) -> Config:
         """
-        Build a Config from to_dict() output, also after a JSON round trip.
+        Build a Config from to_dict() output, also after a round trip
+        through Python's json module.
 
         data must have exactly the keys to_dict() gives, so a stored config
         names every parameter. Raises ConfigError for a missing or unknown
@@ -760,6 +787,10 @@ class Config:
             raise ConfigError(f"Config data has a value of the wrong type: {exc}") from exc
 
 
+def _is_whole_number(value: object) -> TypeGuard[int]:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 _E = TypeVar("_E", bound=Enum)
 
 
@@ -780,12 +811,15 @@ def _int_keyed(value: object) -> dict[int, object]:
         raise ConfigError("game_length_weights must be a mapping")
     out: dict[int, object] = {}
     for key, item in value.items():
-        if isinstance(key, int) and not isinstance(key, bool):
-            out[key] = item
+        if _is_whole_number(key):
+            points = key
         elif isinstance(key, str) and key.isascii() and key.isdigit():
-            out[int(key)] = item
+            points = int(key)
         else:
             raise ConfigError(f"game_length_weights has a key that is not a whole number: {key!r}")
+        if points in out:
+            raise ConfigError(f"game_length_weights repeats the game length {points}")
+        out[points] = item
     return out
 
 
