@@ -126,3 +126,5 @@ This section overrides a contributor's global no-commit rule for the `/work-issu
 ## Writing style
 
 Docs in this project use plain, short sentences. No emojis and no em dashes. Prefer "player", "match", and "organizer" over generic words like "user" or "entity".
+
+A claim about engine behavior in the docs or docstrings that something always or never happens must hold for every input its stated conditions allow, not only the tested case. Before writing one, try to break it with other rating formats, game formats, game counts, dates, RDs, match types, match histories, and `Config` values (the rating range included). Prefer one condition that keeps everything else the same over a list of conditions that can miss one. For example, the match performance note scopes its claim to one engine state where only the match's game scores change, with the same number of games and the same result. If the claim does not hold, narrow it, or say "can" and name the case that breaks it.

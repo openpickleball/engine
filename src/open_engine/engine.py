@@ -39,6 +39,26 @@ Published behavior notes:
   `team_size * imbalance` to the pool's total rating (twice the value in
   doubles). The backend should total it per pool (and per replay) and
   monitor it.
+- Match performance is team A's share of all points across the match's
+  games, blended with the match result by Config.win_weight:
+  `(1 - win_weight) * point_share + win_weight * (1 if A won else 0)`.
+  The default win_weight is 0.0, pure pooled point share. So a team can
+  win and still lose rating when it wins by less than its expected share
+  (a 5.0 team beating a 4.0 team 11-9 in doubles). It can also happen
+  when it wins a best of 3 (or 5) with fewer total points. There is no
+  floor on a winner's change, other than the rating range (min_rating to
+  max_rating). For one engine state, raising a team's point share by
+  changing only the match's game scores, with the same number of games
+  and the same result, never gives that team a worse change. Longer
+  games and more games can carry more weight (up to
+  Config.max_information_multiplier), so across game formats and game
+  counts a slightly wider winning margin can still cost more rating.
+  win_weight = 1.0 scores the result only, so a winner never loses
+  rating. Values between 0 and 1 make a rating loss less likely. Only
+  values close to 1 rule it out, and how close depends on the rating
+  range and scale and on the lowest point share a winner can have. The
+  default is a declared choice, not a validated one. It changes only
+  when out-of-sample evaluation shows another value predicts better.
 - Authoritative ratings come from scheduled replays (see
   `Config.replay_interval_days`). Live updates between replays are
   provisional and are labeled with the count of live updates since the last
@@ -383,7 +403,15 @@ class Config:
     rd_shrink_per_match: float = 0.08
     rd_growth_per_day: float = 0.012
 
-    # Match performance. 0.0 means pure point-share performance.
+    # Match performance: actual = (1 - win_weight) * pooled point share
+    # + win_weight * (1 if team A won else 0). The default 0.0 is pure
+    # point share, so a team can win and still lose rating when it wins by
+    # less than expected or wins a best of 3 (or 5) with fewer total
+    # points. 1.0 scores the result only, so a winner never loses rating.
+    # There is no floor on a winner's change, other than the rating range.
+    # The default changes only when out-of-sample evaluation supports
+    # another value (issue #20). See the match performance note in the
+    # module docstring for the full policy.
     win_weight: float = 0.0
 
     # Evidence quality. These are OPEN policy choices.
