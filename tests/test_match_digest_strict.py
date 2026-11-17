@@ -29,11 +29,15 @@ def _canonical_equal(a: Match, b: Match) -> bool:
     return engine_module._canonical(a) == engine_module._canonical(b)
 
 
+class _Int(int):
+    """An int subclass: a valid score, equal to its int, with another type."""
+
+
 DIFFERENT = [
     pytest.param(
         dataclasses.replace(BASE, games=([11, 1],)),
-        dataclasses.replace(BASE, games=([11, True],)),
-        id="list member int vs bool",
+        dataclasses.replace(BASE, games=([11, _Int(1)],)),
+        id="list member int vs int subclass",
     ),
     pytest.param(BASE, dataclasses.replace(BASE, games=([11, 1],)), id="tuple vs list"),
     pytest.param(

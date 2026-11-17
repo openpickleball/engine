@@ -778,6 +778,11 @@ class Match:
             raise InvalidMatchError("A player cannot appear more than once in a match")
         if not set(self.confirmed_by) <= set(all_ids):
             raise InvalidMatchError("confirmed_by may only contain match participants")
+        if not _is_plain_date(self.played_on):
+            raise InvalidMatchError(
+                "played_on must be a plain date (not a datetime), "
+                f"not {type(self.played_on).__name__}"
+            )
         if self.played_at is not None:
             _utc_instant(self.played_at)
         if self.played_at is not None and self.played_at.date() != self.played_on:
@@ -800,7 +805,10 @@ class Match:
             raise InvalidMatchError("Games played cannot exceed best_of")
         self.game_format.validate()
         for score_a, score_b in self.games:
-            if not isinstance(score_a, int) or not isinstance(score_b, int):
+            if not all(
+                isinstance(score, int) and not isinstance(score, bool)
+                for score in (score_a, score_b)
+            ):
                 raise InvalidMatchError("Game scores must be integers")
             if score_a < 0 or score_b < 0 or score_a == score_b:
                 raise InvalidMatchError("Game scores must be nonnegative and cannot be tied")
@@ -1259,7 +1267,7 @@ def _content_score(score: int) -> int | str:
     """
     A validated game score in the content key's JSON form.
 
-    int() folds a bool into its int. A score below 10**600 stays a JSON
+    int() folds an int subclass into a plain int. A score below 10**600 stays a JSON
     number; a larger one is hex text, which has no digit limit and never
     equals a number.
     """
@@ -1281,7 +1289,7 @@ def _content_key(match: Match) -> str:
     played_at, sequence, confirmed_by), since two reports of one match
     often disagree on labels. The digest is over JSON text, so it never
     depends on set order or the hash seed. Scores go through
-    _content_score, so a bool score equals its int and a huge score never
+    _content_score, so an int subclass equals its int and a huge score never
     hits the int to text digit limit.
     """
     team_a = sorted(match.team_a)
@@ -2649,6 +2657,8 @@ class RatingEngine:
         next replay). replay() passes a fixed as_of for authoritative rebuilds.
         `as_of` only labels the update as part of a replay and must not be
         earlier than the match date; the update itself does not depend on it.
+        An as_of that is not a plain date (a datetime is not one) raises
+        InvalidMatchError right after the match is validated.
         Nothing is changed unless the match counts, except that a match
         rejected as a possible duplicate is recorded in possible_duplicates.
         A match whose status is not MatchStatus.COMPLETED is never counted:
@@ -2672,6 +2682,10 @@ class RatingEngine:
         checks, so a rejected duplicate never enters the self-reported log.
         """
         match.validate()
+        if as_of is not None and not _is_plain_date(as_of):
+            raise InvalidMatchError(
+                f"as_of must be a plain date (not a datetime), not {type(as_of).__name__}"
+            )
         if match.match_id in self.processed_match_ids:
             return MatchResult(False, match.rating_format, RejectionReason.DUPLICATE_MATCH_ID)
         if match.status is not MatchStatus.COMPLETED:

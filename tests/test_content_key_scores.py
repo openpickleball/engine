@@ -1,13 +1,18 @@
-"""The content key handles any valid int score, bool included (issue #21 review).
+"""The content key handles any valid int score (issue #21 review).
+
+A bool is not a valid score (issue #24), so it never reaches the key.
 
 All player and match ids are synthetic.
 """
 
 from __future__ import annotations
 
+import json
 from datetime import date
 
-from open_engine import Match, RatingEngine, RatingFormat, replay
+import pytest
+
+from open_engine import InvalidMatchError, Match, RatingEngine, RatingFormat, replay
 
 D = RatingFormat.DOUBLES
 ON = date(2026, 3, 1)
@@ -33,9 +38,10 @@ def test_a_huge_score_replays() -> None:
     assert eng.replay_info.matches_counted == 1
 
 
-def test_a_bool_score_has_the_same_content_as_its_int() -> None:
+def test_a_bool_score_is_rejected_before_the_content_key() -> None:
     eng = RatingEngine()
     eng.record(_m("syn-m1", ((11, 1),)))
-    second = eng.record(_m("syn-m2", ((11, True),)))
-    assert second.counted is True
-    assert second.possible_duplicate_of == "syn-m1"
+    before = json.dumps(eng.to_snapshot(), sort_keys=True)
+    with pytest.raises(InvalidMatchError, match="Game scores must be integers"):
+        eng.record(_m("syn-m2", ((11, True),)))
+    assert json.dumps(eng.to_snapshot(), sort_keys=True) == before
