@@ -174,8 +174,10 @@ Production notes:
   live match, by typo or on purpose, holds last_played, rd_as_of, and
   partner and opponent dates at that future date for every player in it
   until the next replay: RD stops growing, reliability is held up, and
-  player_summary's default reference date jumps ahead. Every later honest
-  match with those players comes back with `late` set to True.
+  player_summary's default reference date jumps ahead. A later honest
+  match with those players in the same rating format comes back with
+  `late` set to True. For a category match, `parent.late` covers the
+  overall doubles rating.
 - To avoid replaying the whole ledger every time, persist the snapshot of
   each scheduled replay and resume the next one from it. Take the
   snapshot right after the replay, before any other call on the engine.
@@ -835,7 +837,10 @@ class MatchResult:
     match, parent.late, and schedule a replay when either is True. It
     compares dates only, so a match on the same date as a player's last
     match is not late. It is False for a match that did not count. parent
-    has its own value, measured against the overall doubles dates.
+    has its own value, measured against the overall doubles dates. A
+    category rating copied from overall doubles keeps flagging later live
+    category matches dated before the copied date, until a category match
+    on or after that date or the next replay.
     """
 
     counted: bool
