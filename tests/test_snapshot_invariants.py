@@ -43,7 +43,7 @@ def _engine() -> RatingEngine:
     seeder.seed_external_rating(
         "syn-u", S, ExternalRatingSnapshot("external_standard", 4.0, date(2025, 1, 1), 60.0)
     )
-    seeder.state("syn-v", S)
+    seeder.seed_provisional_rating("syn-v", S)
     seeds = [seeder.players["syn-u"], seeder.players["syn-v"]]
     return replay(LEDGER, seeds, as_of=AS_OF)
 
@@ -253,7 +253,7 @@ def test_a_live_engine_may_hold_dates_after_its_replay() -> None:
 
 def test_a_category_state_derived_from_its_parent_loads() -> None:
     engine = _engine()
-    engine.state("syn-a", RatingFormat.MIXED_DOUBLES)
+    engine.seed_provisional_rating("syn-a", RatingFormat.MIXED_DOUBLES)
     snapshot = _snapshot(engine)
     restored = RatingEngine.from_snapshot(snapshot)
     assert restored.to_snapshot() == snapshot

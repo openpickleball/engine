@@ -51,7 +51,7 @@ def _seeds() -> list[Player]:
         "syn-w0", S, ExternalRatingSnapshot("external_standard", 3.9, SEED_DATE, 65)
     )
     # A category seed derived from the imported doubles rating.
-    eng.state("syn-m0", MX)
+    eng.seed_provisional_rating("syn-m0", MX)
     return [eng.players[pid] for pid in sorted(eng.players)]
 
 

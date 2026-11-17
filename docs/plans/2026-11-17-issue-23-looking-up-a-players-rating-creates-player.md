@@ -1,0 +1,194 @@
+# Plan: Looking up a player's rating creates player records (issue #23)
+
+Risk tier: High. The change alters the contract of three public `RatingEngine` methods (`player`, `state`, `player_summary`), changes existing behavior rather than adding, touches the resumable-snapshot mark (replay provenance, a security-sensitive area), and spans the engine, the error module, the exports, the README, the changelog, and several test files. It is fully unit-testable.
+
+Domain skills: superpowers:test-driven-development: invoke. django, django-ninja-api, django-celery, django-allauth, python-fastapi, React and Expo skills: not applicable because this is a standard-library-only Python package with no framework, API layer, or UI.
+
+Decisions taken with the maintainer:
+
+- An unknown player id raises a new `UnknownPlayerError` (a `PlayerError` subclass) from `player()`, `state()`, and `player_summary()`. They never return `None`.
+- `player()` becomes read-only too. The methods that create on purpose keep creating through an internal helper: `seed_provisional_rating`, `seed_external_rating`, `link_account`, `attach_external_id`, `add_player`, and `record` (and so `replay`).
+- A known player with no state in the requested format: `state()` returns the starting state the player's first match in that format would use if played now (`_new_state`: a category state derived from overall doubles where that applies, else a provisional default), and `player_summary()` reports it. Neither stores it.
+
+## Acceptance criteria
+
+1. No reporting call changes engine state. `player()`, `state()`, `player_summary()`, `predict_point_share()`, `predict_win_probability()`, and `to_snapshot()` leave `to_snapshot()` output (which includes the `resumable` mark) and the `players` keys exactly as they were, for a known player in a format they have, a known player in a format they lack (category derived from parent, and a plain provisional format), and an unknown player id (where the call raises). A test compares state before and after.
+2. `player(id)`, `state(id, fmt)`, and `player_summary(id, fmt, ...)` raise `UnknownPlayerError` for an id with no player record, and the engine is unchanged after the raise. The issue's reproduction, `player_summary("ghost", DOUBLES, as_of=...)` on an empty engine, raises and leaves `players` empty.
+3. `UnknownPlayerError` subclasses `PlayerError` (so `OpenEngineError` and `ValueError`), is exported from `open_engine` and listed in `__all__`, has a docstring, and is in the README "Public API" errors list.
+4. A blank or whitespace player id still raises `PlayerError` from `player()` (existing message "player_id is required"), not `UnknownPlayerError`.
+5. For a known player with no state in a format, `state()` equals the state `seed_provisional_rating` would create, and `player_summary()` equals the summary after `seed_provisional_rating` on a copy of the engine, with nothing stored. Mutating the returned state changes nothing in the engine.
+6. Explicit creation still works for a new id: `seed_provisional_rating`, `seed_external_rating`, `link_account`, `attach_external_id`, `add_player`, and `record` create the player as before, and still clear the resumable mark.
+7. The unknown-player behavior is documented: the docstrings of `player`, `state`, and `player_summary`, the README (errors list, the `player_summary` paragraph where it applies, and the snapshot note that today says `player_summary` and `state` create a state), and a `CHANGELOG.md` entry under `[Unreleased]` that calls the change breaking.
+8. Apart from the addendum's snapshot schema change (version 3 snapshots no longer load, and snapshots are version 4 with an `inherited_live_updates` key in each state), no replay, resume, or evaluation output changes for any ledger and snapshot that worked before. Reads that used to create a player or rating state no longer do, so later calls see the engine as it was before the read. For example, the first match in a category format after a read of that missing format now rates as it would have without the read, as a replay does, and a later `seed_external_rating` without `replace_unplayed_seed`, or `add_player` for that id, no longer finds a state or player the read created. Those reads also no longer clear the resumable mark. The existing suite passes, with tests changed only where they relied on a read creating a player or state.
+
+## Files that change
+
+- `src/open_engine/_errors.py`: add `class UnknownPlayerError(PlayerError)` with a docstring ("No player record exists for the player id.").
+- `src/open_engine/engine.py`:
+  - Re-export `UnknownPlayerError` with the other errors (follow how `PlayerError` is imported and re-exported).
+  - New private `_player_or_new(self, player_id: str) -> Player`: today's `player()` body (blank check, then create through `_put_player`).
+  - `player()`: blank check as today (`PlayerError("player_id is required")`), then `UnknownPlayerError(f"Unknown player: {player_id}")` when the id is not in `self.players`. Never creates. Docstring says so and names both errors.
+  - `link_account`, `attach_external_id`, `seed_external_rating`, `seed_provisional_rating`, `_commit`: call `_player_or_new` where they call `self.player` today. Behavior unchanged.
+  - `state()`: `player = self.player(player_id)` (raises for unknown), then return `player.ratings[fmt]` if present, else `self._new_state(player_id, fmt)` without storing. Docstring: read-only, never stores, what it returns for a missing format, that the returned object for a missing format is not engine state, raises `UnknownPlayerError`. It no longer says "Same as seed_provisional_rating".
+  - `player_summary()`: keep the as_of type and reference checks first, then `self.player(player_id)` and `self.state(...)`. Docstring: never changes engine state, raises `UnknownPlayerError` for an unknown id (after the `ReferenceDateError` checks), and for a known player with no state in the format it reports the starting state that format's first match would use if played now. Replace the sentence "These checks come first, so a failed call creates no player or rating state."
+  - `to_snapshot` docstring (around line 2113): drop "including one player_summary or state() creates" from the list of state changes.
+  - Module docstring: edit only if a note there says reads create state (grep it).
+- `src/open_engine/__init__.py`: import and export `UnknownPlayerError`, add to `__all__` next to `PlayerError`.
+- `README.md`: add `UnknownPlayerError` to the Public API errors list right after `PlayerError`; fix line ~140 (`ReferenceDateError` "before it creates any player or rating state") and line ~196 (the snapshot note "`player_summary` and `state` create one for a format the player has no rating in"); add one sentence in the `player_summary` paragraph on unknown ids and missing formats.
+- `CHANGELOG.md` under `## [Unreleased]`: `### Added` entry for `UnknownPlayerError`; `### Changed` entry, marked **Breaking**, for `player()`, `state()`, and `player_summary()` no longer creating anything (issue #23). Correct the existing Unreleased snapshot entry's "including one `player_summary` creates", which becomes false.
+- Tests:
+  - New `tests/test_read_only_lookups.py` for criteria 1 to 6.
+  - `tests/test_resume_after_changes.py`: in `CHANGES`, remove "player_summary creates a category state", "state creates a state", and "player creates a player"; add "player_summary of a missing category state" and "state of a missing category state" to `READS`; add one test that `player("syn-n")` raises `UnknownPlayerError` and the snapshot stays resumable. Keep "seed_provisional_rating creates a state".
+  - Any other existing test that fails because it read an unknown player or relied on a read creating a state: create the player or state explicitly (`seed_provisional_rating`, `add_player`) before the read, so the assertion keeps its meaning. Never weaken or delete an assertion; list every such edit in the report.
+
+## Changes from the plan during the work
+
+- `UnknownPlayerError` goes in `__all__` in sorted order (after `SnapshotError`), not next to `PlayerError`, since the list is sorted. `tests/test_api.py` `PUBLIC_API` gains the name, as every new export does.
+- The engine module docstring's error list names `UnknownPlayerError` under `PlayerError`.
+- Three tests that still passed relied on `state()` storing a category seed, and lost their meaning without it: `tests/test_snapshot_invariants.py` (a derived category state loads), `tests/test_external_seed_types.py` (accepted seeds replay), and `tests/test_replay_resume.py` (a category seed). They now call `seed_provisional_rating`, as the other adjusted tests do.
+
+- Review round 1. The maintainer approved keeping the live behavior change found in review (a read of a missing category format no longer freezes that format's starting state, so the first category match rates as it would have without the read, equal to a full replay) and narrowing criterion 8 and the changelog claim to match. The docs now say only a counted `record` creates a player, list `link_account` and `attach_external_id` as creating calls, and say an id named only in uncounted rows or rows after `as_of` has no player record. New tests go in `tests/test_read_only_lookups_followup.py`, since the first two test files are frozen: the first-category-match guard, `predict_win_probability` before and after, and the uncounted or later row ids.
+
+- Review round 2. The changelog entry and criterion 8 state one general rule (a read leaves no player or rating state behind, so every later call sees the engine as it was before the read) with three examples, instead of presenting the category case as the only live change. Two more tests in `tests/test_read_only_lookups_followup.py` pin the seed-after-read and add-after-failed-summary cases.
+
+- Review round 3 found the round 2 examples over-claimed (C2 to C4): the resumable claim, the seed example, and the add_player example did not hold for every input. The maintainer chose the trimmed rule, which applies only to reads that used to create a player or rating state.
+- Review round 4 (C5): "rates from the current parent" did not always hold, since a category state derives from its parent only under `category_feeds_parent`, with a played or seeded parent, and with no `seed_provisional_rating` between the read and the match. The changelog, criterion 8, and the follow-up test docstring now say the first category match rates as it would have without the read, and the descriptions of the starting state say "would use if played now", since a parent that moves before that match changes the state it starts from. The maintainer approved this.
+- Review round 6 (V1): a checkpoint taken after a read of a missing format or an unknown id used to make resume raise `SnapshotError` and now resumes, so the changelog and criterion 8 scope the no-change claim to a ledger and snapshot that worked before.
+
+## Order of work
+
+1. Red: write `tests/test_read_only_lookups.py` and the `test_resume_after_changes.py` changes. Run them and save the failing output. Commit as the red test, then freeze them.
+2. Add `UnknownPlayerError` to `_errors.py`, `engine.py` re-export, `__init__.py`, and the README Public API list (the public API tests need all three together).
+3. Add `_player_or_new`, switch the creating methods to it, then make `player()` read-only.
+4. Make `state()` read-only, then `player_summary()` picks it up.
+5. Run the suite; fix tests that relied on reads creating (see Files that change). Update docstrings.
+6. README and CHANGELOG text.
+7. Full gate and live drive.
+
+## Risks
+
+- Riskiest: an internal caller that relied on `player()` creating, missed in the switch to `_player_or_new`. The grep at plan time found five (`link_account`, `attach_external_id`, `seed_external_rating`, `seed_provisional_rating`, `_commit`); recheck with `grep -n "self.player(" src/open_engine/engine.py` after the switch. A missed one in `_commit` would make `record` raise for a new player, which the existing suite catches.
+- Resume: reads no longer clear the resumable mark. That is correct, because they change nothing, but a read that does change state would now be a provenance hole. Criterion 1 compares the full snapshot, including `resumable`, so it catches one.
+- `state()` for a missing format returns a fresh object each call. A caller that mutated it to change engine state silently gets nothing. That is the intended behavior and is documented.
+- Backend callers that used `player()`/`state()` to create a player break loudly with `UnknownPlayerError`. That is the point of the issue; the changelog calls it breaking and names `seed_provisional_rating` and `add_player` as the explicit way to create.
+- Not done: no change to `player()`'s handling of non-str ids, to `seed_provisional_rating` storing a state for a format passed as a plain str, or to `link_account` creating a player (its docstring says "existing" profile). Out of scope for this issue.
+
+## Proof
+
+- Criterion 1: `test_read_only_lookups.py`, a parametrized test over (call, case) comparing `to_snapshot()` and `list(engine.players)` before and after, on a replayed engine (so `resumable` starts `True`), plus `test_resume_after_changes.py` READS.
+- Criterion 2: parametrized `pytest.raises(UnknownPlayerError, match="Unknown player")` over the three calls, with the snapshot unchanged; the issue's repro as its own test.
+- Criterion 3: an `issubclass` test; the existing public API tests check `__all__`, README, and docstring.
+- Criterion 4: existing `tests/test_api.py` blank id test plus a parametrized test that a blank id raises `PlayerError` and not `UnknownPlayerError`.
+- Criterion 5: compare against a deep copy after `seed_provisional_rating`, for a category format with a played parent and for a format with no parent; mutate the returned state and compare the snapshot.
+- Criterion 6: parametrized over the six creating calls on a new id: the player exists after, and the snapshot's `resumable` is `False`.
+- Criterion 7: the doc finder in Phase 8 checks the docstrings, README, and changelog against the code.
+- Criterion 8: the full gate (`ruff check .`, `ruff format --check .`, `mypy src`, `pytest`) and `python examples/basic_match.py`.
+- Live drive: in a scratch script outside the repo, show (a) the issue repro now raises `UnknownPlayerError` with `players == {}`, (b) a known player's missing category format reports a derived rating with nothing stored, (c) a replayed engine stays resumable after reads and `replay(..., from_snapshot=...)` accepts its snapshot, and (d) `record` with brand-new ids still works.
+
+Measured on `origin/main` (878f2fa), with `/tmp/claude-1000/.../scratchpad/measure.py`: one doubles match recorded, then `player_summary("syn-a", MIXED_DOUBLES, as_of=2026-02-01)` on one deep copy vs `seed_provisional_rating` then `player_summary` on another. Result: `summary alike: True 3.55 0.7546 open_parent:doubles`, `state alike: True`. The issue repro on an empty engine: `ghost players: ['ghost']`.
+
+Review round 1, measured against `origin/main` (878f2fa) source extracted to the scratchpad and put on `PYTHONPATH`, running `test_a_read_of_a_missing_category_does_not_change_its_first_match` from `tests/test_read_only_lookups_followup.py` (import of `UnknownPlayerError` stripped):
+
+```
+E       assert 3.684435341259454 == 3.928180391780873
+E       assert 3.599565978285813 == 3.8714260743043063
+FAILED test_followup_on_main.py::test_a_read_of_a_missing_category_does_not_change_its_first_match[read after a parent match]
+FAILED test_followup_on_main.py::test_a_read_of_a_missing_category_does_not_change_its_first_match[read before any parent match]
+2 failed, 4 deselected in 0.02s
+```
+
+On the branch both cases pass: the rating with the read equals the rating without it and equals a full replay.
+
+Review round 2, the same `origin/main` source on `PYTHONPATH`, scratch script `drive23_c1.py`:
+
+```
+add_player(Player('syn-a')) -> None
+state('syn-a', DOUBLES).rating -> 3.5
+seed_external_rating('syn-a', DOUBLES, 4.0) -> raised InvalidSeedError: A rating already exists; explicitly allow replacing an unplayed seed
+stored doubles rating: 3.5
+player_summary('syn-g', DOUBLES, as_of=2025-03-01).rating -> 3.5
+add_player(Player('syn-g')) -> raised PlayerError: Player already exists: syn-g
+```
+
+On the branch the seed stores 4.0, `player_summary` raises `UnknownPlayerError`, and `add_player` then succeeds. `test_a_seed_after_a_state_read_needs_no_replace` and `test_add_player_after_a_failed_summary_succeeds` pin this.
+
+## Addendum: follow-ups folded in at the maintainer's request
+
+PR #64 was open and green when the maintainer asked to fold in the two follow-ups that review found. The risk tier stays High, because part B changes the snapshot schema. The maintainer chose the full scope for part B.
+
+### Part A: failed creating calls leave no player behind
+
+Today `link_account`, `attach_external_id`, and `seed_external_rating` call `_player_or_new` before their identity checks. When a check fails on a new id, a `PlayerError` is raised and an empty player record is left behind, with the resumable mark cleared. Main behaves the same way. This breaks the "validate before committing" rule in CLAUDE.md.
+
+Acceptance criteria:
+
+- A1. `link_account`, `attach_external_id`, and `seed_external_rating` run every check before they change any state. A call that raises leaves `to_snapshot()` output (including `resumable`) and the `players` keys exactly as they were. This holds for a new id and for an existing player. The cases are:
+  - `link_account` with an account already linked to another player.
+  - `link_account` for a player already linked to a different account.
+  - `attach_external_id` with an identity already linked to another player.
+  - `attach_external_id` for a player already holding a different id from that source.
+  - `seed_external_rating` whose snapshot external identity fails any of the `attach_external_id` checks above, including a missing source.
+  - `seed_external_rating` that may not replace an existing rating.
+  - A blank `player_id` or a blank `account_user_id`, `source`, or `external_player_id`.
+- A2. A successful call creates and changes exactly what it did before. Error types and messages do not change.
+
+Files: `src/open_engine/engine.py`. Add a private check that validates an external identity link without changing anything (`_check_external_id(player_id, source, external_player_id)`), and a matching account check. Use them in `attach_external_id`, `link_account`, and `seed_external_rating` before `_player_or_new`. Tests go in a new `tests/test_failed_calls_create_nothing.py`. CHANGELOG gets a `### Fixed` entry under `[Unreleased]`.
+
+### Part B: a derived category state carries the parent's provisional count
+
+A category state (mixed, men's, or women's doubles) derived from overall doubles copies the parent's rating. If the parent has live updates since the last replay, that rating carries provisional movement. Today the category state starts with `live_updates_since_replay = 0`, so `player_summary` labels it with 0 live updates before its first match, and with only its own count after its first match. Both labels are too low under the provisional-versus-authoritative rule.
+
+Design:
+
+- New `RatingState` field `inherited_live_updates: int = 0`. It counts the live updates since the last replay that were already in the parent state when this category state was derived from it.
+- `_new_state` sets it, in the derived branch only, to the parent's `live_updates_since_replay + inherited_live_updates`. The parent is overall doubles, which has no parent, so this is its own count, but the sum keeps it general. It never changes after derivation.
+- `PlayerSummary.live_updates_since_recalculation` reports `live_updates_since_replay + inherited_live_updates`. The field name and type stay the same, but its meaning widens. This is a changelog entry, and the docstring and README say so.
+- It changes no rating, RD, or reliability. A replay rebuilds every state, so it gives 0 for every state, because parents have no live updates during a replay.
+- Snapshot schema:
+  - The new key is in `_STATE_KEYS`, `_state_form`, and `_snap_state_fields`, and is read with `_snap_count`.
+  - `SNAPSHOT_VERSION` goes from 3 to 4. The README schema section lists the key and says version 3 snapshots do not load.
+  - Validation, in `_check_state_invariants` or alongside it: a nonzero `inherited_live_updates` is allowed only for a format with a parent and only when `initial_source == f"open_parent:{parent.value}"`.
+  - A resumable snapshot must have `inherited_live_updates == 0` in every state. Check this in `_check_resumable`.
+  - `_resume_start` refuses a snapshot with any nonzero `inherited_live_updates`, alongside the existing live-updates check.
+- Seed rules: `_seed_type_broken` checks that the field is an int, not a bool. `_seed_rule_broken` requires it to be 0, so `add_player`, replay seeds, and `prequential_predictions` seeds reject a nonzero value. Add the rule to the `add_player` docstring list.
+- `tests/test_snapshot.py` has attribute and field guards. Update the schema, and the attribute list only if the test requires it, as CLAUDE.md describes.
+
+Acceptance criteria:
+
+- B1. After k live overall doubles matches since the last replay (or on a never-replayed engine), a known player's first category state derived from that doubles state reports `live_updates_since_recalculation == k` in `player_summary`. This holds both before the first category match (unstored, via `state`/`player_summary`) and after a `seed_provisional_rating`. After its first live category match it reports `k + 1`, plus 1 more for each further live category match.
+- B2. A state that is not derived reports `live_updates_since_replay` alone. That covers overall doubles, singles, a category with `category_feeds_parent=False`, and a category whose parent was unplayed and unseeded at derivation. Parent live matches after derivation do not change a stored category state's inherited count.
+- B3. After `replay`, every state has `inherited_live_updates == 0`, and replay output (ratings, RDs, snapshots apart from the new key and the version) is the same as before part B.
+- B4. `to_snapshot()` includes the key with snapshot_version 4, and `from_snapshot` round-trips it. `from_snapshot` raises `SnapshotError` in these cases:
+  - a version 3 snapshot
+  - a missing key or a key of the wrong type
+  - a nonzero value on a non-category format or on a state whose `initial_source` is not its parent's `open_parent:` source
+  - a nonzero value in a resumable snapshot
+  
+  `replay(from_snapshot=...)` refuses a snapshot with a nonzero value.
+- B5. `add_player` raises `InvalidSeedError` for a seed with a nonzero or non-int `inherited_live_updates`.
+- B6. Docs: the README schema section and the `PlayerSummary`/`player_summary` text describe the widened count. The CHANGELOG has an entry under `### Changed` for the new count and the snapshot version bump, which makes stored version 3 snapshots fail to load.
+
+Tests go in a new `tests/test_inherited_live_updates.py`, plus the schema updates in the snapshot tests.
+
+### Changes from the addendum during the work
+
+- Part B validation adds two rules the snapshot alone can check, as CLAUDE.md asks: a nonzero `inherited_live_updates` also needs `category_feeds_parent` on (the engine derives nothing without it), and it must not exceed the parent state's `live_updates_since_replay` (a parent's live count only grows until the next replay). Both need the player's other states, so they run in a new `_check_inherited_live_updates` called from `_snap_player`, not in `_check_state_invariants`.
+- The version guards in `tests/test_snapshot.py`, `tests/test_match_status.py`, and `tests/test_content_duplicates.py` move from 3 to 4. `test_snapshot_version_is_3` becomes `test_snapshot_version_is_4`, and the float version case uses 4.0, so it still tests a float equal to the version.
+- The Part A changelog entry landed in its own commit, after the fix commit left it out.
+- Addendum review round 1. AD1: the changelog's version 3 line is now past tense. AD2: `inherited_live_updates` moved to the last `RatingState` field, after `opponents`, so positional calls keep their meaning; the snapshot form is unchanged, since its keys are sorted. AD3: the `link_account` and `attach_external_id` docstrings say an empty account, source, or external id raises (only the player id strips whitespace), with no behavior change. AD4: a nonzero `inherited_live_updates` also needs a parent state (with a message that names it), the parent state's `initial_source_date`, and no imported reliability, external player id, or evidence reference. The rule does not apply at count 0, since a category state derived from an unplayed seeded parent keeps its date when that parent is reseeded. Tests are in `tests/test_addendum_review_fixes.py`, with guards for empty fields on an existing player and a `prequential_predictions` seed.
+- Addendum review round 2 (AD5). An unplayed state with a nonzero `inherited_live_updates` comes only from `_new_state`'s derived branch with a played parent, so `from_snapshot` now also requires its RD to be at least `category_seed_rd` and its `rd_as_of` to be set and no later than the parent state's. A played state is exempt, since its RD moves on its own, and count-0 states are untouched: a derived-looking count-0 state with a low RD is a separate gap that main already has, since `seed_external_rating` accepts any source label. Tests are in `tests/test_inherited_rd_checks.py`. The README splits the nonzero-count rules into their own sentence.
+- Verifier round V2. Criterion 8 and the changelog's no-change sentence now except the snapshot schema change, since a version 3 checkpoint no longer resumes and replay snapshots gain a key and a new version. The README `player_summary` paragraph now says a blank id raises `PlayerError`.
+
+### Order of work (addendum)
+
+1. Part A red tests, committed alone. Then the fix.
+2. Part B red tests, committed alone. Then the field, `_new_state`, `player_summary`, the snapshot schema and validation, the seed rules, and the version bump.
+3. README, CHANGELOG, and docstrings.
+4. The full gate and a live drive of A1, B1, B3, and B4.
+
+### Risks (addendum)
+
+- Riskiest: the snapshot version bump makes every stored version 3 snapshot fail to load. That is intended and documented, and the backend must take a new full replay after upgrading.
+- A missed field site, such as `_clone_state` (it uses `replace`, so it copies automatically), the snapshot form, validation, or seed rules, would break round-trips. The snapshot round-trip tests and the `tests/test_snapshot.py` guards catch this.
+- Part A's error order: a blank id must still raise the same error it raises today. A1's tests pin each case against origin/main's message.
+- Not done: `seed_provisional_rating` with a `rating_format` passed as a plain str still creates the player before failing in `_new_state` with `AttributeError`. That is the same as on main, and non-`RatingFormat` arguments are out of scope as before.

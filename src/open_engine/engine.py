@@ -62,9 +62,11 @@ Published behavior notes:
 - Authoritative ratings come from scheduled replays (see
   `Config.replay_interval_days`). Live updates between replays are
   provisional and are labeled with the count of live updates since the last
-  recalculation. A replay gives the same ratings as recording the same
-  ledger live in ledger order: the replay date labels the result but never
-  changes an update. Inactivity widens RD (`inflated_rd`) but never shrinks
+  recalculation, including the live updates a category rating copied when
+  it was derived from overall doubles (`RatingState.inherited_live_updates`).
+  A replay gives the same ratings as recording the same ledger live in
+  ledger order: the replay date labels the result but never changes an
+  update. Inactivity widens RD (`inflated_rd`) but never shrinks
   or discounts an old match's update.
 - Live recording applies matches in arrival order. Only a replay gives play
   order. A live match is late when it is dated before a player's last
@@ -147,14 +149,16 @@ Published behavior notes:
   by `evaluate`, `fit_scale`, and `fit_win_calibration`; `replay` also
   rejects a seed dated after `as_of`, and `prequential_predictions` one
   dated after its last completed ledger match),
-  `PlayerError` covers player identities, `EvaluationError` covers
+  `PlayerError` covers player identities (its subclass
+  `UnknownPlayerError` covers a read of a player id with no player
+  record), `EvaluationError` covers
   evaluation, fits and win probabilities, `LedgerConflictError` covers
   conflicting ledger rows, `SnapshotError` covers snapshots that cannot
   be loaded or resumed from, and `ReferenceDateError` covers a
   `player_summary` call with no date to measure at or with an as_of that
   is not a plain date.
 - Snapshots and checkpoints: `RatingEngine.to_snapshot()` gives the whole
-  engine state as JSON-safe data (schema version 3) with sorted keys and
+  engine state as JSON-safe data (schema version 4) with sorted keys and
   lists, and `RatingEngine.from_snapshot` loads it back after validating
   every key, type, and range and checking the config version and
   fingerprint. A replay's snapshot is a checkpoint:
@@ -317,6 +321,7 @@ from ._errors import OpenEngineError as OpenEngineError
 from ._errors import PlayerError as PlayerError
 from ._errors import ReferenceDateError as ReferenceDateError
 from ._errors import SnapshotError as SnapshotError
+from ._errors import UnknownPlayerError as UnknownPlayerError
 from ._version import __version__
 from .winprob import calibrate_win_probability, match_win_probability
 
@@ -687,6 +692,12 @@ class RatingState:
     # Most recent interaction date by player ID, allowing rolling diversity.
     partners: dict[str, date] = field(default_factory=dict)
     opponents: dict[str, date] = field(default_factory=dict)
+
+    # Live updates since the last replay that were already in the parent
+    # state when this category state was derived from it. Set once, at
+    # derivation; 0 for a state not derived from its parent. A replay
+    # gives 0, since no state has live updates during a replay.
+    inherited_live_updates: int = 0
 
 
 @dataclass
@@ -1076,6 +1087,12 @@ class PlayerSummary:
     and from the open_provisional initial source. Evaluation's eligibility
     rule (an imported baseline or at least burn_in_matches OPEN matches) is
     a separate rule from established.
+
+    live_updates_since_recalculation counts the live updates since the last
+    replay that are in the state's rating: the state's own
+    live_updates_since_replay plus its inherited_live_updates, which for a
+    category state derived from overall doubles is the parent's live count
+    when the state was derived. It is 0 right after a replay.
     """
 
     player_id: str
@@ -1298,7 +1315,7 @@ def _is_plain_date(value: object) -> bool:
 
 def _seed_type_broken(state: RatingState) -> str | None:
     """The first seed field with the wrong type, or None."""
-    for name in ("matches_played", "live_updates_since_replay"):
+    for name in ("matches_played", "live_updates_since_replay", "inherited_live_updates"):
         value = getattr(state, name)
         if not isinstance(value, int) or isinstance(value, bool):
             return f"{name} must be an int"
@@ -1333,6 +1350,8 @@ def _seed_rule_broken(state: RatingState, cfg: Config) -> str | None:
         return "opponents must be empty"
     if state.live_updates_since_replay != 0:
         return "live_updates_since_replay must be 0"
+    if state.inherited_live_updates != 0:
+        return "inherited_live_updates must be 0"
     if not cfg.min_rating <= state.rating <= cfg.max_rating:
         return "rating must be between min_rating and max_rating"
     if state.initial_source_date is None:
@@ -1403,7 +1422,7 @@ def _validate_seed(player: Player, cfg: Config) -> None:
 # Snapshots
 # ---------------------------------------------------------------------------
 
-SNAPSHOT_VERSION = 3
+SNAPSHOT_VERSION = 4
 
 _TOP_KEYS = frozenset(
     {
@@ -1441,6 +1460,7 @@ _STATE_KEYS = frozenset(
         "initial_external_player_id",
         "initial_evidence_reference",
         "live_updates_since_replay",
+        "inherited_live_updates",
         "partners",
         "opponents",
     }
@@ -1702,6 +1722,9 @@ def _snap_state_fields(value: object, path: str, cfg: Config) -> RatingState:
         live_updates_since_replay=_snap_count(
             raw["live_updates_since_replay"], f"{path}.live_updates_since_replay"
         ),
+        inherited_live_updates=_snap_count(
+            raw["inherited_live_updates"], f"{path}.inherited_live_updates"
+        ),
         partners=_snap_date_map(raw["partners"], f"{path}.partners"),
         opponents=_snap_date_map(raw["opponents"], f"{path}.opponents"),
     )
@@ -1726,12 +1749,86 @@ def _snap_player(value: object, path: str, cfg: Config) -> Player:
     for key, state in ratings.items():
         fmt = _snap_format(key, f"{path}.ratings key")
         states[fmt] = _snap_state(state, f"{path}.ratings.{fmt.value}", player_id, cfg)
+    _check_inherited_live_updates(states, path, cfg)
     return Player(
         id=player_id,
         ratings=states,
         external_ids=external_ids,
         account_user_id=account_user_id,
     )
+
+
+def _check_inherited_live_updates(
+    states: Mapping[RatingFormat, RatingState], path: str, cfg: Config
+) -> None:
+    """
+    Raise SnapshotError for an inherited live count the engine cannot produce.
+
+    Only a category state derived from its parent inherits a count, and the
+    parent's own count only grows until the next replay, so it is never
+    below what the category inherited. A derived state takes the parent's
+    initial_source_date and no other provenance, and a parent with live
+    updates has been played, so it can no longer be reseeded: a state with
+    a nonzero count still has its parent's initial_source_date. Until it
+    plays, it also keeps the RD it was derived with, max(parent RD,
+    category_seed_rd), and the parent's rd_as_of at derivation, which a
+    played parent has set and never moves back.
+    """
+    for fmt in sorted(states, key=lambda f: f.value):
+        inherited = states[fmt].inherited_live_updates
+        if not inherited:
+            continue
+        state_path = f"{path}.ratings.{fmt.value}.inherited_live_updates"
+        parent = fmt.parent
+        if (
+            parent is None
+            or not cfg.category_feeds_parent
+            or states[fmt].initial_source != f"open_parent:{parent.value}"
+        ):
+            raise SnapshotError(
+                f"{state_path} must be 0 unless the state is derived from its parent"
+            )
+        base = states.get(parent)
+        if base is None:
+            raise SnapshotError(f"{state_path} needs a {parent.value} state, which is missing")
+        if inherited > base.live_updates_since_replay:
+            raise SnapshotError(
+                f"{state_path} must not exceed the parent's live_updates_since_replay"
+            )
+        state = states[fmt]
+        if (
+            state.initial_source_reliability is not None
+            or state.initial_external_player_id is not None
+            or state.initial_evidence_reference is not None
+        ):
+            raise SnapshotError(
+                f"{path}.ratings.{fmt.value}: a state with inherited_live_updates must have "
+                "no initial_source_reliability, initial_external_player_id, or "
+                "initial_evidence_reference"
+            )
+        if state.initial_source_date != base.initial_source_date:
+            raise SnapshotError(
+                f"{path}.ratings.{fmt.value}.initial_source_date must equal the parent "
+                "state's initial_source_date when inherited_live_updates is nonzero"
+            )
+        if state.matches_played:
+            continue
+        state_path = f"{path}.ratings.{fmt.value}"
+        if state.rd < cfg.category_seed_rd:
+            raise SnapshotError(
+                f"{state_path}.rd must be at least category_seed_rd for an unplayed state "
+                "with inherited_live_updates"
+            )
+        if state.rd_as_of is None:
+            raise SnapshotError(
+                f"{state_path}.rd_as_of must be set for an unplayed state with "
+                "inherited_live_updates"
+            )
+        if base.rd_as_of is None or state.rd_as_of > base.rd_as_of:
+            raise SnapshotError(
+                f"{state_path}.rd_as_of must not be after the parent state's rd_as_of for an "
+                "unplayed state with inherited_live_updates"
+            )
 
 
 def _check_resumable(snap: _Snapshot, paths: Mapping[str, str]) -> None:
@@ -1758,6 +1855,10 @@ def _check_resumable(snap: _Snapshot, paths: Mapping[str, str]) -> None:
             check(state.initial_source_date, f"{path}.initial_source_date")
             check(state.last_played, f"{path}.last_played")
             check(state.rd_as_of, f"{path}.rd_as_of")
+            if state.inherited_live_updates:
+                raise SnapshotError(
+                    f"{path}.inherited_live_updates must be 0 in a resumable snapshot"
+                )
             for name, seen in (("partners", state.partners), ("opponents", state.opponents)):
                 for other, on in seen.items():
                     check(on, f"{path}.{name}[{other!r}]")
@@ -2078,7 +2179,7 @@ class RatingEngine:
 
     def to_snapshot(self) -> dict[str, object]:
         """
-        The engine's whole state as JSON-safe data (schema version 3).
+        The engine's whole state as JSON-safe data (schema version 4).
 
         json.dumps(snapshot, allow_nan=False) works with no custom encoder,
         and RatingEngine.from_snapshot rebuilds the engine from it, or from
@@ -2086,7 +2187,7 @@ class RatingEngine:
         every list in a fixed order, so the same state always gives the same
         text. Numbers keep their type: an int stays an int.
 
-        Keys: snapshot_version (3), engine_version (informational),
+        Keys: snapshot_version (4), engine_version (informational),
         config_version and config_fingerprint (of this engine's Config),
         calculated_as_of (ISO date or null), replay_info (null, or its
         fields with as_of as an ISO date), players (sorted by id: id,
@@ -2110,9 +2211,8 @@ class RatingEngine:
 
         To use the snapshot as a checkpoint, take it right after replay,
         before any other call on the engine. Every engine method that
-        changes state (creating a player or rating state, including one
-        player_summary or state() creates, a seed, an identity link, a
-        live match) sets resumable to false, and resume refuses it.
+        changes state (creating a player or rating state, a seed, an
+        identity link, a live match) sets resumable to false, and resume refuses it.
         Changing objects the engine returns (players, rating states,
         processed_match_ids and the like) directly is not tracked, and
         makes the snapshot unsafe to resume. A stored snapshot sets
@@ -2161,7 +2261,7 @@ class RatingEngine:
         cfg must be the Config the snapshot was taken under (default
         Config()): its version and fingerprint must equal the snapshot's.
         The whole snapshot is validated before anything is built: exactly
-        the schema's keys at every level, snapshot_version 3, dates as
+        the schema's keys at every level, snapshot_version 4, dates as
         YYYY-MM-DD text, non-blank str ids with no repeated player or match
         id, RatingFormat values as format keys, ratings within min_rating
         and max_rating, RD within rd_min and rd_max, an imported
@@ -2182,11 +2282,19 @@ class RatingEngine:
         opponents, or live updates; matches_played 0 exactly when
         last_played is null; live updates no more than matches played; no
         player their own partner or opponent; an imported reliability only
-        with an initial_source_date. Identities are only type checked
+        with an initial_source_date; a nonzero inherited_live_updates only
+        on a category state derived from its parent (category_feeds_parent
+        on, initial_source "open_parent:" plus the parent's value) with a
+        parent state, no more than the parent state's live updates, the
+        parent's initial_source_date, and no imported reliability, external
+        player id, or evidence reference; while such a state is unplayed,
+        also an RD of at least category_seed_rd and an rd_as_of that is set
+        and no later than the parent state's. Identities are only type checked
         (account_user_id a str or null, external_ids str to str), since
         the engine's own methods can build shared or blank ones and they
         do not affect ratings. A resumable snapshot also holds no
-        date after calculated_as_of, and its replay_info counts equal the
+        date after calculated_as_of and no nonzero inherited_live_updates,
+        and its replay_info counts equal the
         number of ledger digests and processed match ids. These checks
         cover shape and invariants, not authenticity. Raises SnapshotError
         naming the first bad value. The engine shares no state with the
@@ -2209,9 +2317,25 @@ class RatingEngine:
     # -- players and identity ------------------------------------------------
 
     def player(self, player_id: str) -> Player:
-        """The player record for player_id, created empty if it does not exist."""
+        """
+        The player record for player_id. Read-only: it never creates a player.
+
+        Raises PlayerError for a blank player_id and UnknownPlayerError when
+        no player record exists for it. A player is created by add_player,
+        seed_provisional_rating, seed_external_rating, link_account,
+        attach_external_id, or a counted record (and so replay). An id named
+        only in uncounted rows, or in rows after a replay's as_of, has no
+        player record.
+        """
         if not player_id or not player_id.strip():
             raise PlayerError("player_id is required")
+        if player_id not in self.players:
+            raise UnknownPlayerError(f"Unknown player: {player_id}")
+        return self.players[player_id]
+
+    def _player_or_new(self, player_id: str) -> Player:
+        """The player record for player_id, created empty if it does not exist."""
+        self._check_player_id(player_id)
         if player_id not in self.players:
             self._put_player(Player(id=player_id))
         return self.players[player_id]
@@ -2228,7 +2352,8 @@ class RatingEngine:
         - rating, rd, and an imported reliability are ints or finite floats
           (not bool), the counts are ints, partners and opponents are
           dicts, and dates are dates.
-        - No matches, last_played, partners, opponents, or live updates.
+        - No matches, last_played, partners, opponents, or live updates, and
+          inherited_live_updates is 0.
         - rating is within Config.min_rating and Config.max_rating.
         - A provisional state (no initial_source_date) has RD new_player_rd,
           no rd_as_of, and no imported reliability.
@@ -2252,32 +2377,65 @@ class RatingEngine:
         _validate_seed(player, self.cfg)
         self._put_player(clone_player(player))
 
-    def link_account(self, player_id: str, account_user_id: str) -> None:
-        """Claim an existing external-only player profile for an OPEN account."""
+    @staticmethod
+    def _check_player_id(player_id: str) -> None:
+        """Raise PlayerError for a blank player id."""
+        if not player_id or not player_id.strip():
+            raise PlayerError("player_id is required")
+
+    def _check_account(self, player_id: str, account_user_id: str) -> None:
+        """Raise PlayerError unless the account can link to player_id. Changes nothing."""
         if not account_user_id:
             raise PlayerError("account_user_id is required")
-        player = self.player(player_id)
-        if player.account_user_id not in (None, account_user_id):
+        self._check_player_id(player_id)
+        player = self.players.get(player_id)
+        if player is not None and player.account_user_id not in (None, account_user_id):
             raise PlayerError("Player profile is already linked to another account")
         if any(
             p.account_user_id == account_user_id and p.id != player_id
             for p in self.players.values()
         ):
             raise PlayerError("This account is already linked to another player profile")
-        self._changed()
-        player.account_user_id = account_user_id
 
-    def attach_external_id(self, player_id: str, source: str, external_player_id: str) -> None:
-        """Link an external identity to a player. Each identity links to one player."""
+    def _check_external_id(self, player_id: str, source: str, external_player_id: str) -> None:
+        """Raise PlayerError unless the identity can link to player_id. Changes nothing."""
         if not source or not external_player_id:
             raise PlayerError("source and external_player_id are required")
-        player = self.player(player_id)
-        existing = player.external_ids.get(source)
-        if existing not in (None, external_player_id):
+        self._check_player_id(player_id)
+        player = self.players.get(player_id)
+        if player is not None and player.external_ids.get(source) not in (
+            None,
+            external_player_id,
+        ):
             raise PlayerError("A different external identity is already linked")
         for other in self.players.values():
             if other.id != player_id and other.external_ids.get(source) == external_player_id:
                 raise PlayerError("This external identity is already linked to another player")
+
+    def link_account(self, player_id: str, account_user_id: str) -> None:
+        """
+        Claim an existing external-only player profile for an OPEN account.
+
+        Raises PlayerError for a blank player id, an empty account, or when
+        the player or the account is already linked elsewhere. Every check runs before
+        anything changes, so a failed call creates no player.
+        """
+        self._check_account(player_id, account_user_id)
+        player = self._player_or_new(player_id)
+        self._changed()
+        player.account_user_id = account_user_id
+
+    def attach_external_id(self, player_id: str, source: str, external_player_id: str) -> None:
+        """
+        Link an external identity to a player. Each identity links to one player.
+
+        Raises PlayerError for a blank player id, an empty source or external
+        id, when the player already has a different id from that source, or when the
+        identity is linked to another player. Every check runs before
+        anything changes, so a failed call creates no player.
+        """
+        self._check_external_id(player_id, source, external_player_id)
+        player = self._player_or_new(player_id)
         self._changed()
         player.external_ids[source] = external_player_id
 
@@ -2313,7 +2471,8 @@ class RatingEngine:
         Raises InvalidSeedError when the rating format, a checked snapshot
         field, or the existing rating does not allow the seed, and PlayerError
         when player_id is blank or the snapshot's external identity cannot be
-        linked (see attach_external_id).
+        linked (see attach_external_id). Every check runs before anything
+        changes, so a failed call creates no player.
         """
         cfg = self.cfg
         # The same type rules the seed check applies, so every state seeded
@@ -2337,8 +2496,9 @@ class RatingEngine:
         if snapshot.reliability is not None and not 0 <= snapshot.reliability <= 100:
             raise InvalidSeedError("External reliability must be between 0 and 100")
 
-        player = self.player(player_id)
-        existing = player.ratings.get(rating_format)
+        self._check_player_id(player_id)
+        known = self.players.get(player_id)
+        existing = known.ratings.get(rating_format) if known is not None else None
         if existing is not None:
             if existing.matches_played > 0:
                 raise InvalidSeedError(
@@ -2349,6 +2509,11 @@ class RatingEngine:
                     "A rating already exists; explicitly allow replacing an unplayed seed"
                 )
 
+        if snapshot.external_player_id:
+            self._check_external_id(player_id, snapshot.source, snapshot.external_player_id)
+
+        # Every check has passed: create the player and link the identity.
+        player = self._player_or_new(player_id)
         if snapshot.external_player_id:
             self.attach_external_id(player_id, snapshot.source, snapshot.external_player_id)
 
@@ -2368,7 +2533,7 @@ class RatingEngine:
 
     def seed_provisional_rating(self, player_id: str, rating_format: RatingFormat) -> RatingState:
         """The player's state in a format. Creates a new unplayed state if it is missing."""
-        player = self.player(player_id)
+        player = self._player_or_new(player_id)
         if rating_format not in player.ratings:
             self._put_state(player, rating_format, self._new_state(player_id, rating_format))
         return player.ratings[rating_format]
@@ -2393,6 +2558,9 @@ class RatingEngine:
                     initial_rating=base.rating,
                     initial_source=f"open_parent:{parent.value}",
                     initial_source_date=base.initial_source_date,
+                    inherited_live_updates=(
+                        base.live_updates_since_replay + base.inherited_live_updates
+                    ),
                 )
         return RatingState(
             rating=cfg.default_rating,
@@ -2409,8 +2577,21 @@ class RatingEngine:
         return self._new_state(player_id, rating_format)
 
     def state(self, player_id: str, rating_format: RatingFormat) -> RatingState:
-        """The player's current state in a format. Same as seed_provisional_rating."""
-        return self.seed_provisional_rating(player_id, rating_format)
+        """
+        The player's current state in a format. Read-only: it never stores.
+
+        For a format the player has no state in, it returns the starting state
+        the player's first match in that format would use if played now: a
+        category state derived from overall doubles where that applies, else a
+        provisional default. That object is a new copy each call and is not
+        engine state, so changing it changes nothing. Use
+        seed_provisional_rating to store it. Raises UnknownPlayerError when no
+        player record exists for the id, and PlayerError for a blank id.
+        """
+        player = self.player(player_id)
+        if rating_format in player.ratings:
+            return player.ratings[rating_format]
+        return self._new_state(player_id, rating_format)
 
     # -- prediction ------------------------------------------------------------
 
@@ -2570,7 +2751,7 @@ class RatingEngine:
         for player_id, state in updates.items():
             if live:
                 state.live_updates_since_replay += 1
-            self._put_state(self.player(player_id), rating_format, state)
+            self._put_state(self._player_or_new(player_id), rating_format, state)
 
     def _compute(
         self, match: Match, rating_format: RatingFormat, repeat_factor: float
@@ -2713,10 +2894,19 @@ class RatingEngine:
         last replay is not shown by default until the next replay or an
         explicit as_of.
 
+        live_updates_since_recalculation labels the provisional movement in
+        the rating: the state's own live updates since the last replay, plus,
+        for a category state derived from overall doubles, the parent's live
+        updates already in the rating it copied (see PlayerSummary).
+
+        It never changes engine state. For a known player with no state in
+        the format, it reports the starting state the player's first match in
+        that format would use if played now (see state), without storing it.
+
         Raises ReferenceDateError when as_of is None and the engine was never
         replayed, or when as_of is not a plain date (a datetime is not one).
-        These checks come first, so a failed call creates no player or rating
-        state.
+        These checks come first. Then it raises UnknownPlayerError when no
+        player record exists for the id, and PlayerError for a blank id.
         """
         if as_of is not None and not _is_plain_date(as_of):
             raise ReferenceDateError(
@@ -2766,7 +2956,9 @@ class RatingEngine:
             initial_source_reliability=state.initial_source_reliability,
             initial_source_date=state.initial_source_date,
             calculated_as_of=self.calculated_as_of,
-            live_updates_since_recalculation=state.live_updates_since_replay,
+            live_updates_since_recalculation=(
+                state.live_updates_since_replay + state.inherited_live_updates
+            ),
             config_version=cfg.version,
             account_linked=player.account_user_id is not None,
         )
@@ -2873,7 +3065,7 @@ def _resume_start(snapshot: Mapping[str, object], cfg: Config | None, as_of: dat
         raise SnapshotError("Cannot resume: the snapshot is not from a replay")
     live = sorted(engine.processed_match_ids - set(engine._ledger_digests))
     if live or any(
-        state.live_updates_since_replay
+        state.live_updates_since_replay or state.inherited_live_updates
         for player in engine.players.values()
         for state in player.ratings.values()
     ):

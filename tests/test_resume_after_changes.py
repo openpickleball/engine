@@ -3,7 +3,8 @@
 Any change outside replay (a new player or rating state, a seed, an
 identity link, a live match) can make a resumed replay differ from a full
 one, or accept what a full replay rejects. A read that creates nothing
-keeps the engine resumable. All ids are synthetic.
+keeps the engine resumable, and so does a read of an unknown player,
+which raises. All ids are synthetic.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from open_engine import (
     RatingEngine,
     RatingFormat,
     SnapshotError,
+    UnknownPlayerError,
     replay,
 )
 
@@ -69,10 +71,7 @@ def _replace_seed(engine: RatingEngine) -> None:
 
 
 CHANGES: dict[str, Callable[[RatingEngine], object]] = {
-    "player_summary creates a category state": lambda e: e.player_summary("syn-a", MX),
-    "state creates a state": lambda e: e.state("syn-a", MX),
     "seed_provisional_rating creates a state": lambda e: e.seed_provisional_rating("syn-b", MX),
-    "player creates a player": lambda e: e.player("syn-n"),
     "add_player": lambda e: e.add_player(Player("syn-n")),
     "seed_external_rating": _seed_new,
     "future seed_external_rating": _seed_future,
@@ -104,6 +103,8 @@ READS: dict[str, Callable[[RatingEngine], object]] = {
     "player_summary of an existing state": lambda e: e.player_summary("syn-a", D, as_of=CUT),
     "state of an existing state": lambda e: e.state("syn-a", D),
     "player of an existing player": lambda e: e.player("syn-a"),
+    "player_summary of a missing category state": lambda e: e.player_summary("syn-a", MX),
+    "state of a missing category state": lambda e: e.state("syn-a", MX),
     "predict_point_share": lambda e: e.predict_point_share(
         ("syn-a", "syn-x"), ("syn-b", "syn-c"), MX
     ),
@@ -119,6 +120,18 @@ def test_a_read_that_creates_nothing_keeps_the_engine_resumable(
     read(engine)
     snapshot = _snapshot(engine)
     assert snapshot["resumable"] is True
+    resumed = replay(LEDGER, as_of=END, from_snapshot=snapshot)
+    full = replay(LEDGER, [_engine().players["syn-s"]], as_of=END)
+    assert resumed.to_snapshot() == full.to_snapshot()
+
+
+def test_player_of_an_unknown_id_raises_and_keeps_the_engine_resumable() -> None:
+    engine = _engine()
+    with pytest.raises(UnknownPlayerError, match="Unknown player: syn-n"):
+        engine.player("syn-n")
+    snapshot = _snapshot(engine)
+    assert snapshot["resumable"] is True
+    assert "syn-n" not in engine.players
     resumed = replay(LEDGER, as_of=END, from_snapshot=snapshot)
     full = replay(LEDGER, [_engine().players["syn-s"]], as_of=END)
     assert resumed.to_snapshot() == full.to_snapshot()

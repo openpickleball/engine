@@ -26,18 +26,18 @@ def _seeds(cfg: Config) -> list[Player]:
     eng.seed_external_rating(
         "imp", D, ExternalRatingSnapshot("external_standard", 4.2, date(2026, 9, 1), 85)
     )
-    eng.state("imp", MIXED)
+    eng.seed_provisional_rating("imp", MIXED)
     eng.seed_external_rating(
         "noreli", D, ExternalRatingSnapshot("external_standard", 3.8, date(2026, 9, 15))
     )
-    eng.state("noreli", MIXED)
-    eng.state("prov", D)
-    eng.state("prov", MIXED)
+    eng.seed_provisional_rating("noreli", MIXED)
+    eng.seed_provisional_rating("prov", D)
+    eng.seed_provisional_rating("prov", MIXED)
     eng.seed_external_rating(
         "single", S, ExternalRatingSnapshot("external_standard", 4.5, date(2026, 9, 1), 70)
     )
-    eng.state("other", D)
-    eng.state("other", S)
+    eng.seed_provisional_rating("other", D)
+    eng.seed_provisional_rating("other", S)
     return [eng.players[pid] for pid in sorted(eng.players)]
 
 

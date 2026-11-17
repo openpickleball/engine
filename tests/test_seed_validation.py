@@ -32,7 +32,7 @@ def _snapshot(reliability: float | None = 60) -> ExternalRatingSnapshot:
 
 
 def _provisional(cfg: Config) -> RatingState:
-    return RatingEngine(cfg).state("p", D)
+    return RatingEngine(cfg).seed_provisional_rating("p", D)
 
 
 def _imported(cfg: Config) -> RatingState:
@@ -134,14 +134,14 @@ def _engine_seeds(cfg: Config) -> list[Player]:
     """Every kind of unplayed state the engine itself produces."""
     eng = RatingEngine(cfg)
     eng.seed_external_rating("imp", D, _snapshot())
-    eng.state("imp", MIXED)  # category derived from an imported parent
+    eng.seed_provisional_rating("imp", MIXED)  # category derived from an imported parent
     eng.seed_external_rating("noreli", D, _snapshot(reliability=None))
-    eng.state("noreli", MIXED)
-    eng.state("prov", D)
-    eng.state("prov", MIXED)  # category with a provisional parent
-    eng.state("prov", RatingFormat.SINGLES)
+    eng.seed_provisional_rating("noreli", MIXED)
+    eng.seed_provisional_rating("prov", D)
+    eng.seed_provisional_rating("prov", MIXED)  # category with a provisional parent
+    eng.seed_provisional_rating("prov", RatingFormat.SINGLES)
     eng.seed_external_rating("single", RatingFormat.SINGLES, _snapshot(reliability=100))
-    eng.state("other", D)
+    eng.seed_provisional_rating("other", D)
     return [eng.players[pid] for pid in sorted(eng.players)]
 
 

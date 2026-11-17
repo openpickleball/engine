@@ -74,6 +74,7 @@ def test_no_import_shown_when_earned_is_not_lower(imported: float | None) -> Non
 
 def test_provisional_player_has_no_imported_reliability() -> None:
     eng = RatingEngine()
+    eng.seed_provisional_rating("p", D)
     summary = eng.player_summary("p", D, as_of=date(2026, 10, 2))
     assert summary.imported_reliability is None
     assert summary.reliability == reliability(eng.state("p", D), eng.cfg, date(2026, 10, 2))
