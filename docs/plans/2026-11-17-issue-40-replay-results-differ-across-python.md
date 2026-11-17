@@ -28,7 +28,7 @@ So the cause holds: the built-in `sum()` of floats changed in 3.12 to compensate
 
 - `src/open_engine/engine.py`: team averages in `predict_point_share` and `_compute`, the `imbalance` sum, calibration bins, `mse`, `mae`, `bias` in `_report_from_predictions`, and the Brier score in `fit_win_calibration` use `math.fsum`. `math` is already imported.
 - `src/open_engine/winprob.py`: `_first_to`, the direct term in `game_win_probability`, and `match_win_probability` use `math.fsum`. The `_capped` DP is an explicit ordered loop and stays.
-- `tests/test_float_summation.py` (new): the pinned cross-version test, plus a test that no float `sum()` remains is not needed (criterion 1 is checked by review).
+- `tests/test_float_summation.py` (new): the pinned cross-version test. Criterion 1 is checked by review and grep, not by a test.
 - `CHANGELOG.md`: a `### Fixed` entry under `## [Unreleased]`.
 - `CLAUDE.md`: one sentence in the Determinism rule.
 
