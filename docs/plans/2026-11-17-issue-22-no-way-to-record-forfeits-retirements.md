@@ -41,6 +41,7 @@ Domain skills: none apply. This is a standard-library Python package, so django,
 - `CHANGELOG.md`: `[Unreleased]` entries.
 - `tests/test_match_status.py` (new): criteria 1 to 7.
 - `tests/test_snapshot.py`, `tests/test_content_duplicates.py`: snapshot version 2 to 3 in the existing version assertions and messages.
+- `tests/test_api.py`: `MatchStatus` in its `PUBLIC_API` list, and `MATCH_NOT_COMPLETED` in its `REJECTIONS` list with a case in `REJECTION_CASES`. Those tests pin the public names and every rejection reason, so they must change with criterion 1 and the new reason (added during the work; the first draft missed them).
 
 ## Order of work
 
