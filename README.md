@@ -85,7 +85,7 @@ Names not listed here are internal, including everything reached only through `o
 
 Rating:
 
-- `RatingEngine`: holds players and matches, records matches, and predicts outcomes. Its `predict_point_share` and `predict_win_probability` methods give team A's expected point share and calibrated match win probability. `to_snapshot` saves its whole state as JSON-safe data, and `from_snapshot` loads it back (see "Snapshots and checkpoints").
+- `RatingEngine`: holds players and matches, records matches, and predicts outcomes. Its `predict_point_share` and `predict_win_probability` methods give team A's expected point share and calibrated match win probability. `to_snapshot` saves its whole state as JSON-safe data, and `from_snapshot` loads it back (see "Snapshots and checkpoints"). Its `possible_duplicates` attribute maps the `match_id` of every match flagged or rejected as a possible duplicate to the `match_id` it repeats, live and after a replay.
 - `replay`: rebuilds authoritative ratings from seeds and the match ledger as of a date. With `from_snapshot`, it resumes from a checkpoint instead of starting over. Add `whole_ledger=True` when passing the whole ledger, so resume also catches a row voided on or before the checkpoint date.
 - `ledger_order`: the sort key that sets the order of play in a ledger.
 - `reliability`: OPEN-earned reliability (0 to 100) for one rating state.
@@ -193,6 +193,7 @@ Schema, version 2. Dates are `YYYY-MM-DD` text. Every object has exactly these k
 - `processed_match_ids`: sorted.
 - `self_reported_log`: sorted by format, then teams. Each entry has `rating_format`, `teams` (two sorted lists of player ids), and `dates` in the order they were recorded.
 - `content_keys`: sorted by key. Each key is the SHA-256 digest of a counted match's content (its date, its two teams, and its game scores), and each value is the `match_id` of the first match counted with that content. Later matches with the same content are checked against it.
+- `possible_duplicates`: sorted by key. The `match_id` of every match flagged or rejected as a possible duplicate, to the `match_id` it repeats (its `possible_duplicate_of`). A key never names itself, and each value must be a `content_keys` value. A key is a processed match id under the default config and not one under `reject_content_duplicates=True`.
 - `ledger_digests`: `match_id` to the SHA-256 digest of every row a replay considered, kept across resumes. Resume uses them to check rows dated on or before the checkpoint.
 - `ledger_player_ids`: sorted ids of every player named in those rows, counted or not. Resume refuses a seed for one of them.
 - `resumable`: `true` only while the engine is exactly what a replay produced. Resume refuses a snapshot where it is `false`.

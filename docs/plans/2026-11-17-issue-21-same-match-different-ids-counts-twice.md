@@ -21,6 +21,7 @@ Two real matches with the same players and the same scores on one day are possib
 - **Registration.** A key is stored only when a match counts, mapped to its `match_id`, and never overwritten. So a third copy points to the first, a rejected match (for any reason) is never a duplicate target, and in flag mode the duplicate counts but does not replace the stored id.
 - **Same-day rematches.** Documented: a real rematch with the same players and the same game scores on the same day is flagged (default) or, with `reject_content_duplicates=True`, not counted. Use the default, and let the backend confirm, where that matters. Different dates are never matched, so reports that disagree on the date are not caught.
 - **Engine state and snapshot.** `RatingEngine._content_keys: dict[str, str]` (key digest to `match_id`). It changes later results, so it goes into the snapshot as `content_keys` (an object, key digest to match id, sorted keys). `SNAPSHOT_VERSION` goes from 1 to 2; older snapshots fail to load, as CLAUDE.md requires. Validation: an object; each key 64 lowercase hex characters; each value a non-blank str that is in `processed_match_ids`; no two keys may map to the same id (a match has one content key). Resume needs nothing more: a row after the checkpoint has a later `played_on`, so it can never match a key from before it, and a resumed replay ends with the same keys as a full one.
+- **Engine map (added after review, maintainer's choice).** `_replay` discards each `MatchResult`, so after a replay nothing told the backend which rows were flagged. `RatingEngine.possible_duplicates: dict[str, str]` (public) maps the `match_id` of every match flagged or rejected as a possible duplicate to the twin id, filled by `record` live and in replay under both policies. A flagged copy is written at commit (which already clears the resumable mark); a rejected copy is written after `_changed()`, and the `record` docstring says a rejected possible duplicate is recorded there. A match_id that later counts with no twin is removed from the map. The snapshot carries it as `possible_duplicates` (sorted keys), validated: an object; keys and values non-blank str ids; a key never equals its value; each value is a `content_keys` value. A key may or may not be processed (flag mode counts it, reject mode does not).
 - **Not chosen:** fuzzy matching (dates a day apart, partial scores), a three-way policy enum, and comparing `played_at` when both rows have one (two reporters often give different times, which would defeat the check).
 
 ## Acceptance criteria
@@ -33,6 +34,7 @@ Two real matches with the same players and the same scores on one day are possib
 6. The snapshot carries `content_keys` and `snapshot_version` 2. `from_snapshot(to_snapshot())` round-trips it, a live duplicate after loading is still flagged, a version 1 snapshot raises `SnapshotError`, and malformed `content_keys` (not an object, a bad digest, a blank id, an id not in `processed_match_ids`, two keys for one id) raise `SnapshotError` naming the field. A resumed replay equals a full replay, including `content_keys`.
 7. `Config.reject_content_duplicates` is a bool; a non-bool raises `ConfigError`. Default and True configs have different fingerprints.
 8. Documented: a module docstring note (content key, flag versus reject, which report is the duplicate, same-day rematches, dates must agree), the `MatchResult` docstring, the `record` docstring, the `Config` comment, `to_snapshot` and `from_snapshot` docstrings, the README (quick start text, Public API not changing names, the snapshot schema section with `content_keys` and version 2), and CHANGELOG `[Unreleased]` entries: Added (`possible_duplicate_of`, `reject_content_duplicates`, `POSSIBLE_DUPLICATE`) and Changed, marked **Breaking** (snapshot version 2; older snapshots no longer load). Ratings under the default config do not change.
+9. `RatingEngine.possible_duplicates` maps each flagged or rejected copy to its twin, live and in replay, under both policies. A replay of the issue's repro under the default gives `{'dup2': 'dup'}`. A rejected copy clears the resumable mark. The snapshot round-trips it, malformed values (not an object, a blank key or value, a key naming itself, a value that is not a `content_keys` value) raise `SnapshotError`, and resume equals a full replay including the map.
 
 ## Files that change
 
@@ -41,11 +43,13 @@ Two real matches with the same players and the same scores on one day are possib
   - New helper `_content_key(match: Match) -> str` next to `_matchup_key` (or `_match_digest`), with a docstring stating the fields used and left out.
   - `RejectionReason.POSSIBLE_DUPLICATE = "possible_duplicate"`.
   - `MatchResult`: `possible_duplicate_of: str | None = None` after `parent`; docstring.
-  - `RatingEngine.__init__`: `self._content_keys: dict[str, str] = {}` with a comment.
+  - `RatingEngine.__init__`: `self._content_keys: dict[str, str] = {}` with a comment, and (after review) the public `self.possible_duplicates: dict[str, str] = {}`.
   - `record`: after the game format check, `key = _content_key(match)`, `twin = self._content_keys.get(key)`. If `twin` and `cfg.reject_content_duplicates`: return the rejection with `possible_duplicate_of=twin`. After `_compute`, when counted, set `primary.possible_duplicate_of = twin`. At commit, `self._content_keys.setdefault(key, match.match_id)` (the commit path already clears the resumable mark through `_put_state`; replay sets it again at the end).
   - Snapshot: `_Snapshot.content_keys`, `_TOP_KEYS` gains `content_keys`, `to_snapshot` emits `_sorted_dict(self._content_keys.items())`, `_read_snapshot` validates as in the Decisions, `from_snapshot` assigns it. `SNAPSHOT_VERSION = 2`. Docstrings say version 2 and describe the key.
   - Module docstring: a new published behavior note, and the `record` note at the end of the list mentions content duplicates.
 - `tests/test_content_duplicates.py` (new): the tests in Proof.
+- `tests/test_possible_duplicates.py` (new, after review): the engine map.
+- `tests/test_content_key_scores.py` (new, after review): huge and bool scores in the content key.
 - `tests/test_api.py`: `POSSIBLE_DUPLICATE` in the rejection member list and a case that produces it (added during implementation: the existing member test lists every reason).
 - `tests/test_snapshot.py`: version 2, the new top-level key in its key list and attribute list, the version test cases.
 - `README.md`: quick start paragraph sentence; snapshot schema section (`content_keys`, `snapshot_version: 2`).
@@ -94,6 +98,7 @@ live deltas: dup {a: 0.225, b: 0.225, c: -0.225, d: -0.225}, dup2 {a: 0.17507, b
 | 5 | permuted input order gives identical snapshots and flags |
 | 6 | round trip, live dup after load, resume equals full replay; malformed cases in `tests/test_snapshot.py` or the new file |
 | 7 | config type check and fingerprint differs |
+| 9 | `tests/test_possible_duplicates.py`; malformed `possible_duplicates` cases and the key test in `tests/test_snapshot.py` |
 | 8 | default config: the live deltas of `dup` and `dup2` equal the values measured on main (above); docs reviewed in Phase 8 |
 
 Live drive must show both policies on the cases in Order of work step 8, the snapshot round trip, resume parity, and the version 1 error.

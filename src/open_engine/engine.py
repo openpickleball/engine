@@ -1301,6 +1301,7 @@ _TOP_KEYS = frozenset(
         "processed_match_ids",
         "self_reported_log",
         "content_keys",
+        "possible_duplicates",
         "ledger_digests",
         "ledger_player_ids",
         "resumable",
@@ -1340,6 +1341,7 @@ class _Snapshot:
     processed_match_ids: set[str]
     self_reported_log: dict[MatchupKey, list[date]]
     content_keys: dict[str, str]
+    possible_duplicates: dict[str, str]
     calculated_as_of: date | None
     replay_info: ReplayInfo | None
     ledger_digests: dict[str, str]
@@ -1738,6 +1740,32 @@ def _snap_content_keys(value: object, processed: set[str]) -> dict[str, str]:
     return keys
 
 
+def _snap_possible_duplicates(value: object, twins: set[str]) -> dict[str, str]:
+    """
+    Possible duplicates read from a snapshot: copy match_id to the match it repeats.
+
+    Each id is a non-blank str, a copy never names itself, and each twin is
+    a content_keys value. A copy may or may not be processed: flag mode
+    counts it and reject mode does not.
+    """
+    if not isinstance(value, Mapping):
+        raise SnapshotError("snapshot.possible_duplicates must be an object")
+    duplicates: dict[str, str] = {}
+    for key, twin in value.items():
+        if not isinstance(key, str) or not _is_id(key):
+            raise SnapshotError(
+                "snapshot.possible_duplicates has a key that is not a non-blank str"
+            )
+        path = f"snapshot.possible_duplicates[{key!r}]"
+        twin = _snap_id(twin, path)
+        if twin == key:
+            raise SnapshotError(f"{path} names the match itself")
+        if twin not in twins:
+            raise SnapshotError(f"{path} names {twin!r}, which is not a content_keys value")
+        duplicates[key] = twin
+    return duplicates
+
+
 def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
     """Validate a snapshot against cfg and read it. Raises SnapshotError naming the bad value."""
     if not isinstance(snapshot, Mapping):
@@ -1796,6 +1824,9 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
         log[key] = dates
 
     content_keys = _snap_content_keys(raw["content_keys"], processed)
+    possible_duplicates = _snap_possible_duplicates(
+        raw["possible_duplicates"], set(content_keys.values())
+    )
 
     digests_raw = raw["ledger_digests"]
     if not isinstance(digests_raw, Mapping):
@@ -1828,6 +1859,7 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
         processed,
         log,
         content_keys,
+        possible_duplicates,
         calculated_as_of,
         replay_info,
         digests,
@@ -1861,6 +1893,9 @@ class RatingEngine:
         # Content key (see _content_key) of each counted match, to the
         # match_id of the first one counted with it. Never overwritten.
         self._content_keys: dict[str, str] = {}
+        # match_id of every match flagged or rejected as a possible
+        # duplicate, to the match_id it repeats (its possible_duplicate_of).
+        self.possible_duplicates: dict[str, str] = {}
         # Digest of each ledger row a replay considered, by match_id. Only
         # replay fills it; resume compares rows against it.
         self._ledger_digests: dict[str, str] = {}
@@ -1916,8 +1951,11 @@ class RatingEngine:
         teams as two sorted id lists, and dates in stored order),
         content_keys (the content key digest of each counted match, see
         MatchResult.possible_duplicate_of, to the match_id first counted
-        with it, sorted by digest), ledger_digests (match_id to the SHA-256 digest of every row any
-        replay behind this engine considered, cumulative across resumes),
+        with it, sorted by digest), possible_duplicates (sorted by
+        match_id: each match flagged or rejected as a possible duplicate,
+        to the match_id it repeats), ledger_digests (match_id to the
+        SHA-256 digest of every row any replay behind this engine
+        considered, cumulative across resumes),
         ledger_player_ids (sorted ids of every player named in those rows,
         counted or not), and resumable (true only while the engine is
         exactly what a replay produced). The README lists the schema in
@@ -1956,6 +1994,7 @@ class RatingEngine:
                 _player_form(player)
                 for player in sorted(self.players.values(), key=lambda p: str(p.id))
             ],
+            "possible_duplicates": _sorted_dict(self.possible_duplicates.items()),
             "processed_match_ids": sorted(self.processed_match_ids, key=str),
             "replay_info": replay_info,
             "resumable": self._resumable,
@@ -1984,7 +2023,9 @@ class RatingEngine:
         is and consistent with it, self-reported matchups of two disjoint
         teams of the format's size, content keys and ledger digests of 64
         lowercase hex characters, content keys that each name a different
-        processed match id, and a bool resumable that is false without a replay.
+        processed match id, possible duplicates that each name another
+        match that is a content_keys value, and a bool resumable that is
+        false without a replay.
         Every state must be one the engine can produce: initial_rating
         within the rating bounds; an unplayed state with RD new_player_rd,
         external_seed_rd, or at least category_seed_rd, and no partners,
@@ -2007,6 +2048,7 @@ class RatingEngine:
         engine.processed_match_ids = state.processed_match_ids
         engine.self_reported_log = state.self_reported_log
         engine._content_keys = state.content_keys
+        engine.possible_duplicates = state.possible_duplicates
         engine.calculated_as_of = state.calculated_as_of
         engine.replay_info = state.replay_info
         engine._ledger_digests = state.ledger_digests
@@ -2276,7 +2318,9 @@ class RatingEngine:
         next replay). replay() passes a fixed as_of for authoritative rebuilds.
         `as_of` only labels the update as part of a replay and must not be
         earlier than the match date; the update itself does not depend on it.
-        Nothing is changed unless the match counts. Live results apply in
+        Nothing is changed unless the match counts, except that a match
+        rejected as a possible duplicate is recorded in possible_duplicates.
+        Live results apply in
         arrival order: MatchResult.late (and parent.late, for a category
         match) flags a match dated before a player's last match in that
         format, or before the date that player's rating in that format
@@ -2308,6 +2352,8 @@ class RatingEngine:
         content_key = _content_key(match)
         twin = self._content_keys.get(content_key)
         if twin is not None and cfg.reject_content_duplicates:
+            self._changed()
+            self.possible_duplicates[match.match_id] = twin
             return MatchResult(
                 False,
                 match.rating_format,
@@ -2352,6 +2398,11 @@ class RatingEngine:
         if matchup is not None:
             self.self_reported_log.setdefault(matchup, []).append(match.played_on)
         self._content_keys.setdefault(content_key, match.match_id)
+        if twin is None:
+            # A match_id rejected as a copy earlier, now counted on its own.
+            self.possible_duplicates.pop(match.match_id, None)
+        else:
+            self.possible_duplicates[match.match_id] = twin
         self.processed_match_ids.add(match.match_id)
         return primary
 
