@@ -1,11 +1,10 @@
 """Follow-up checks for read-only player lookups (issue #23).
 
 A read of a missing category format no longer stores a state frozen at
-the read. Under the default config, with a played parent, the first
-category match then rates from the current parent, the same as with no
-read and as a replay does. predict_win_probability changes nothing. An id named only in
-uncounted rows or rows after as_of has no player record. All ids are
-synthetic.
+the read, so the first category match after the read rates as it would
+have without the read, as a replay does. predict_win_probability changes
+nothing. An id named only in uncounted rows or rows after as_of has no
+player record. All ids are synthetic.
 """
 
 from __future__ import annotations
