@@ -2657,6 +2657,8 @@ class RatingEngine:
         next replay). replay() passes a fixed as_of for authoritative rebuilds.
         `as_of` only labels the update as part of a replay and must not be
         earlier than the match date; the update itself does not depend on it.
+        An as_of that is not a plain date (a datetime is not one) raises
+        InvalidMatchError right after the match is validated.
         Nothing is changed unless the match counts, except that a match
         rejected as a possible duplicate is recorded in possible_duplicates.
         A match whose status is not MatchStatus.COMPLETED is never counted:

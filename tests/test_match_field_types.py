@@ -114,10 +114,10 @@ def test_prequential_rejects_the_new_cases(bad: Match) -> None:
         prequential_predictions([_m("syn-m1"), bad])
 
 
-NOT_AS_OF = [datetime(2026, 3, 31, 10), "2026-03-31"]
+NOT_AS_OF = [datetime(2026, 3, 31, 10), "2026-03-31", 0]
 
 
-@pytest.mark.parametrize("as_of", NOT_AS_OF, ids=["datetime", "str"])
+@pytest.mark.parametrize("as_of", NOT_AS_OF, ids=["datetime", "str", "falsy_int"])
 @pytest.mark.parametrize("repeat", [False, True], ids=["new_id", "processed_id"])
 def test_record_rejects_an_as_of_that_is_not_a_plain_date(as_of: object, repeat: bool) -> None:
     eng = _engine()
