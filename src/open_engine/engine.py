@@ -147,7 +147,9 @@ Published behavior notes:
   by `evaluate`, `fit_scale`, and `fit_win_calibration`; `replay` also
   rejects a seed dated after `as_of`, and `prequential_predictions` one
   dated after its last completed ledger match),
-  `PlayerError` covers player identities, `EvaluationError` covers
+  `PlayerError` covers player identities (its subclass
+  `UnknownPlayerError` covers a read of a player id with no player
+  record), `EvaluationError` covers
   evaluation, fits and win probabilities, `LedgerConflictError` covers
   conflicting ledger rows, `SnapshotError` covers snapshots that cannot
   be loaded or resumed from, and `ReferenceDateError` covers a
@@ -317,6 +319,7 @@ from ._errors import OpenEngineError as OpenEngineError
 from ._errors import PlayerError as PlayerError
 from ._errors import ReferenceDateError as ReferenceDateError
 from ._errors import SnapshotError as SnapshotError
+from ._errors import UnknownPlayerError as UnknownPlayerError
 from ._version import __version__
 from .winprob import calibrate_win_probability, match_win_probability
 
@@ -2110,9 +2113,8 @@ class RatingEngine:
 
         To use the snapshot as a checkpoint, take it right after replay,
         before any other call on the engine. Every engine method that
-        changes state (creating a player or rating state, including one
-        player_summary or state() creates, a seed, an identity link, a
-        live match) sets resumable to false, and resume refuses it.
+        changes state (creating a player or rating state, a seed, an
+        identity link, a live match) sets resumable to false, and resume refuses it.
         Changing objects the engine returns (players, rating states,
         processed_match_ids and the like) directly is not tracked, and
         makes the snapshot unsafe to resume. A stored snapshot sets
@@ -2209,6 +2211,20 @@ class RatingEngine:
     # -- players and identity ------------------------------------------------
 
     def player(self, player_id: str) -> Player:
+        """
+        The player record for player_id. Read-only: it never creates a player.
+
+        Raises PlayerError for a blank player_id and UnknownPlayerError when
+        no player record exists for it. Create a player with add_player,
+        seed_provisional_rating, seed_external_rating, or record.
+        """
+        if not player_id or not player_id.strip():
+            raise PlayerError("player_id is required")
+        if player_id not in self.players:
+            raise UnknownPlayerError(f"Unknown player: {player_id}")
+        return self.players[player_id]
+
+    def _player_or_new(self, player_id: str) -> Player:
         """The player record for player_id, created empty if it does not exist."""
         if not player_id or not player_id.strip():
             raise PlayerError("player_id is required")
@@ -2256,7 +2272,7 @@ class RatingEngine:
         """Claim an existing external-only player profile for an OPEN account."""
         if not account_user_id:
             raise PlayerError("account_user_id is required")
-        player = self.player(player_id)
+        player = self._player_or_new(player_id)
         if player.account_user_id not in (None, account_user_id):
             raise PlayerError("Player profile is already linked to another account")
         if any(
@@ -2271,7 +2287,7 @@ class RatingEngine:
         """Link an external identity to a player. Each identity links to one player."""
         if not source or not external_player_id:
             raise PlayerError("source and external_player_id are required")
-        player = self.player(player_id)
+        player = self._player_or_new(player_id)
         existing = player.external_ids.get(source)
         if existing not in (None, external_player_id):
             raise PlayerError("A different external identity is already linked")
@@ -2337,7 +2353,7 @@ class RatingEngine:
         if snapshot.reliability is not None and not 0 <= snapshot.reliability <= 100:
             raise InvalidSeedError("External reliability must be between 0 and 100")
 
-        player = self.player(player_id)
+        player = self._player_or_new(player_id)
         existing = player.ratings.get(rating_format)
         if existing is not None:
             if existing.matches_played > 0:
@@ -2368,7 +2384,7 @@ class RatingEngine:
 
     def seed_provisional_rating(self, player_id: str, rating_format: RatingFormat) -> RatingState:
         """The player's state in a format. Creates a new unplayed state if it is missing."""
-        player = self.player(player_id)
+        player = self._player_or_new(player_id)
         if rating_format not in player.ratings:
             self._put_state(player, rating_format, self._new_state(player_id, rating_format))
         return player.ratings[rating_format]
@@ -2409,8 +2425,21 @@ class RatingEngine:
         return self._new_state(player_id, rating_format)
 
     def state(self, player_id: str, rating_format: RatingFormat) -> RatingState:
-        """The player's current state in a format. Same as seed_provisional_rating."""
-        return self.seed_provisional_rating(player_id, rating_format)
+        """
+        The player's current state in a format. Read-only: it never stores.
+
+        For a format the player has no state in, it returns the starting state
+        the player's first match in that format would use: a category state
+        derived from overall doubles where that applies, else a provisional
+        default. That object is a new copy each call and is not engine state,
+        so changing it changes nothing. Use seed_provisional_rating to store
+        it. Raises UnknownPlayerError when no player record exists for the id,
+        and PlayerError for a blank id.
+        """
+        player = self.player(player_id)
+        if rating_format in player.ratings:
+            return player.ratings[rating_format]
+        return self._new_state(player_id, rating_format)
 
     # -- prediction ------------------------------------------------------------
 
@@ -2570,7 +2599,7 @@ class RatingEngine:
         for player_id, state in updates.items():
             if live:
                 state.live_updates_since_replay += 1
-            self._put_state(self.player(player_id), rating_format, state)
+            self._put_state(self._player_or_new(player_id), rating_format, state)
 
     def _compute(
         self, match: Match, rating_format: RatingFormat, repeat_factor: float
@@ -2713,10 +2742,14 @@ class RatingEngine:
         last replay is not shown by default until the next replay or an
         explicit as_of.
 
+        It never changes engine state. For a known player with no state in
+        the format, it reports the starting state the player's first match in
+        that format would use (see state), without storing it.
+
         Raises ReferenceDateError when as_of is None and the engine was never
         replayed, or when as_of is not a plain date (a datetime is not one).
-        These checks come first, so a failed call creates no player or rating
-        state.
+        These checks come first. Then it raises UnknownPlayerError when no
+        player record exists for the id, and PlayerError for a blank id.
         """
         if as_of is not None and not _is_plain_date(as_of):
             raise ReferenceDateError(

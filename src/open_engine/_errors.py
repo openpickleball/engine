@@ -32,6 +32,10 @@ class PlayerError(OpenEngineError):
     """A player identity, account link, or external identity is not valid."""
 
 
+class UnknownPlayerError(PlayerError):
+    """No player record exists for the player id."""
+
+
 class EvaluationError(OpenEngineError):
     """An evaluation, calibration fit, or win probability cannot be computed."""
 

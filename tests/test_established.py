@@ -85,7 +85,9 @@ def test_threshold_bounds_are_accepted(value: float) -> None:
 
 
 def test_new_player_is_not_established() -> None:
-    summary = RatingEngine().player_summary("z", DOUBLES, as_of=START)
+    engine = RatingEngine()
+    engine.seed_provisional_rating("z", DOUBLES)
+    summary = engine.player_summary("z", DOUBLES, as_of=START)
     assert summary.reliability == 0.0
     assert summary.established is False
 
@@ -109,7 +111,9 @@ def test_threshold_boundary_uses_displayed_reliability() -> None:
 
 def test_threshold_zero_and_hundred() -> None:
     zero = Config(established_reliability_threshold=0.0)
-    summary = RatingEngine(zero).player_summary("z", DOUBLES, as_of=START)
+    engine = RatingEngine(zero)
+    engine.seed_provisional_rating("z", DOUBLES)
+    summary = engine.player_summary("z", DOUBLES, as_of=START)
     assert summary.reliability == 0.0
     assert summary.established is True
     hundred = Config(established_reliability_threshold=100.0)

@@ -30,7 +30,7 @@ def _imported(captured_on: date, fmt: RatingFormat = D, reliability: float = 100
         "f", D, ExternalRatingSnapshot("external_standard", 4.0, captured_on, reliability)
     )
     if fmt is not D:
-        eng.state("f", fmt)
+        eng.seed_provisional_rating("f", fmt)
         del eng.players["f"].ratings[D]
     return eng.players["f"]
 
@@ -79,7 +79,7 @@ def test_scheduled_prequential_with_mid_ledger_seed_is_unchanged() -> None:
     snap = ExternalRatingSnapshot("external_standard", 4.4, date(2026, 10, 10), 80)
     eng.seed_external_rating("a", D, snap)
     for pid in "bcd":
-        eng.state(pid, D)
+        eng.seed_provisional_rating(pid, D)
     seeds = [eng.players[pid] for pid in "abcd"]
     ledger = [
         Match(f"s{i}", ("a", "b"), ("c", "d"), ((11, 5 + i),), date(2026, 10, 1 + 7 * i), D)

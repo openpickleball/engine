@@ -32,7 +32,7 @@ PARAMS = [row[1:] for row in ROWS]
 
 
 def _seed(fields: dict[str, Any]) -> Player:
-    return Player("h", {D: RatingEngine().state("h", D)}, **fields)
+    return Player("h", {D: RatingEngine().seed_provisional_rating("h", D)}, **fields)
 
 
 @pytest.mark.parametrize(("fields", "message"), PARAMS, ids=IDS)

@@ -245,6 +245,8 @@ def test_frozen_teammate_moves_by_own_k() -> None:
     eng = RatingEngine()
     eng.seed_external_rating("seeded", D, _snapshot())
     on = date(2026, 9, 15)
+    for pid in ("p1", "p2", "p3"):
+        eng.seed_provisional_rating(pid, D)
     m = _match(("seeded", "p1"), ("p2", "p3"), D, on=on)
     expected = _own_deltas(eng, m, ("p1", "p2", "p3"))
     r = eng.record(m)

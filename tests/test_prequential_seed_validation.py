@@ -21,7 +21,7 @@ D = RatingFormat.DOUBLES
 
 def _bad_seed() -> Player:
     partners = {f"partner{i}": date(2026, 9, 1) for i in range(20)}
-    state = replace(RatingEngine().state("p", D), rd=0.10, partners=partners)
+    state = replace(RatingEngine().seed_provisional_rating("p", D), rd=0.10, partners=partners)
     return Player(id="p", ratings={D: state})
 
 

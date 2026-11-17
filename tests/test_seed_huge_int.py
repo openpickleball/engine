@@ -26,7 +26,7 @@ HUGE = 10**400
 
 
 def _provisional() -> RatingState:
-    return RatingEngine().state("h", D)
+    return RatingEngine().seed_provisional_rating("h", D)
 
 
 def _imported() -> RatingState:

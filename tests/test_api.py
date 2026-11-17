@@ -452,6 +452,7 @@ PUBLIC_API = [
     "ScaleFit",
     "ScoringType",
     "SnapshotError",
+    "UnknownPlayerError",
     "WinCalibrationFit",
     "calibrate_win_probability",
     "evaluate",

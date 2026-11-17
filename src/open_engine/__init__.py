@@ -15,6 +15,7 @@ from ._errors import (
     PlayerError,
     ReferenceDateError,
     SnapshotError,
+    UnknownPlayerError,
 )
 from ._version import __version__ as __version__
 from .engine import (
@@ -76,6 +77,7 @@ __all__ = [
     "ScaleFit",
     "ScoringType",
     "SnapshotError",
+    "UnknownPlayerError",
     "WinCalibrationFit",
     "calibrate_win_probability",
     "evaluate",

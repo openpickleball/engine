@@ -24,7 +24,7 @@ AS_OF = date(2026, 11, 1)
 
 
 def _provisional() -> RatingState:
-    return RatingEngine().state("r", D)
+    return RatingEngine().seed_provisional_rating("r", D)
 
 
 def _imported() -> RatingState:

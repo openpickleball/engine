@@ -41,6 +41,12 @@ Decisions taken with the maintainer:
   - `tests/test_resume_after_changes.py`: in `CHANGES`, remove "player_summary creates a category state", "state creates a state", and "player creates a player"; add "player_summary of a missing category state" and "state of a missing category state" to `READS`; add one test that `player("syn-n")` raises `UnknownPlayerError` and the snapshot stays resumable. Keep "seed_provisional_rating creates a state".
   - Any other existing test that fails because it read an unknown player or relied on a read creating a state: create the player or state explicitly (`seed_provisional_rating`, `add_player`) before the read, so the assertion keeps its meaning. Never weaken or delete an assertion; list every such edit in the report.
 
+## Changes from the plan during the work
+
+- `UnknownPlayerError` goes in `__all__` in sorted order (after `SnapshotError`), not next to `PlayerError`, since the list is sorted. `tests/test_api.py` `PUBLIC_API` gains the name, as every new export does.
+- The engine module docstring's error list names `UnknownPlayerError` under `PlayerError`.
+- Three tests that still passed relied on `state()` storing a category seed, and lost their meaning without it: `tests/test_snapshot_invariants.py` (a derived category state loads), `tests/test_external_seed_types.py` (accepted seeds replay), and `tests/test_replay_resume.py` (a category seed). They now call `seed_provisional_rating`, as the other adjusted tests do.
+
 ## Order of work
 
 1. Red: write `tests/test_read_only_lookups.py` and the `test_resume_after_changes.py` changes. Run them and save the failing output. Commit as the red test, then freeze them.

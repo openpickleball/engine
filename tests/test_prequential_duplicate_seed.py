@@ -14,7 +14,7 @@ D = RatingFormat.DOUBLES
 
 
 def _seeds() -> list[Player]:
-    state = RatingEngine().state("dup", D)
+    state = RatingEngine().seed_provisional_rating("dup", D)
     return [Player("dup", {D: state}), Player("dup", {D: state})]
 
 

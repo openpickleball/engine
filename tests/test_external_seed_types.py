@@ -71,7 +71,7 @@ def test_accepted_snapshot_seeds_replay(changes: dict[str, Any]) -> None:
     snapshot = replace(BASE, **changes)
     eng = RatingEngine()
     eng.seed_external_rating("a", D, snapshot)
-    eng.state("a", RatingFormat.MIXED_DOUBLES)
+    eng.seed_provisional_rating("a", RatingFormat.MIXED_DOUBLES)
     seeded = eng.players["a"]
     RatingEngine().add_player(seeded)
     rebuilt = replay([], [seeded], as_of=snapshot.captured_on)
