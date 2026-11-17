@@ -62,7 +62,8 @@ def test_prequential_rejects_seed_dated_after_the_ledger(
 ) -> None:
     with pytest.raises(
         InvalidSeedError,
-        match="Seed for f in doubles: initial_source_date must not be after the last ledger match",
+        match="Seed for f in doubles: initial_source_date must not be after the last completed "
+        "ledger match",
     ):
         prequential_predictions(LEDGER, [_imported(captured_on)], mode=mode)
 
