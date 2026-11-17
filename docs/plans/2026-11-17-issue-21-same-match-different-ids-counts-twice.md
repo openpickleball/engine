@@ -107,3 +107,8 @@ live deltas: dup {a: 0.225, b: 0.225, c: -0.225, d: -0.225}, dup2 {a: 0.17507, b
 | 8 | default config: the live deltas of `dup` and `dup2` equal the values measured on main (above); docs reviewed in Phase 8 |
 
 Live drive must show both policies on the cases in Order of work step 8, the snapshot round trip, resume parity, and the version 1 error.
+
+Proof that the rewritten frozen test (`0ca1afe`) still catches the defect, run by the coordinator in a scratch worktree with `pytest -q tests/test_resumable_possible_duplicates.py`:
+
+- At `0ca1afe` (the branch before the E1 fix): 2 failed, 5 passed. `test_resumable_snapshot_refuses_an_unconsidered_key[reject]` and `test_default_resumable_snapshot_refuses_a_processed_unconsidered_key` fail with an AssertionError (no SnapshotError raised). The `[default]` case passes there because the earlier processed_match_ids check already refuses that input, which is why its assertion accepts either reason.
+- At the merge base with `origin/main`, with only this test file added: 7 failed, all with TypeError, since `Config` has no `reject_content_duplicates` there.
