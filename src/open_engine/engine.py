@@ -778,6 +778,10 @@ class Match:
             raise InvalidMatchError("A player cannot appear more than once in a match")
         if not set(self.confirmed_by) <= set(all_ids):
             raise InvalidMatchError("confirmed_by may only contain match participants")
+        if not _is_plain_date(self.played_on):
+            raise InvalidMatchError(
+                f"played_on must be a date, not {type(self.played_on).__name__}"
+            )
         if self.played_at is not None:
             _utc_instant(self.played_at)
         if self.played_at is not None and self.played_at.date() != self.played_on:
@@ -800,7 +804,10 @@ class Match:
             raise InvalidMatchError("Games played cannot exceed best_of")
         self.game_format.validate()
         for score_a, score_b in self.games:
-            if not isinstance(score_a, int) or not isinstance(score_b, int):
+            if not all(
+                isinstance(score, int) and not isinstance(score, bool)
+                for score in (score_a, score_b)
+            ):
                 raise InvalidMatchError("Game scores must be integers")
             if score_a < 0 or score_b < 0 or score_a == score_b:
                 raise InvalidMatchError("Game scores must be nonnegative and cannot be tied")
