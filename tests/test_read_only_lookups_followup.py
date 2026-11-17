@@ -16,9 +16,11 @@ from datetime import date
 import pytest
 
 from open_engine import (
+    ExternalRatingSnapshot,
     GameFormat,
     Match,
     MatchStatus,
+    Player,
     RatingEngine,
     RatingFormat,
     UnknownPlayerError,
@@ -121,3 +123,21 @@ def test_an_id_only_in_uncounted_or_later_rows_has_no_player_record() -> None:
         with pytest.raises(UnknownPlayerError, match=f"Unknown player: {pid}"):
             engine.player_summary(pid, S)
         assert pid not in engine.players
+
+
+def test_a_seed_after_a_state_read_needs_no_replace() -> None:
+    engine = RatingEngine()
+    engine.add_player(Player("syn-a"))
+    engine.state("syn-a", D)
+    engine.seed_external_rating(
+        "syn-a", D, ExternalRatingSnapshot("external_standard", 4.0, date(2025, 1, 1))
+    )
+    assert engine.players["syn-a"].ratings[D].rating == 4.0
+
+
+def test_add_player_after_a_failed_summary_succeeds() -> None:
+    engine = RatingEngine()
+    with pytest.raises(UnknownPlayerError, match="Unknown player: syn-g"):
+        engine.player_summary("syn-g", D, as_of=CUT)
+    engine.add_player(Player("syn-g"))
+    assert list(engine.players) == ["syn-g"]
