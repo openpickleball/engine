@@ -453,6 +453,14 @@ class Config:
     self_reported_repeat_factor: float = 0.5
     self_reported_max_repeats: int = 4
 
+    # Likely duplicates: a match with the same played_on, the same two teams
+    # (either side may be team A), and the same game scores as an earlier
+    # counted match, under another match_id. False counts it and sets
+    # MatchResult.possible_duplicate_of. True does not count it
+    # (RejectionReason.POSSIBLE_DUPLICATE). A real same-day rematch with the
+    # same scores is caught too, so the default only flags.
+    reject_content_duplicates: bool = False
+
     # Imported reliability display.
     import_reliability_carry_matches: int = 10
     import_reliability_max_age_days: int = 365
@@ -510,6 +518,8 @@ class Config:
             raise ConfigError("import reliability limits must be nonnegative")
         if not 0.0 <= self.established_reliability_threshold <= 100.0:
             raise ConfigError("established_reliability_threshold must be between 0 and 100")
+        if not isinstance(self.reject_content_duplicates, bool):
+            raise ConfigError("reject_content_duplicates must be a bool")
 
     def fingerprint(self) -> str:
         """Stable hash of every parameter, stored with each replay."""
@@ -836,6 +846,7 @@ class RejectionReason(_StrEnum):
     BEFORE_IMPORTED_BASELINE = "before_imported_baseline"
     SINGLES_RATING_GAP = "singles_rating_gap"
     DOUBLES_PARTNER_GAP = "doubles_partner_gap"
+    POSSIBLE_DUPLICATE = "possible_duplicate"
 
 
 @dataclass
@@ -869,6 +880,16 @@ class MatchResult:
     category match leaves its rd_as_of at the date that player's rating
     already reflects, so later live category matches dated before that
     date are late too.
+
+    possible_duplicate_of is the match_id of the earliest counted match the
+    engine has seen with the same content: the same played_on, the same two
+    teams (either side may be team A, in any player order), and the same
+    game scores read from the same side. Other fields, the match_id and
+    rating format included, are left out. It is set on a counted match and
+    on a match rejected with RejectionReason.POSSIBLE_DUPLICATE (under
+    Config.reject_content_duplicates), and None on every other result and
+    on parent. A real rematch on the same date with the same scores is
+    flagged too, so it is a signal for the backend to check, not proof.
     """
 
     counted: bool
@@ -884,6 +905,7 @@ class MatchResult:
     imbalance: float = 0.0  # mean team A delta plus mean team B delta
     late: bool = False  # dated before what a player's rating here reflects
     parent: MatchResult | None = None  # overall doubles update for categories
+    possible_duplicate_of: str | None = None  # earlier counted match, same content
 
 
 @dataclass(frozen=True)
@@ -1066,6 +1088,29 @@ def _matchup_key(match: Match) -> MatchupKey:
         match.rating_format,
         frozenset({frozenset(match.team_a), frozenset(match.team_b)}),
     )
+
+
+def _content_key(match: Match) -> str:
+    """
+    SHA-256 hex digest of what makes two reports the same match.
+
+    It uses played_on, the two teams as sets of players, and the game
+    scores in order, read from the same side. Each team is a sorted list
+    of ids, and the two teams are put in sorted order; when that swaps
+    them, every game score is swapped too. Everything else is left out on
+    purpose (match_id, match_type, rating_format, game_format, best_of,
+    played_at, sequence, confirmed_by), since two reports of one match
+    often disagree on labels. The digest is over JSON text, so it never
+    depends on set order or the hash seed.
+    """
+    team_a = sorted(match.team_a)
+    team_b = sorted(match.team_b)
+    games = [[score_a, score_b] for score_a, score_b in match.games]
+    if team_b < team_a:
+        team_a, team_b = team_b, team_a
+        games = [[score_b, score_a] for score_a, score_b in games]
+    form = [match.played_on.isoformat(), team_a, team_b, games]
+    return hashlib.sha256(_json_text(form).encode()).hexdigest()
 
 
 def _is_finite_number(value: object) -> bool:
@@ -1733,6 +1778,9 @@ class RatingEngine:
         self.self_reported_log: dict[MatchupKey, list[date]] = {}
         self.calculated_as_of: date | None = None
         self.replay_info: ReplayInfo | None = None
+        # Content key (see _content_key) of each counted match, to the
+        # match_id of the first one counted with it. Never overwritten.
+        self._content_keys: dict[str, str] = {}
         # Digest of each ledger row a replay considered, by match_id. Only
         # replay fills it; resume compares rows against it.
         self._ledger_digests: dict[str, str] = {}
@@ -2164,6 +2212,16 @@ class RatingEngine:
         if as_of < match.played_on:
             raise InvalidMatchError("as_of cannot be earlier than the match date")
 
+        content_key = _content_key(match)
+        twin = self._content_keys.get(content_key)
+        if twin is not None and cfg.reject_content_duplicates:
+            return MatchResult(
+                False,
+                match.rating_format,
+                RejectionReason.POSSIBLE_DUPLICATE,
+                possible_duplicate_of=twin,
+            )
+
         repeat_factor = 1.0
         matchup = None
         if match.match_type is MatchType.SELF_REPORTED:
@@ -2187,6 +2245,7 @@ class RatingEngine:
         primary, primary_updates = self._compute(match, match.rating_format, repeat_factor)
         if not primary.counted or primary_updates is None:
             return primary
+        primary.possible_duplicate_of = twin
 
         parent_updates = None
         parent_format = match.rating_format.parent if cfg.category_feeds_parent else None
@@ -2199,6 +2258,7 @@ class RatingEngine:
             self._commit(parent_format, parent_updates, live)
         if matchup is not None:
             self.self_reported_log.setdefault(matchup, []).append(match.played_on)
+        self._content_keys.setdefault(content_key, match.match_id)
         self.processed_match_ids.add(match.match_id)
         return primary
 
