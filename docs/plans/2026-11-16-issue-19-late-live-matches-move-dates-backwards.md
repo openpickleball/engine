@@ -18,7 +18,7 @@ Live processing applies results in arrival order, not play order. That stays tru
 
 ## Decisions taken with the maintainer
 
-- **Late means a date before a player's last match in that rating format.** A result is late when `match.played_on` is earlier than the `last_played` of any of its players in the result's rating format, read before the update. Every player counts, frozen ones included: a frozen player's rating feeds the expectation, and a later match has already moved it.
+- **Late means a date before a player's last match in that rating format.** A result is late when `match.played_on` is earlier than the `last_played` of any of its players in the result's rating format, read before the update. Every player counts, frozen ones included: a frozen player's rating feeds the expectation, and a later match has already moved it. Review widened this rule; see the next bullet.
 - **Widened after review: late also means a date before what the rating already reflects.** Code review found a gap. A category rating copied from overall doubles (`_new_state`) keeps the doubles `rd_as_of` but has `last_played=None`. So a mixed match dated before a doubles match was not flagged, and when its parent was rejected (for example by the partner gap) nothing was flagged at all. The maintainer approved this rule: a result is also late when, for any of its players (frozen ones included), `rd_as_of is not None and rd_as_of != initial_source_date and match.played_on < rd_as_of`. The `initial_source_date` check leaves out a plain imported baseline (its `rd_as_of` is the capture date) and a category state copied from an unplayed imported parent.
 - **Dates only.** The engine stores dates, not times. Two matches on the same date that arrive out of `played_at` order are not flagged. The docs say so.
 - **Counted results only.** `late` is `False` for a match that did not count, as `imbalance` is 0.0. A rejection changes no state, so no date moves.
@@ -38,13 +38,13 @@ Live processing applies results in arrival order, not play order. That stays tru
 ## Files that change
 
 - `src/open_engine/engine.py`
-  - `MatchResult`: add `late: bool = False  # dated before a player's last match in this format` after `imbalance`. Extend the docstring: what late means, that it compares dates only, that it is `False` for a match that did not count, that `parent` has its own, and that the backend should schedule a replay when it sees one.
+  - `MatchResult`: add `late: bool = False  # dated before what a player's rating here reflects` after `imbalance` (comment widened after review). Extend the docstring: what late means, that it compares dates only, that it is `False` for a match that did not count, that `parent` has its own, and that the backend should schedule a replay when it sees one.
   - `_compute`: before any update, compute `late = any(_is_late(work[pid], match.played_on) for pid in ids)`. `_is_late(state, on)` is True when `state.last_played is not None and on < state.last_played`, or when `state.rd_as_of is not None and state.rd_as_of != state.initial_source_date and on < state.rd_as_of`. Changed after review: the plan first used the `last_played` check alone, which missed a category rating copied from overall doubles (see Decisions). In the update loop, replace the four assignments:
     - `state.rd_as_of = match.played_on if state.rd_as_of is None else max(state.rd_as_of, match.played_on)`
     - `state.last_played` the same way.
     - partners and opponents: for each other id, set the date to `max(existing, match.played_on)` when present, else `match.played_on`. Write a small helper `_seen(interactions: dict[str, date], ids: Iterable[str], on: date) -> None` and use it for both maps. Keep iteration over the match's id tuples, which are ordered.
     - Pass `late=late` to the counted `MatchResult`. Rejections from `_compute` keep the default `False`.
-  - `record` docstring: one sentence that live results come in arrival order and `late` flags a match dated before a player's last match.
+  - `record` docstring: one sentence that live results come in arrival order and `late` (and `parent.late`, for a category match) flags a match dated before a player's last match in that format, or before the date that player's rating in that format already reflects (for a category rating copied from overall doubles). Widened after review.
   - `player_summary` docstring: drop the backdated sentence. Say instead that a late live match never moves `last_played` back.
   - Module docstring: extend the provisional versus authoritative note as in criterion 6.
 - `tests/test_late_live_match.py` (new): the tests in Proof.

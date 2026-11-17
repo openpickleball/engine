@@ -2198,7 +2198,8 @@ class RatingEngine:
             return MatchResult(False, rating_format, RejectionReason.BEFORE_IMPORTED_BASELINE), None
 
         # Live results apply in arrival order. A match dated before any
-        # player's last match here (frozen players included) arrived late.
+        # player's last match here, or before the date a copied category
+        # rating already reflects (frozen players included), arrived late.
         late = any(_is_late(work[pid], match.played_on) for pid in ids)
 
         states_a = [work[pid] for pid in match.team_a]
