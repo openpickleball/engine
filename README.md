@@ -166,18 +166,18 @@ A match moves ratings by how the result compared with the expectation.
 
 ## Match status
 
-`Match.status` says how a match ended. It is a `MatchStatus` and defaults to `COMPLETED`.
+`Match.status` says how a match ended. It is a `MatchStatus` and defaults to `COMPLETED`. A status that is not a `MatchStatus` member, such as the plain text `"forfeit"` or `None`, raises `InvalidMatchError`.
 
 - `COMPLETED`: at least one game and a decided winner. Nothing changes for these matches.
 - `FORFEIT`: the match was not played, so it must have no games.
 - `RETIRED`: a player stopped, for example through injury, before a winner was decided.
 - `INCOMPLETE`: the match stopped for another reason, such as time or weather.
 
-A retired or incomplete match records zero or more finished games, each valid in its game format, and no decided winner. So in a best of 1 it has no games. A partial game in progress, such as `(7, 4)` to 11, is not recorded. `games` must be a tuple or list for every status. Any other status value, including the plain text `"forfeit"`, raises `InvalidMatchError`.
+A retired or incomplete match records zero or more finished games, each valid in its game format, and no decided winner. So in a best of 1 it has no games. A partial game in progress, such as `(7, 4)` to 11, is not recorded. `games` must be a tuple or list for every status.
 
 A match that is not completed is never rated:
 
-- `record` checks the `match_id` first: a match_id already processed gets `RejectionReason.DUPLICATE_MATCH_ID`. Otherwise it returns a result that is not counted, with `RejectionReason.MATCH_NOT_COMPLETED`, and changes nothing. The `match_id` is not marked processed, so a later completed match with that id can still count live. The engine does not check that it is the same match: different players count too.
+- `record` validates the match, then checks the `match_id` before the status: a match_id already processed gets `RejectionReason.DUPLICATE_MATCH_ID`. Otherwise it returns a result that is not counted, with `RejectionReason.MATCH_NOT_COMPLETED`, and changes nothing. The `match_id` is not marked processed, so a later completed match with that id can still count live. The engine does not check that it is the same match: different players count too.
 - `replay` accepts the row. It counts toward `matches_considered`, not `matches_counted`. A full replay gives each player the same ratings as a full replay of the ledger without those rows. In one ledger, a non-completed row and a completed row with the same `match_id` conflict (`LedgerConflictError`), so replace the row instead.
 - As for any rejected row, a checkpoint tracks the row and its players. Resume raises `SnapshotError` for a new seed for a player named only in such a row.
 - Replacing the row with a completed one under the same `match_id` is an edited row. For a row dated on or before a checkpoint, that needs a full replay (resume raises `LedgerConflictError` when given it).
