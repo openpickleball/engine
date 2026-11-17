@@ -170,6 +170,12 @@ Acceptance criteria:
 
 Tests go in a new `tests/test_inherited_live_updates.py`, plus the schema updates in the snapshot tests.
 
+### Changes from the addendum during the work
+
+- Part B validation adds two rules the snapshot alone can check, as CLAUDE.md asks: a nonzero `inherited_live_updates` also needs `category_feeds_parent` on (the engine derives nothing without it), and it must not exceed the parent state's `live_updates_since_replay` (a parent's live count only grows until the next replay). Both need the player's other states, so they run in a new `_check_inherited_live_updates` called from `_snap_player`, not in `_check_state_invariants`.
+- The version guards in `tests/test_snapshot.py`, `tests/test_match_status.py`, and `tests/test_content_duplicates.py` move from 3 to 4. `test_snapshot_version_is_3` becomes `test_snapshot_version_is_4`, and the float version case uses 4.0, so it still tests a float equal to the version.
+- The Part A changelog entry landed in its own commit, after the fix commit left it out.
+
 ### Order of work (addendum)
 
 1. Part A red tests, committed alone. Then the fix.
