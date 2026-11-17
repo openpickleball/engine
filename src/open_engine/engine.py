@@ -197,7 +197,24 @@ Published behavior notes:
   the same teams with the same scores looks the same: the default flags
   it, and True does not count it, so keep the default where that matters
   and let the backend confirm. Reports that disagree on the date are not
-  caught.
+  caught. RatingEngine.possible_duplicates maps each flagged or rejected
+  copy to the match_id it repeats, live and after a replay.
+  Which report wins is set by processing order alone. With True, the
+  report that survives is the first one to count in processing order
+  (arrival order live; in a replay, ledger order, where untimed rows on a
+  date sort before timed ones and then sequence and match_id decide),
+  whatever its match type, rating format, or game format. So a weaker or
+  relabeled copy (for example an untimed self-report of a timed
+  tournament match, or a mixed doubles copy of a doubles row) can count
+  while the stronger report is rejected, a category copy that counts
+  first can keep the other row from updating its rating format, and live
+  recording and a replay can keep different rows. Under the default the
+  same order decides which report is flagged, so the flagged row can be
+  the stronger one. Use True only when the backend trusts who files
+  reports; otherwise resolve flags in the backend. Under the default, a
+  category copy of a doubles match can count twice in overall doubles: once
+  directly and once through its `parent` update. `parent` has
+  `possible_duplicate_of` None, so read the top-level field.
 - `record` validates every match first. A valid match whose `match_id` was
   already processed returns a result that is not counted, with
   `RejectionReason.DUPLICATE_MATCH_ID`, instead of raising. A match with
@@ -207,6 +224,9 @@ Published behavior notes:
 Production notes:
 - Persist the match ledger and player identities in a database. This module's
   in-memory dictionaries are an engine, not a persistence layer.
+- Do not show `possible_duplicate_of` (or possible_duplicates) to whoever
+  submitted the match. It reveals another report's match_id and that
+  those players played that result on that date.
 - Require verified identity and authorized evidence before importing an
   external rating. An external refresh can never overwrite an OPEN-earned
   rating once OPEN matches have been processed.
@@ -482,7 +502,10 @@ class Config:
     # this, and a counted one has MatchResult.possible_duplicate_of set.
     # True does not count it (RejectionReason.POSSIBLE_DUPLICATE). A real
     # same-day rematch with the same scores is caught too, so the default
-    # only flags.
+    # only flags. Under True the first report to count in processing order
+    # survives, whatever its match type or format, so a weaker or
+    # relabeled copy can win. Use True only when the backend trusts who
+    # files reports. See the likely duplicates note in the module docstring.
     reject_content_duplicates: bool = False
 
     # Imported reliability display.
@@ -915,7 +938,12 @@ class MatchResult:
     Config.reject_content_duplicates) carry it; it is None on every other
     result and on parent. A real rematch on the same date with the same
     scores is flagged too, so it is a signal for the backend to check, not
-    proof.
+    proof. Processing order alone decides which report is the copy, so the
+    flagged or rejected one can be the stronger report (see the module
+    docstring). A category copy of a doubles match also reaches overall
+    doubles through parent, whose possible_duplicate_of is None, so read
+    this top-level field. Do not show it to whoever submitted the match:
+    it names another report.
     """
 
     counted: bool
