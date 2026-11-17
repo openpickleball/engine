@@ -306,7 +306,9 @@ def test_every_mapping_field_is_frozen() -> None:
 
 @pytest.mark.parametrize("key", ["11", 11.0, True, None])
 def test_game_length_keys_must_be_ints(key: object) -> None:
-    weights: dict[object, float] = {11: 1.0, 15: 1.1, 21: 1.2, key: 9.0}
+    weights: dict[object, float] = {15: 1.1, 21: 1.2, key: 1.0}
+    if key != 11:
+        weights[11] = 1.0
     with pytest.raises(ConfigError, match="game_length_weights keys must be whole numbers"):
         Config(game_length_weights=weights)  # type: ignore[arg-type]
 
@@ -337,3 +339,19 @@ def test_from_dict_rejects_game_length_keys_that_name_the_same_length() -> None:
     data["game_length_weights"] = {"11": 1.0, "011": 3.0, "15": 1.1, "21": 1.2}
     with pytest.raises(ConfigError, match="game_length_weights repeats"):
         Config.from_dict(data)
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        (ScoringType.RALLY, 11.0),
+        (ScoringType.RALLY, True),
+        (ScoringType.RALLY, "11"),
+        ("bounce", 11),
+        ("rally",),
+        "rally",
+    ],
+)
+def test_allowed_game_format_entries_must_be_scoring_and_whole_points(entry: object) -> None:
+    with pytest.raises(ConfigError, match="allowed_game_formats entries must be"):
+        Config(allowed_game_formats=frozenset({entry}))  # type: ignore[arg-type]
