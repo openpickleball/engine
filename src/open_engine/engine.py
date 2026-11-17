@@ -2229,8 +2229,7 @@ class RatingEngine:
 
     def _player_or_new(self, player_id: str) -> Player:
         """The player record for player_id, created empty if it does not exist."""
-        if not player_id or not player_id.strip():
-            raise PlayerError("player_id is required")
+        self._check_player_id(player_id)
         if player_id not in self.players:
             self._put_player(Player(id=player_id))
         return self.players[player_id]
@@ -2271,32 +2270,65 @@ class RatingEngine:
         _validate_seed(player, self.cfg)
         self._put_player(clone_player(player))
 
-    def link_account(self, player_id: str, account_user_id: str) -> None:
-        """Claim an existing external-only player profile for an OPEN account."""
+    @staticmethod
+    def _check_player_id(player_id: str) -> None:
+        """Raise PlayerError for a blank player id."""
+        if not player_id or not player_id.strip():
+            raise PlayerError("player_id is required")
+
+    def _check_account(self, player_id: str, account_user_id: str) -> None:
+        """Raise PlayerError unless the account can link to player_id. Changes nothing."""
         if not account_user_id:
             raise PlayerError("account_user_id is required")
-        player = self._player_or_new(player_id)
-        if player.account_user_id not in (None, account_user_id):
+        self._check_player_id(player_id)
+        player = self.players.get(player_id)
+        if player is not None and player.account_user_id not in (None, account_user_id):
             raise PlayerError("Player profile is already linked to another account")
         if any(
             p.account_user_id == account_user_id and p.id != player_id
             for p in self.players.values()
         ):
             raise PlayerError("This account is already linked to another player profile")
-        self._changed()
-        player.account_user_id = account_user_id
 
-    def attach_external_id(self, player_id: str, source: str, external_player_id: str) -> None:
-        """Link an external identity to a player. Each identity links to one player."""
+    def _check_external_id(self, player_id: str, source: str, external_player_id: str) -> None:
+        """Raise PlayerError unless the identity can link to player_id. Changes nothing."""
         if not source or not external_player_id:
             raise PlayerError("source and external_player_id are required")
-        player = self._player_or_new(player_id)
-        existing = player.external_ids.get(source)
-        if existing not in (None, external_player_id):
+        self._check_player_id(player_id)
+        player = self.players.get(player_id)
+        if player is not None and player.external_ids.get(source) not in (
+            None,
+            external_player_id,
+        ):
             raise PlayerError("A different external identity is already linked")
         for other in self.players.values():
             if other.id != player_id and other.external_ids.get(source) == external_player_id:
                 raise PlayerError("This external identity is already linked to another player")
+
+    def link_account(self, player_id: str, account_user_id: str) -> None:
+        """
+        Claim an existing external-only player profile for an OPEN account.
+
+        Raises PlayerError for a blank id or account, or when the player or
+        the account is already linked elsewhere. Every check runs before
+        anything changes, so a failed call creates no player.
+        """
+        self._check_account(player_id, account_user_id)
+        player = self._player_or_new(player_id)
+        self._changed()
+        player.account_user_id = account_user_id
+
+    def attach_external_id(self, player_id: str, source: str, external_player_id: str) -> None:
+        """
+        Link an external identity to a player. Each identity links to one player.
+
+        Raises PlayerError for a blank id, source, or external id, when the
+        player already has a different id from that source, or when the
+        identity is linked to another player. Every check runs before
+        anything changes, so a failed call creates no player.
+        """
+        self._check_external_id(player_id, source, external_player_id)
+        player = self._player_or_new(player_id)
         self._changed()
         player.external_ids[source] = external_player_id
 
@@ -2332,7 +2364,8 @@ class RatingEngine:
         Raises InvalidSeedError when the rating format, a checked snapshot
         field, or the existing rating does not allow the seed, and PlayerError
         when player_id is blank or the snapshot's external identity cannot be
-        linked (see attach_external_id).
+        linked (see attach_external_id). Every check runs before anything
+        changes, so a failed call creates no player.
         """
         cfg = self.cfg
         # The same type rules the seed check applies, so every state seeded
@@ -2356,8 +2389,9 @@ class RatingEngine:
         if snapshot.reliability is not None and not 0 <= snapshot.reliability <= 100:
             raise InvalidSeedError("External reliability must be between 0 and 100")
 
-        player = self._player_or_new(player_id)
-        existing = player.ratings.get(rating_format)
+        self._check_player_id(player_id)
+        known = self.players.get(player_id)
+        existing = known.ratings.get(rating_format) if known is not None else None
         if existing is not None:
             if existing.matches_played > 0:
                 raise InvalidSeedError(
@@ -2368,6 +2402,11 @@ class RatingEngine:
                     "A rating already exists; explicitly allow replacing an unplayed seed"
                 )
 
+        if snapshot.external_player_id:
+            self._check_external_id(player_id, snapshot.source, snapshot.external_player_id)
+
+        # Every check has passed: create the player and link the identity.
+        player = self._player_or_new(player_id)
         if snapshot.external_player_id:
             self.attach_external_id(player_id, snapshot.source, snapshot.external_player_id)
 
