@@ -6,7 +6,7 @@ import copy
 import json
 import pickle
 from collections.abc import Callable, Mapping
-from dataclasses import replace
+from dataclasses import fields, replace
 from typing import Any
 
 import pytest
@@ -289,3 +289,13 @@ def test_from_dict_accepts_int_game_length_keys() -> None:
     data = Config().to_dict()
     data["game_length_weights"] = {11: 1.0, 15: 1.1, 21: 1.2}
     assert Config.from_dict(data) == Config()
+
+
+def test_every_mapping_field_is_frozen() -> None:
+    cfg = Config()
+    mapping_fields = sorted(
+        f.name for f in fields(cfg) if isinstance(getattr(cfg, f.name), Mapping)
+    )
+    assert mapping_fields == sorted(MAPPING_FIELDS)
+    for name in mapping_fields:
+        assert not isinstance(getattr(cfg, name), dict)

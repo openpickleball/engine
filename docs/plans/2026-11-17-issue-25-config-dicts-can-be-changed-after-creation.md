@@ -49,3 +49,8 @@ Not done here: type and range checks for every `Config` field (for example `matc
 - Criteria 1 to 5, 7 to 9: `tests/test_config_immutable.py`.
 - Criterion 6: a test pins `Config().fingerprint() == "c5bb49f7c37a013a"`.
 - Measured on `origin/main` (946a143): `Config().fingerprint()` is `c5bb49f7c37a013a`; `cfg.match_weights[MatchType.LEAGUE] = 9` succeeds and the fingerprint becomes `82da7590cd297e04`; `hash(Config())` raises `TypeError: unhashable type: 'dict'`; `copy.deepcopy` and `pickle` of `Config()` work; `Config(k_min=0) == Config(k_min=0.0)` is `True`.
+
+## Changes from the plan during the work
+
+- `_FrozenMapping` does not override `__setattr__`: a test scans every module for raises that are not engine errors. `__slots__` keeps it to the one private attribute.
+- `CLAUDE.md` "Config provenance" now says a new mapping field goes in `_CONFIG_MAPPING_FIELDS` and a field whose `to_dict()` form differs from its type needs a conversion in `from_dict`. A test checks that every mapping-valued field is frozen.
