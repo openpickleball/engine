@@ -1769,7 +1769,10 @@ def _check_inherited_live_updates(
     below what the category inherited. A derived state takes the parent's
     initial_source_date and no other provenance, and a parent with live
     updates has been played, so it can no longer be reseeded: a state with
-    a nonzero count still has its parent's initial_source_date.
+    a nonzero count still has its parent's initial_source_date. Until it
+    plays, it also keeps the RD it was derived with, max(parent RD,
+    category_seed_rd), and the parent's rd_as_of at derivation, which a
+    played parent has set and never moves back.
     """
     for fmt in sorted(states, key=lambda f: f.value):
         inherited = states[fmt].inherited_live_updates
@@ -1807,6 +1810,24 @@ def _check_inherited_live_updates(
             raise SnapshotError(
                 f"{path}.ratings.{fmt.value}.initial_source_date must equal the parent "
                 "state's initial_source_date when inherited_live_updates is nonzero"
+            )
+        if state.matches_played:
+            continue
+        state_path = f"{path}.ratings.{fmt.value}"
+        if state.rd < cfg.category_seed_rd:
+            raise SnapshotError(
+                f"{state_path}.rd must be at least category_seed_rd for an unplayed state "
+                "with inherited_live_updates"
+            )
+        if state.rd_as_of is None:
+            raise SnapshotError(
+                f"{state_path}.rd_as_of must be set for an unplayed state with "
+                "inherited_live_updates"
+            )
+        if base.rd_as_of is None or state.rd_as_of > base.rd_as_of:
+            raise SnapshotError(
+                f"{state_path}.rd_as_of must not be after the parent state's rd_as_of for an "
+                "unplayed state with inherited_live_updates"
             )
 
 
@@ -2266,7 +2287,9 @@ class RatingEngine:
         on, initial_source "open_parent:" plus the parent's value) with a
         parent state, no more than the parent state's live updates, the
         parent's initial_source_date, and no imported reliability, external
-        player id, or evidence reference. Identities are only type checked
+        player id, or evidence reference; while such a state is unplayed,
+        also an RD of at least category_seed_rd and an rd_as_of that is set
+        and no later than the parent state's. Identities are only type checked
         (account_user_id a str or null, external_ids str to str), since
         the engine's own methods can build shared or blank ones and they
         do not affect ratings. A resumable snapshot also holds no
