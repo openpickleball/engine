@@ -176,7 +176,7 @@ def _state(snap: dict[str, Any], fmt: RatingFormat, pid: str = "syn-a") -> dict[
 
 def test_the_snapshot_carries_the_count_and_round_trips() -> None:
     snap = _live_snapshot()
-    assert snap["snapshot_version"] == 4
+    assert snap["snapshot_version"] == 5
     assert _state(snap, MX)["inherited_live_updates"] == 2
     assert _state(snap, D)["inherited_live_updates"] == 0
     restored = RatingEngine.from_snapshot(snap)
@@ -187,7 +187,7 @@ def test_the_snapshot_carries_the_count_and_round_trips() -> None:
 def test_a_version_3_snapshot_does_not_load() -> None:
     snap = _live_snapshot()
     snap["snapshot_version"] = 3
-    with pytest.raises(SnapshotError, match="snapshot_version must be 4"):
+    with pytest.raises(SnapshotError, match="snapshot_version must be 5"):
         RatingEngine.from_snapshot(snap)
 
 

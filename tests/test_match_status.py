@@ -223,16 +223,22 @@ def test_record_does_not_count_a_non_completed_match(status: MatchStatus, live: 
     assert result.rating_format is S
     assert result.possible_duplicate_of is None
     assert result.deltas == {}
-    assert eng.to_snapshot() == before
+    # Only the reservation of its match_id (issue #73) and the resumable mark change.
+    after = eng.to_snapshot()
+    assert after["reserved_match_ids"] == ["syn-x1"]
+    assert after["resumable"] is False
+    for key in set(before) - {"reserved_match_ids", "resumable"}:
+        assert after[key] == before[key]
     assert "syn-new" not in eng.players
 
 
-def test_a_later_completed_match_with_the_same_id_counts() -> None:
+def test_a_later_completed_match_with_the_same_id_is_a_duplicate() -> None:
     eng = _played_engine()
     eng.record(_m("syn-x1", (), MatchStatus.FORFEIT))
     result = eng.record(_m("syn-x1", ((11, 5),)))
-    assert result.counted is True
-    assert "syn-x1" in eng.processed_match_ids
+    assert result.counted is False
+    assert result.reason is RejectionReason.DUPLICATE_MATCH_ID
+    assert "syn-x1" not in eng.processed_match_ids
 
 
 def test_a_non_completed_match_with_a_processed_id_is_a_duplicate() -> None:
@@ -398,12 +404,12 @@ def test_evaluate_with_a_zero_game_forfeit_between_established_players(mode: str
 # -- criterion 7: snapshot version ------------------------------------------------
 
 
-def test_snapshot_version_is_4() -> None:
-    assert _played_engine().to_snapshot()["snapshot_version"] == 4
+def test_snapshot_version_is_5() -> None:
+    assert _played_engine().to_snapshot()["snapshot_version"] == 5
 
 
 def test_version_2_snapshot_is_refused() -> None:
     snapshot = copy.deepcopy(_played_engine().to_snapshot())
     snapshot["snapshot_version"] = 2
-    with pytest.raises(SnapshotError, match="snapshot_version must be 4"):
+    with pytest.raises(SnapshotError, match="snapshot_version must be 5"):
         RatingEngine.from_snapshot(snapshot)
