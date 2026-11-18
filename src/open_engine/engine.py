@@ -2491,6 +2491,75 @@ def _check_named_players(players: Mapping[str, Player], paths: Mapping[str, str]
                         )
 
 
+def _check_verified_against_log(
+    players: Mapping[str, Player],
+    paths: Mapping[str, str],
+    log: Mapping[MatchupKey, list[date]],
+    cfg: Config,
+    resumable: bool,
+) -> None:
+    """
+    Raise SnapshotError for a verified_matches_played the self-reported log rules out.
+
+    record appends one date to the log, under the match's own format, for
+    every counted self-reported match, and the log is never pruned. So
+    matches_played - verified_matches_played (the self-reported updates
+    that moved a state) is at most the logged matches that could move it:
+    those in its format, plus, for doubles under category_feeds_parent,
+    those in the category formats. A frozen player is logged but not
+    moved, so that is only an upper bound. A state with no
+    initial_source_date is never frozen and, once logged, never reseeded,
+    so for it the count equals the logged matches in its format (for
+    doubles, at least the doubles ones). A resumable snapshot is exactly
+    a replay, whose seeds precede every row, so a logged match dated
+    after a state's initial_source_date moved that state: the same exact
+    rule then holds counting only those dates. A live import can be
+    reseeded while unplayed, so a logged match in which it was frozen
+    under an earlier capture date cannot be told apart, and only the
+    upper bound applies to it.
+    """
+    logged: dict[tuple[str, RatingFormat], list[date]] = {}
+    for (fmt, teams), dates in log.items():
+        for team in teams:
+            for pid in team:
+                logged.setdefault((pid, fmt), []).extend(dates)
+    categories = [f for f in RatingFormat if f.parent is RatingFormat.DOUBLES]
+
+    def count(pid: str, fmt: RatingFormat, after: date | None) -> int:
+        dates = logged.get((pid, fmt), [])
+        return len(dates) if after is None else sum(1 for on in dates if on > after)
+
+    for player_id, player in players.items():
+        for fmt in sorted(player.ratings, key=lambda f: f.value):
+            state = player.ratings[fmt]
+            path = f"{paths[player_id]}.ratings.{fmt.value}"
+            unverified = state.matches_played - state.verified_matches_played
+            exact = state.initial_source_date is None or resumable
+            after = state.initial_source_date if exact else None
+            own = count(player_id, fmt, after)
+            prefix = f"{path}: matches_played - verified_matches_played ({unverified})"
+            if exact and fmt is not RatingFormat.DOUBLES:
+                if unverified != own:
+                    raise SnapshotError(
+                        f"{prefix} must equal the self-reported {fmt.value} matches logged for "
+                        f"this player ({own})"
+                    )
+                continue
+            feeds = fmt is RatingFormat.DOUBLES and cfg.category_feeds_parent
+            upper = own + (sum(count(player_id, c, after) for c in categories) if feeds else 0)
+            what = "doubles and category" if feeds else fmt.value
+            if unverified > upper:
+                raise SnapshotError(
+                    f"{prefix} must not exceed the self-reported {what} matches logged for "
+                    f"this player ({upper})"
+                )
+            if exact and unverified < own:
+                raise SnapshotError(
+                    f"{prefix} must be at least the self-reported doubles matches logged "
+                    f"for this player ({own})"
+                )
+
+
 def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
     """Validate a snapshot against cfg and read it. Raises SnapshotError naming the bad value."""
     if not isinstance(snapshot, Mapping):
@@ -2549,6 +2618,10 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
         log[key] = dates
 
     content_keys = _snap_content_keys(raw["content_keys"], processed)
+    resumable = raw["resumable"]
+    if not isinstance(resumable, bool):
+        raise SnapshotError("snapshot.resumable must be a bool")
+    _check_verified_against_log(players, player_paths, log, cfg, resumable)
     digests_raw = raw["ledger_digests"]
     if not isinstance(digests_raw, Mapping):
         raise SnapshotError("snapshot.ledger_digests must be an object")
@@ -2570,10 +2643,6 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
         if player_id in ledger_player_ids:
             raise SnapshotError(f"{path}: duplicate player id {player_id!r}")
         ledger_player_ids.add(player_id)
-
-    resumable = raw["resumable"]
-    if not isinstance(resumable, bool):
-        raise SnapshotError("snapshot.resumable must be a bool")
 
     possible_duplicates = _snap_possible_duplicates(
         raw["possible_duplicates"],
@@ -2795,7 +2864,14 @@ class RatingEngine:
         player id, or evidence reference; while such a state is unplayed,
         also an RD of at least category_seed_rd and an rd_as_of that is set
         and no later than the parent state's. Every partner, opponent, and
-        self-reported team member is a player in the snapshot. Identities
+        self-reported team member is a player in the snapshot. Each state's
+        matches_played - verified_matches_played (its self-reported updates)
+        is at most the self-reported log dates in its format that name the
+        player, plus, for doubles under category_feeds_parent, those in the
+        category formats. For a state with no initial_source_date, and for
+        every state of a resumable snapshot counting only log dates after
+        its initial_source_date, it equals the logged matches in its format
+        (for doubles, it is at least the doubles ones). Identities
         follow the seed and link rules: account_user_id is null or a
         non-blank str, every external_ids source and id is a non-blank str,
         and no two players hold the same account or the same (source,

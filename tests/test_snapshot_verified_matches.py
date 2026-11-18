@@ -130,12 +130,15 @@ def test_count_must_not_exceed_matches_played() -> None:
         RatingEngine.from_snapshot(snap)
 
 
-def test_count_equal_to_matches_played_loads() -> None:
-    snap = _snapshot()
-    state = _state(snap)
-    state["verified_matches_played"] = state["matches_played"]
-    snap["resumable"] = False
-    RatingEngine.from_snapshot(snap)
+def test_count_equal_to_matches_played_loads_with_no_self_reports() -> None:
+    # Relabeling a self-reported match as verified does not load (see
+    # tests/test_snapshot_verified_log.py), so build a state with none.
+    rows = [m for m in _ledger() if m.match_type is not MatchType.SELF_REPORTED]
+    engine = replay(rows, as_of=AS_OF)
+    state = engine.players["syn-a"].ratings[D]
+    assert state.verified_matches_played == state.matches_played > 0
+    restored = RatingEngine.from_snapshot(json.loads(json.dumps(engine.to_snapshot())))
+    assert restored.players == engine.players
 
 
 def test_missing_count_is_rejected() -> None:
