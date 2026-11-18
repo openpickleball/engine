@@ -2514,7 +2514,10 @@ class _HeldIdentities:
 
 
 def _check_seed_identity(player: object) -> None:
-    """Raise InvalidSeedError unless the seed is exactly a Player with a non-blank str id."""
+    """
+    Raise InvalidSeedError unless the seed is exactly a Player with a
+    non-blank plain str id (not a subclass).
+    """
     # Exactly Player: a subclass can return a different id on a later read.
     if type(player) is not Player:
         raise InvalidSeedError(f"Seed must be a Player, not {type(player).__name__}")
@@ -4038,14 +4041,14 @@ class RatingEngine:
         rejects the seed.
 
         rating_format must be a RatingFormat (a str is not converted),
-        snapshot must be exactly an ExternalRatingSnapshot (not a
-        subclass), and the snapshot is checked before anything changes: captured_on is a date (not a
-        datetime), source is a str that is not blank or whitespace only,
-        external_player_id is None or a str that is not blank or
-        whitespace only, evidence_reference is None or a str (each of
-        these strs exactly a str, not a subclass), rating is an int or
-        finite float (not bool) within the rating bounds, and reliability
-        is None or an int or finite float (not bool) between 0 and 100. An external_player_id
+        snapshot must be exactly an ExternalRatingSnapshot (not a subclass),
+        and the snapshot is checked before anything changes: captured_on is a
+        date (not a datetime), source is a str that is not blank or whitespace
+        only, external_player_id is None or a str that is not blank or
+        whitespace only, evidence_reference is None or a str (each of these
+        strs exactly a str, not a subclass), rating is an int or finite float
+        (not bool) within the rating bounds, and reliability is None or an int
+        or finite float (not bool) between 0 and 100. An external_player_id
         links the (source, external_player_id) pair to the player, and None
         links nothing. So every state seeded here passes the seed rules in
         add_player.
