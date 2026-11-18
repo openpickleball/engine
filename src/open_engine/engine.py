@@ -4955,7 +4955,14 @@ def prequential_predictions(
     (source, external id) pair, raise PlayerError, as add_player does. A
     seed captured mid-ledger is accepted: scheduled replays before its date
     freeze it as usual.
+
+    A score_from or anchor that is not None and not a plain date (a str, a
+    datetime, or any other type) raises EvaluationError naming the argument,
+    before the ledger is read, in both modes and for an empty ledger too.
     """
+    for name, value in (("score_from", score_from), ("anchor", anchor)):
+        if value is not None and not _is_plain_date(value):
+            raise EvaluationError(f"{name} must be a plain date, not {type(value).__name__}")
     if mode not in ("live", "scheduled"):
         raise EvaluationError(f"mode must be 'live' or 'scheduled', not {mode!r}")
     cfg = cfg or Config()
@@ -5038,7 +5045,9 @@ def evaluate(
     Prequential evaluation: each match is predicted before it updates ratings.
 
     Scores the matches that prequential_predictions() returns, with the same
-    eligibility, mode, score_from and anchor rules.
+    eligibility, mode, score_from and anchor rules. A score_from or anchor
+    that is not None and not a plain date raises EvaluationError naming the
+    argument, as prequential_predictions does, for an empty ledger too.
     """
     cfg = cfg or Config()
     predictions = prequential_predictions(
@@ -5164,7 +5173,11 @@ def fit_scale(
     Publish the returned ScaleFit alongside the config that adopts it.
     Raises EvaluationError, before any prediction work, unless low < high,
     tolerance is finite and greater than 0, and 2 * low, 2 * high, and
-    (high - low) * 14 are finite.
+    (high - low) * 14 are finite. A score_from or anchor that is not None and
+    not a plain date raises EvaluationError naming the argument, as
+    prequential_predictions does, for an empty ledger too, unless another
+    argument fails first: the trial config is built before the dates are
+    checked, so for example a low of 0 or less raises ConfigError.
     """
     _check_search_bounds(low, high, tolerance)
     cfg = cfg or Config()
@@ -5261,6 +5274,10 @@ def fit_win_calibration(
     are skipped. Same search as fit_scale: coarse grid, then golden section.
     Raises EvaluationError when no prediction remains, and, before any
     prediction work, for the same low, high, and tolerance as fit_scale.
+    A score_from or anchor that is not None and not a plain date raises
+    EvaluationError naming the argument, as prequential_predictions does,
+    for an empty ledger too, unless the low, high, and tolerance checks
+    fail first.
     """
     _check_search_bounds(low, high, tolerance)
     predictions = prequential_predictions(
