@@ -181,7 +181,7 @@ A match moves ratings by how the result compared with the expectation.
 
 A retired or incomplete match records zero or more finished games, each valid in its game format, and no decided winner. So in a best of 1 it has no games. A partial game in progress, such as `(7, 4)` to 11, is not recorded. `games` must be a tuple or list for every status.
 
-`Match.validate` checks the type of these other fields too, and raises `InvalidMatchError` naming the field. `rating_format` must be a `RatingFormat` and `match_type` a `MatchType`, so a str such as `"tournament"` raises even though it equals a member's value. `team_a` and `team_b` must be tuples, `confirmed_by` a set or frozenset, `sequence` and `best_of` ints (not a `bool` or a float), `game_format` a `GameFormat`, and `played_at` a `datetime` or `None`. The fields inside a `GameFormat` are not type-checked.
+`Match.validate` also checks the type of other `Match` fields, and raises `InvalidMatchError` naming the field. `rating_format` must be a `RatingFormat` and `match_type` a `MatchType`, so a str such as `"tournament"` raises even though it equals a member's value. `team_a` and `team_b` must be tuples, `confirmed_by` a set or frozenset, `sequence` and `best_of` ints (not a `bool` or a float), `game_format` a `GameFormat`, and `played_at` a `datetime` or `None`. The fields inside a `GameFormat` are not type-checked.
 
 A match that is not completed is never rated:
 
