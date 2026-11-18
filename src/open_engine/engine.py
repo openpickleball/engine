@@ -3402,7 +3402,7 @@ class RatingEngine:
 
         repeat_factor = 1.0
         matchup = None
-        if match.match_type is MatchType.SELF_REPORTED:
+        if match.match_type == MatchType.SELF_REPORTED:
             if cfg.self_reported_requires_both_teams:
                 confirmed = set(match.confirmed_by)
                 if not (confirmed & set(match.team_a) and confirmed & set(match.team_b)):
