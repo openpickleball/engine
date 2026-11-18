@@ -234,8 +234,8 @@ def test_a_doubles_seed_a_counted_category_match_was_rated_from_is_not_replaced(
     _assert_refused(
         eng,
         D,
-        r"^Cannot replace a rating that a counted mixed_doubles match for this "
-        r"player was rated from$",
+        r"^Cannot seed a rating that a counted mixed_doubles match for this "
+        r"player depends on$",
     )
     assert _ratings(eng) == _ratings(replay(ledger, seeds, as_of=AS_OF))
 
@@ -277,8 +277,8 @@ def test_a_doubles_seed_a_derived_category_state_was_rated_from_is_not_replaced(
     _assert_refused(
         eng,
         D,
-        r"^Cannot replace a rating that a counted mixed_doubles match for this "
-        r"player was rated from$",
+        r"^Cannot seed a rating that a counted mixed_doubles match for this "
+        r"player depends on$",
     )
     assert _ratings(eng) == _ratings(replay(ledger, seeds, cfg=cfg, as_of=AS_OF))
 
@@ -292,6 +292,42 @@ def test_a_stored_derived_category_state_does_not_free_the_doubles_seed() -> Non
     _assert_refused(
         eng,
         D,
-        r"^Cannot replace a rating that a counted mixed_doubles match for this "
-        r"player was rated from$",
+        r"^Cannot seed a rating that a counted mixed_doubles match for this "
+        r"player depends on$",
     )
+
+
+@pytest.mark.parametrize("replace", [False, True])
+def test_a_first_doubles_seed_after_a_provisional_category_match_is_refused(
+    replace: bool,
+) -> None:
+    # syn-a has no doubles rating, so its mixed state starts provisional
+    # and moves in the mixed match. The doubles update is rejected by the
+    # partner gap, so no doubles state names syn-a. A doubles seed would
+    # make a replay derive syn-a's mixed state from it instead.
+    cfg = Config(max_doubles_partner_gap=1.0)
+    seed_eng = RatingEngine(cfg)
+    snap = ExternalRatingSnapshot("ext", 3.5, EARLIER)
+    seed_eng.seed_external_rating("syn-b", D, ExternalRatingSnapshot("ext", 5.5, EARLIER))
+    for pid in ("syn-b", "syn-c", "syn-d"):
+        seed_eng.seed_external_rating(pid, MX, snap)
+    if replace:
+        # An unplayed provisional doubles state is not used to derive mixed.
+        seed_eng.seed_provisional_rating("syn-a", D)
+    seeds = [clone_player(seed_eng.player(pid)) for pid in sorted(seed_eng.players)]
+    ledger = [_match("syn-m1", MX, date(2026, 2, 1))]
+    eng = RatingEngine(cfg)
+    for player in seeds:
+        eng.add_player(player)
+    result = eng.record(ledger[0])
+    assert result.counted
+    assert result.parent is not None and not result.parent.counted
+    assert eng.state("syn-a", MX).initial_source == "open_provisional"
+    _assert_refused(
+        eng,
+        D,
+        r"^Cannot seed a rating that a counted mixed_doubles match for this "
+        r"player depends on$",
+        replace=replace,
+    )
+    assert _ratings(eng) == _ratings(replay(ledger, seeds, cfg=cfg, as_of=AS_OF))
