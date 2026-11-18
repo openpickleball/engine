@@ -421,7 +421,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from enum import Enum, StrEnum
@@ -619,6 +619,118 @@ _CONFIG_MAPPING_FIELDS = (
     "game_length_weights",
 )
 
+# The largest rating bound, RD bound, or daily RD growth a Config accepts.
+# Squaring a value this size is finite, and so are team sums, rating gaps,
+# and imbalance across the whole rating range.
+_RATING_LIMIT = 2.0**511
+_RATING_LIMIT_TEXT = "2**511"
+
+# Int-only bounds. Exact int arithmetic raises OverflowError where float
+# arithmetic goes to inf, so these two fields have a lower bound as ints.
+_INT_GROWTH_LIMIT = 2**500
+_INT_GROWTH_LIMIT_TEXT = "2**500"
+_INT_BONUS_LIMIT = 2**511
+_INT_BONUS_LIMIT_TEXT = "2**511"
+
+# The longest day window a Config accepts: the days from date.min to
+# date.max, which timedelta holds. It does not make every window safe: one
+# that reaches back before date.min from a match or reference date currently
+# raises OverflowError (issue #92).
+_MAX_DAYS = (date.max - date.min).days
+
+# Config scalar fields by kind, checked for type and finiteness first.
+_CONFIG_NUMBER_FIELDS = (
+    "min_rating",
+    "max_rating",
+    "default_rating",
+    "k_min",
+    "k_max",
+    "rd_min",
+    "rd_max",
+    "new_player_rd",
+    "external_seed_rd",
+    "category_seed_rd",
+    "rd_shrink_per_match",
+    "rd_growth_per_day",
+    "win_weight",
+    "game_count_bonus",
+    "max_information_multiplier",
+    "self_reported_repeat_factor",
+    "established_reliability_threshold",
+)
+_CONFIG_WHOLE_FIELDS = (
+    "replay_interval_days",
+    "diversity_window_days",
+    "diversity_target",
+    "self_reported_repeat_window_days",
+    "self_reported_max_repeats",
+    "import_reliability_carry_matches",
+    "import_reliability_max_age_days",
+    "established_min_verified_matches",
+    "connectivity_min_shared_contacts",
+    "connectivity_min_contact_days",
+    "connectivity_min_outside_players",
+)
+_CONFIG_OPTIONAL_NUMBER_FIELDS = (
+    "connectivity_reliability_cap",
+    "max_singles_rating_gap",
+    "max_doubles_partner_gap",
+)
+_CONFIG_BOOL_FIELDS = (
+    "self_reported_requires_both_teams",
+    "reject_content_duplicates",
+    "category_feeds_parent",
+)
+_CONFIG_DAY_FIELDS = (
+    "replay_interval_days",
+    "diversity_window_days",
+    "self_reported_repeat_window_days",
+    "import_reliability_max_age_days",
+)
+# Type failures that keep the message an earlier release already raised.
+_CONFIG_TYPE_MESSAGES = {
+    "established_reliability_threshold": (
+        "established_reliability_threshold must be between 0 and 100"
+    ),
+    "established_min_verified_matches": (
+        "established_min_verified_matches must be a nonnegative int"
+    ),
+    "connectivity_reliability_cap": (
+        "connectivity_reliability_cap must be None or a number from 0 to 100"
+    ),
+    "connectivity_min_shared_contacts": "connectivity_min_shared_contacts must be a positive int",
+    "connectivity_min_contact_days": "connectivity_min_contact_days must be a positive int",
+    "connectivity_min_outside_players": "connectivity_min_outside_players must be a positive int",
+}
+
+
+def _is_config_number(value: object) -> bool:
+    """
+    True for an int (not bool) or a float that is finite as a float.
+
+    Unlike _is_finite_number, an int too large to convert to a float is not
+    a number here. An int is judged by its own value, not by what a
+    subclass's __float__ says.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(_as_float(value))
+    except OverflowError:
+        return False
+
+
+def _as_float(value: float) -> float:
+    """value as a plain float, from its own value, never a subclass's __float__."""
+    if isinstance(value, int):
+        return int.__float__(value)
+    return float.__float__(value)
+
+
+def _is_config_whole(value: object) -> bool:
+    """True for an int (not bool) that is also a config number."""
+    return _is_whole_number(value) and _is_config_number(value)
+
 
 @dataclass(frozen=True, eq=False)
 class Config:
@@ -630,21 +742,66 @@ class Config:
 
     Mapping fields are stored as read-only copies whose values must be
     finite numbers, and allowed_game_formats as a frozenset of (scoring
-    type, whole number) pairs. Changing the dict or set a config was built
-    from does not change the config, and changing the config's own raises
+    type, whole number) pairs. Keys and pairs are stored as their own
+    types: a ScoringType or MatchType key given as its str value becomes
+    the enum member, and an int subclass becomes the plain int of its own
+    value (not what its __int__ returns). Changing
+    the dict or set a config was built from does not change the config,
+    and changing the config's own raises
     TypeError. Two configs are equal exactly when their fingerprint payloads
     are equal, so equal configs share a fingerprint and a hash, and a Config
     can be a dict key or a set member. to_dict() and from_dict() store and
     load a config.
 
-    The mapping and format fields, established_min_verified_matches (a
-    nonnegative int, not a bool), reject_content_duplicates (a bool),
-    connectivity_reliability_cap (None or a number from 0 to 100), and the
-    three connectivity counts (positive ints, not bools) are type-checked;
-    other scalar fields are not yet. Such a scalar
-    field given a value JSON cannot hold (a Decimal, say) makes
-    fingerprint(), ==, and hash() raise TypeError, and a non-finite float
-    is written as NaN or Infinity, which strict JSON rejects.
+    Every field is checked when the config is built, and any failure
+    raises ConfigError. A number is an int or a float, never a bool, that
+    is finite as a float: not NaN or infinite, and not an int too large to
+    convert. A whole number is an int that is also a number. So a built
+    config always gives plain JSON, and fingerprint(), ==, and hash()
+    never raise. The rules:
+
+    - version is a str. The three flags are bools.
+    - Other scalar fields are numbers, except the day counts, the
+      repeat, carry, verified match, and connectivity counts, and
+      diversity_target, which are whole numbers.
+      connectivity_reliability_cap and the two gap filters are None or a
+      number.
+    - min_rating, max_rating, and default_rating are each at most 2**511
+      in magnitude, min_rating < max_rating, and default_rating lies
+      between them.
+    - Mapping values are numbers greater than 0, with exactly one key for
+      every scoring type or match type. game_length_weights keys are whole
+      numbers of at least 1, one for the points of every allowed format,
+      and no two keys name the same length.
+    - 0 <= k_min <= k_max, and the largest K, k_min + (k_max - k_min) *
+      1.0 as player_k computes it (it can round just above k_max), times
+      the largest match weight times max_information_multiplier is
+      finite in floats. Exact int arithmetic from int weights and
+      multipliers near 2**511 is not bounded yet (issue #93).
+    - 0 < rd_min < rd_max <= 2**511, and rd_max - rd_min is greater
+      than 0 as computed (an int and a float that are equal once
+      converted are rejected). The three seed RDs lie within
+      rd_min..rd_max. rd_shrink_per_match >= 0, and rd_growth_per_day is
+      from 0 to 2**511.
+    - Two bounds apply to ints only, because exact int arithmetic raises
+      OverflowError where float arithmetic goes to inf: an int
+      rd_growth_per_day is at most 2**500, and an int game_count_bonus
+      at most 2**511.
+    - win_weight is from 0 to 1, game_count_bonus >= 0,
+      max_information_multiplier >= 1, self_reported_repeat_factor is in
+      (0, 1], and established_reliability_threshold and
+      connectivity_reliability_cap are from 0 to 100.
+    - replay_interval_days, diversity_window_days, and
+      self_reported_repeat_window_days are from 1 to 3,652,058 (the days
+      from date.min to date.max, which timedelta holds), and
+      import_reliability_max_age_days from 0 to that. A window that
+      reaches back before date.min from a match or reference date
+      currently raises OverflowError (issue #92). diversity_target,
+      self_reported_max_repeats, and the three connectivity counts are at
+      least 1;
+      import_reliability_carry_matches and
+      established_min_verified_matches at least 0.
+    - The gap filters are None or at least 0.
     """
 
     version: str = __version__
@@ -796,56 +953,148 @@ class Config:
     max_doubles_partner_gap: float | None = None
 
     def __post_init__(self) -> None:
+        # One pass in three steps. First the type and finiteness of every
+        # scalar field, so no comparison below can raise TypeError.
+        def must_be(name: str, kind: str) -> str:
+            return _CONFIG_TYPE_MESSAGES.get(name, f"{name} must be {kind}")
+
+        if not isinstance(self.version, str):
+            raise ConfigError(must_be("version", "a str"))
+        for name in _CONFIG_NUMBER_FIELDS:
+            if not _is_config_number(getattr(self, name)):
+                raise ConfigError(must_be(name, "a finite number"))
+        for name in _CONFIG_WHOLE_FIELDS:
+            if not _is_config_whole(getattr(self, name)):
+                raise ConfigError(must_be(name, "a whole number"))
+        for name in _CONFIG_OPTIONAL_NUMBER_FIELDS:
+            value = getattr(self, name)
+            if value is not None and not _is_config_number(value):
+                raise ConfigError(must_be(name, "None or a finite number"))
+        for name in _CONFIG_BOOL_FIELDS:
+            if not isinstance(getattr(self, name), bool):
+                raise ConfigError(must_be(name, "a bool"))
+
+        # Then the mapping and format fields: types, keys, and read-only
+        # copies. Keys and format entries are stored as their own types (an
+        # enum member, a plain int), so the fingerprint never depends on how
+        # an equal key prints or whether JSON can hold it.
         for name in _CONFIG_MAPPING_FIELDS:
             value = getattr(self, name)
             if not isinstance(value, Mapping):
                 raise ConfigError(f"{name} must be a mapping")
-            if not all(_is_finite_number(item) for item in value.values()):
+            if not all(_is_config_number(item) for item in value.values()):
                 raise ConfigError(f"{name} values must be finite numbers")
-            object.__setattr__(self, name, _FrozenMapping(value))
-        if not all(_is_whole_number(key) for key in self.game_length_weights):
+        if not all(_is_config_whole(key) for key in self.game_length_weights):
             raise ConfigError("game_length_weights keys must be whole numbers")
+        # int.__int__ gives the int's own value, whatever a subclass's
+        # __int__ says.
+        lengths: dict[int, float] = {}
+        for key, item in self.game_length_weights.items():
+            points = int.__int__(key)
+            if points in lengths:
+                raise ConfigError(f"game_length_weights repeats the game length {points}")
+            lengths[points] = item
+        object.__setattr__(self, "game_length_weights", _FrozenMapping(lengths))
+        if any(key < 1 for key in self.game_length_weights):
+            raise ConfigError("game_length_weights keys must be at least 1")
+        if any(value <= 0 for value in self.game_length_weights.values()):
+            raise ConfigError("game_length_weights values must be positive")
         if not isinstance(self.allowed_game_formats, (set, frozenset)):
             raise ConfigError("allowed_game_formats must be a set or frozenset")
-        object.__setattr__(self, "allowed_game_formats", frozenset(self.allowed_game_formats))
         for entry in self.allowed_game_formats:
             if not (
                 isinstance(entry, tuple)
                 and len(entry) == 2
                 and entry[0] in _SCORING_VALUES
-                and _is_whole_number(entry[1])
+                and _is_config_whole(entry[1])
             ):
                 raise ConfigError(
                     "allowed_game_formats entries must be (scoring type, whole number) pairs"
                 )
+        formats = frozenset(
+            (ScoringType(scoring), int.__int__(points))
+            for scoring, points in self.allowed_game_formats
+        )
+        object.__setattr__(self, "allowed_game_formats", formats)
+        for name, kind, label in (
+            ("scale_by_scoring", ScoringType, "scoring type"),
+            ("win_calibration_by_scoring", ScoringType, "scoring type"),
+            ("match_weights", MatchType, "match type"),
+        ):
+            value = getattr(self, name)
+            if set(value) != set(kind):
+                raise ConfigError(f"{name} needs a value for every {label}")
+            try:
+                keyed = {kind(key): item for key, item in value.items()}
+            except ValueError as exc:
+                raise ConfigError(f"{name} has an unknown key") from exc
+            object.__setattr__(self, name, _FrozenMapping(keyed))
+        if any(value <= 0 for value in self.scale_by_scoring.values()):
+            raise ConfigError("scales must be positive")
+        if any(value <= 0 for value in self.win_calibration_by_scoring.values()):
+            raise ConfigError("win calibration values must be positive")
+        if any(value <= 0 for value in self.match_weights.values()):
+            raise ConfigError("match_weights values must be positive")
+        for _, points in self.allowed_game_formats:
+            if points not in self.game_length_weights:
+                raise ConfigError(f"No game_length_weight for games to {points}")
+
+        # Then ranges and cross-field rules.
+        limit = _RATING_LIMIT_TEXT
+        for name in ("min_rating", "max_rating", "default_rating"):
+            if not -_RATING_LIMIT <= getattr(self, name) <= _RATING_LIMIT:
+                raise ConfigError(f"{name} must be between -{limit} and {limit}")
         if not self.min_rating < self.max_rating:
             raise ConfigError("min_rating must be less than max_rating")
         if not self.min_rating <= self.default_rating <= self.max_rating:
             raise ConfigError("default_rating must be within rating bounds")
-        if set(self.scale_by_scoring) != set(ScoringType):
-            raise ConfigError("scale_by_scoring needs a value for every scoring type")
-        if any(value <= 0 for value in self.scale_by_scoring.values()):
-            raise ConfigError("scales must be positive")
-        if set(self.win_calibration_by_scoring) != set(ScoringType):
-            raise ConfigError("win_calibration_by_scoring needs a value for every scoring type")
-        if any(value <= 0 for value in self.win_calibration_by_scoring.values()):
-            raise ConfigError("win calibration values must be positive")
         if not 0 <= self.k_min <= self.k_max:
             raise ConfigError("K-factor bounds are invalid")
-        if not 0 < self.rd_min <= self.rd_max:
+        # player_k and reliability divide by rd_max - rd_min as computed here,
+        # so an int and a float that differ only before conversion are equal.
+        if not (0 < self.rd_min < self.rd_max and self.rd_max - self.rd_min > 0):
             raise ConfigError("RD bounds are invalid")
+        if self.rd_max > _RATING_LIMIT:
+            raise ConfigError(f"rd_max must be at most {limit}")
         for name in ("new_player_rd", "external_seed_rd", "category_seed_rd"):
             if not self.rd_min <= getattr(self, name) <= self.rd_max:
                 raise ConfigError(f"{name} must be within RD bounds")
+        if self.rd_shrink_per_match < 0:
+            raise ConfigError("rd_shrink_per_match must be at least 0")
+        if not 0 <= self.rd_growth_per_day <= _RATING_LIMIT:
+            raise ConfigError(f"rd_growth_per_day must be between 0 and {limit}")
+        # Exact int arithmetic raises where float arithmetic goes to inf, so an
+        # int gets a lower bound: rd_max**2 + growth**2 * _MAX_DAYS stays a float.
+        if isinstance(self.rd_growth_per_day, int) and self.rd_growth_per_day > _INT_GROWTH_LIMIT:
+            raise ConfigError(
+                f"rd_growth_per_day must be at most {_INT_GROWTH_LIMIT_TEXT} when it is an int"
+            )
         if not 0.0 <= self.win_weight <= 1.0:
             raise ConfigError("win_weight must be between 0 and 1")
-        if set(self.match_weights) != set(MatchType):
-            raise ConfigError("match_weights needs a value for every match type")
-        for _, points in self.allowed_game_formats:
-            if points not in self.game_length_weights:
-                raise ConfigError(f"No game_length_weight for games to {points}")
+        if self.game_count_bonus < 0:
+            raise ConfigError("game_count_bonus must be at least 0")
+        # The same for an int bonus times a game count below 2**63.
+        if isinstance(self.game_count_bonus, int) and self.game_count_bonus > _INT_BONUS_LIMIT:
+            raise ConfigError(
+                f"game_count_bonus must be at most {_INT_BONUS_LIMIT_TEXT} when it is an int"
+            )
         if self.max_information_multiplier < 1.0:
             raise ConfigError("max_information_multiplier must be at least 1")
+        # The largest step size a match can reach. When it overflows to inf,
+        # a surprise of exactly 0 gives a NaN change. The largest K is what
+        # player_k returns at fraction 1.0, which can round above k_max. The
+        # check bounds the step as computed in floats: an all-int product is
+        # exact, and math.isfinite raises on one too large for a float. An
+        # exact int product the engine can form from int config values, such
+        # as on a self-reported match, is not covered yet (issue #93).
+        largest_k = _as_float(self.k_min + (self.k_max - self.k_min) * 1.0)
+        largest_weight = _as_float(max(self.match_weights.values())) * _as_float(
+            self.max_information_multiplier
+        )
+        if not math.isfinite(largest_k * largest_weight):
+            raise ConfigError(
+                "k_max times the largest match weight and max_information_multiplier must be finite"
+            )
         if self.replay_interval_days <= 0:
             raise ConfigError("replay_interval_days must be positive")
         if self.diversity_window_days <= 0 or self.diversity_target <= 0:
@@ -856,24 +1105,27 @@ class Config:
             raise ConfigError("self-reported repeat limits must be positive")
         if self.import_reliability_carry_matches < 0 or self.import_reliability_max_age_days < 0:
             raise ConfigError("import reliability limits must be nonnegative")
+        for name in _CONFIG_DAY_FIELDS:
+            if getattr(self, name) > _MAX_DAYS:
+                raise ConfigError(f"{name} must be at most {_MAX_DAYS}")
         if not 0.0 <= self.established_reliability_threshold <= 100.0:
             raise ConfigError("established_reliability_threshold must be between 0 and 100")
-        minimum = self.established_min_verified_matches
-        if not _is_whole_number(minimum) or minimum < 0:
+        if self.established_min_verified_matches < 0:
             raise ConfigError("established_min_verified_matches must be a nonnegative int")
-        if not isinstance(self.reject_content_duplicates, bool):
-            raise ConfigError("reject_content_duplicates must be a bool")
         cap = self.connectivity_reliability_cap
-        if cap is not None and not (_is_finite_number(cap) and 0.0 <= cap <= 100.0):
+        if cap is not None and not 0.0 <= cap <= 100.0:
             raise ConfigError("connectivity_reliability_cap must be None or a number from 0 to 100")
         for name in (
             "connectivity_min_shared_contacts",
             "connectivity_min_contact_days",
             "connectivity_min_outside_players",
         ):
-            count = getattr(self, name)
-            if not _is_whole_number(count) or count < 1:
+            if getattr(self, name) < 1:
                 raise ConfigError(f"{name} must be a positive int")
+        for name in ("max_singles_rating_gap", "max_doubles_partner_gap"):
+            gap = getattr(self, name)
+            if gap is not None and gap < 0:
+                raise ConfigError(f"{name} must be None or at least 0")
 
     def _payload(self) -> dict[str, object]:
         """Every parameter as fresh JSON-safe data: the input to fingerprint()."""
@@ -936,7 +1188,7 @@ class Config:
         missing = sorted(set(names) - set(data))
         if missing:
             raise ConfigError(f"Config data has missing keys: {', '.join(missing)}")
-        unknown = sorted(str(key) for key in set(data) - set(names))
+        unknown = sorted(_shown(key, str) for key in set(data) - set(names))
         if unknown:
             raise ConfigError(f"Config data has unknown keys: {', '.join(unknown)}")
         values = {name: data[name] for name in names}
@@ -970,8 +1222,16 @@ def _enum_keyed(value: object, kind: type[_E], name: str) -> dict[_E, object]:
         try:
             out[kind(key)] = item
         except ValueError as exc:
-            raise ConfigError(f"{name} has an unknown key: {key!r}") from exc
+            raise ConfigError(f"{name} has an unknown key: {_shown(key)}") from exc
     return out
+
+
+def _shown(value: object, show: Callable[[object], str] = repr) -> str:
+    """value for an error message. An int over the int-to-str limit cannot print."""
+    try:
+        return show(value)
+    except ValueError:
+        return "a value too large to show"
 
 
 def _int_keyed(value: object) -> dict[int, object]:
@@ -982,9 +1242,16 @@ def _int_keyed(value: object) -> dict[int, object]:
         if _is_whole_number(key):
             points = key
         elif isinstance(key, str) and key.isascii() and key.isdigit():
-            points = int(key)
+            try:
+                points = int(key)
+            except ValueError as exc:  # more digits than int() converts
+                raise ConfigError(
+                    f"game_length_weights has a key that is not a whole number: {_shown(key)}"
+                ) from exc
         else:
-            raise ConfigError(f"game_length_weights has a key that is not a whole number: {key!r}")
+            raise ConfigError(
+                f"game_length_weights has a key that is not a whole number: {_shown(key)}"
+            )
         if points in out:
             raise ConfigError(f"game_length_weights repeats the game length {points}")
         out[points] = item
@@ -997,17 +1264,19 @@ def _game_formats(value: object) -> frozenset[tuple[ScoringType, int]]:
     out: set[tuple[ScoringType, int]] = set()
     for item in value:
         if isinstance(item, (str, bytes)) or not isinstance(item, Sequence) or len(item) != 2:
-            raise ConfigError(f"allowed_game_formats has an entry that is not a pair: {item!r}")
+            raise ConfigError(
+                f"allowed_game_formats has an entry that is not a pair: {_shown(item)}"
+            )
         scoring, points = item
         if not isinstance(points, int) or isinstance(points, bool):
             raise ConfigError(
-                f"allowed_game_formats has points that are not a whole number: {item!r}"
+                f"allowed_game_formats has points that are not a whole number: {_shown(item)}"
             )
         try:
             out.add((ScoringType(scoring), points))
         except ValueError as exc:
             raise ConfigError(
-                f"allowed_game_formats has an unknown scoring type: {item!r}"
+                f"allowed_game_formats has an unknown scoring type: {_shown(item)}"
             ) from exc
     return frozenset(out)
 

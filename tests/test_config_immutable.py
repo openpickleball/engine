@@ -277,7 +277,7 @@ def _without(key: str) -> dict[str, object]:
         (_bad("allowed_game_formats", [["bounce", 11]]), "allowed_game_formats"),
         (_bad("allowed_game_formats", "rally"), "allowed_game_formats"),
         (_bad("k_min", 0.9), "K-factor bounds are invalid"),
-        (_bad("k_min", "low"), "Config"),
+        (_bad("k_min", "low"), "k_min must be a finite number"),
     ],
 )
 def test_from_dict_rejects_bad_data(data: object, message: str) -> None:
