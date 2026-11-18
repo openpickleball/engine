@@ -19,9 +19,9 @@ Domain skills: superpowers:test-driven-development: invoke. django, django-ninja
 
 1. `fit_scale` raises `EvaluationError` before any prediction work when `low` or `high` is not finite, when `low >= high`, or when `tolerance` is not finite or not greater than 0. Today `tolerance <= 0` hangs in the golden-section loop and `low >= high` returns a meaningless fit.
 2. `fit_win_calibration` applies the same checks (same defect, same search code).
-2a. Added after review: both fits also reject a finite range whose width `high - low` or sum `low + high` overflows (the search takes midpoints), and both golden-section loops end when the bracket stops shrinking, so a positive tolerance below the float spacing near the optimum no longer hangs. The break fires only when the bracket width does not decrease, which never happens before the tolerance stops a normal search, so valid fits are unchanged.
+2a. Added after review: both fits also reject a bound too large to double (`2 * low` or `2 * high` not finite), since the search takes widths and midpoints of points in the range and each is at most twice the larger bound in size, and both golden-section loops end when the bracket stops shrinking, so a positive tolerance below the float spacing near the optimum no longer hangs. The break fires only when the bracket width does not decrease, which never happens before the tolerance stops a normal search, so valid fits are unchanged.
 3. Valid arguments give exactly the same fits as before.
-4. The README states that a standard external rating system is the intended source of seed ratings and that the engine uses none of its code or internals.
+4. The README states that a standard external rating system is the intended source of seed ratings and that the engine uses none of its code or internals. It makes no broader claim about when an import can replace a rating (see issue #79).
 5. A synthetic ledger's `replay` output, `to_snapshot()` JSON, and `Config().fingerprint()` are byte-identical before and after the change.
 6. `mypy --strict src` passes, plus the full gate.
 7. Changelog entry under `## [Unreleased]` `### Fixed`.
@@ -43,7 +43,7 @@ Domain skills: superpowers:test-driven-development: invoke. django, django-ninja
 
 ## Risks
 
-- A check that rejects a valid call. Only non-finite values, `low >= high`, and `tolerance <= 0` are rejected. `low <= 0` is left to `Config`, which already rejects a non-positive scale; `fit_win_calibration` allows any finite range.
+- A check that rejects a valid call. Only bounds that are not finite or too large to double, `low >= high`, and a tolerance that is not finite and greater than 0 are rejected. `low <= 0` is left to `Config`, which already rejects a non-positive scale; `fit_win_calibration` allows any range within those checks.
 - The checks run before `prequential_predictions`, so a call with both bad bounds and a bad ledger now reports the bounds first.
 
 ## Proof
