@@ -685,6 +685,7 @@ _INT_BONUS_LIMIT_TEXT = "2**511"
 # date.max, which timedelta holds. A window that reaches back before date.min
 # from a match or reference date stops at date.min (_days_before, issue #92).
 _MAX_DAYS = (date.max - date.min).days
+_MAX_ORDINAL = date.max.toordinal()
 
 
 def _days_before(day: date, days: int) -> date:
@@ -695,9 +696,11 @@ def _days_before(day: date, days: int) -> date:
     very long window, never raises OverflowError. Every cutoff is compared
     inclusively (a date on or after it is in the window), so a cutoff at
     date.min keeps every date, as one before it would: no result changes.
-    A negative `days` moves forward and must not pass date.max.
+    A negative `days` moves forward and stops at date.max; the one caller
+    that moves forward (a scheduled window's grid date) is always before a
+    match date, so it never reaches that bound.
     """
-    return date.fromordinal(max(1, day.toordinal() - days))
+    return date.fromordinal(min(max(1, day.toordinal() - days), _MAX_ORDINAL))
 
 
 # Config scalar fields by kind, checked for type and finiteness first.
@@ -858,7 +861,7 @@ class Config:
       from date.min to date.max, which timedelta holds), and
       import_reliability_max_age_days from 0 to that. A window that
       reaches back before date.min from a match or reference date stops
-      at date.min, which keeps every earlier date. diversity_target,
+      at date.min instead of raising OverflowError. diversity_target,
       self_reported_max_repeats, and the three connectivity counts are at
       least 1;
       import_reliability_carry_matches and

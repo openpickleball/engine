@@ -276,3 +276,21 @@ def test_ordinary_dates_are_unchanged() -> None:
         pid: (engine.state(pid, D).rating.hex(), engine.player_summary(pid, D).reliability)
         for pid in PLAYERS
     } == PINNED_REPLAY
+
+
+def test_scheduled_anchor_far_after_the_ledger_is_one_window() -> None:
+    """Every match falls in one window before the anchor, replayed from nothing: live mode."""
+    cfg = Config(replay_interval_days=MAX_DAYS)
+    scheduled = prequential_predictions(
+        _ledger(NORMAL), cfg=cfg, mode="scheduled", burn_in_matches=0, anchor=date.max
+    )
+    live = prequential_predictions(_ledger(NORMAL), cfg=cfg, mode="live", burn_in_matches=0)
+    assert scheduled
+    assert [_prediction_key(p) for p in scheduled] == [_prediction_key(p) for p in live]
+
+
+def test_days_before_moving_forward_stops_at_date_max() -> None:
+    from open_engine.engine import _days_before
+
+    assert _days_before(date.max - timedelta(days=3), -10) == date.max
+    assert _days_before(date.min, -10) == date.min + timedelta(days=10)
