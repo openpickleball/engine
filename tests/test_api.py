@@ -324,6 +324,7 @@ SUMMARY_FIELDS = [
     "live_updates_since_recalculation",
     "config_version",
     "account_linked",
+    "connectivity",
 ]
 
 
@@ -438,6 +439,7 @@ PUBLIC_API = [
     "MatchResult",
     "MatchStatus",
     "MatchType",
+    "NetworkConnectivity",
     "OpenEngineError",
     "Player",
     "PlayerError",

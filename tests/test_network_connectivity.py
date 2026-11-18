@@ -106,7 +106,6 @@ def test_matched_pool_that_plays_the_wider_network_is_established() -> None:
     for pid, summary in summaries(engine, CLUB).items():
         assert summary.connectivity.connected is True, pid
         assert summary.connectivity.in_main_network is True, pid
-        assert summary.connectivity.outside_players >= Config().connectivity_min_outside_players
         assert summary.established is True, pid
 
 
@@ -238,17 +237,48 @@ def test_two_equal_separate_pools_have_no_main_network() -> None:
         assert summary.established is False
 
 
-def test_a_player_with_no_state_in_the_format_is_not_in_the_network() -> None:
+def singles(match_id: str, a: str, b: str, on: date) -> Match:
+    return Match(
+        match_id=match_id,
+        team_a=(a,),
+        team_b=(b,),
+        games=((11, 9),),
+        played_on=on,
+        rating_format=RatingFormat.SINGLES,
+        match_type=MatchType.LEAGUE,
+    )
+
+
+def test_a_player_with_no_state_is_measured_as_if_the_state_were_stored() -> None:
+    # A summary for a missing format reports the state a seed would store,
+    # so the connectivity is what storing that unplayed state would give.
+    engine = replay(wide_rows() + [singles("s", "solo", "wide000", END)], as_of=END)
+    summary = engine.player_summary("solo", DOUBLES)
+    assert summary.connectivity == NetworkConnectivity(
+        pool_size=1,
+        outside_players=0,
+        outside_days=0,
+        network_size=120,
+        in_main_network=False,
+        connected=False,
+    )
+    engine.seed_provisional_rating("solo", DOUBLES)
+    assert engine.player_summary("solo", DOUBLES) == summary
+
+
+def test_a_lone_state_in_an_empty_format_is_its_own_network() -> None:
     engine = replay(club_rows(), as_of=END)
     summary = engine.player_summary("club00", RatingFormat.SINGLES)
     assert summary.connectivity == NetworkConnectivity(
         pool_size=1,
         outside_players=0,
         outside_days=0,
-        network_size=0,
-        in_main_network=False,
-        connected=False,
+        network_size=1,
+        in_main_network=True,
+        connected=True,
     )
+    engine.seed_provisional_rating("club00", RatingFormat.SINGLES)
+    assert engine.player_summary("club00", RatingFormat.SINGLES) == summary
 
 
 def test_contacts_outside_the_window_do_not_count() -> None:
@@ -308,3 +338,18 @@ def test_cap_out_of_range_raises(value: object) -> None:
 def test_counts_must_be_positive_ints(name: str, value: object) -> None:
     with pytest.raises(ConfigError, match=f"{name} must be a positive int"):
         Config(**{name: value})
+
+
+def test_a_visitor_for_one_day_does_not_tie_into_the_pool() -> None:
+    # A wide player plays four matches at the club on one day. The club
+    # members reach the shared contacts on many dates, the visitor on one,
+    # so the visitor is not tied in and brings no outside contacts.
+    rng = random.Random(6)
+    day = START + timedelta(weeks=12)
+    visits = [doubles(f"v{i}", ["wide000", *rng.sample(CLUB, 3)], day, rng) for i in range(4)]
+    engine = replay(club_rows() + wide_rows() + visits, as_of=END)
+    for pid, summary in summaries(engine, CLUB).items():
+        assert summary.connectivity.pool_size == 14, pid
+        assert summary.connectivity.outside_players == 1, pid
+        assert summary.connectivity.connected is False, pid
+    assert engine.player_summary("wide000", DOUBLES).connectivity.connected is True

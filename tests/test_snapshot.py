@@ -249,7 +249,9 @@ TOP_LEVEL_KEYS = {
 
 def test_snapshot_covers_every_engine_attribute(snapshot: dict[str, object]) -> None:
     # A new RatingEngine attribute must be added to the snapshot schema (and
-    # snapshot_version bumped) before this test is updated.
+    # snapshot_version bumped) before this test is updated. The one
+    # exception is _connectivity, a cache derived from the rating states
+    # that _changed clears: it never changes a rating or a later replay.
     assert set(vars(RatingEngine())) == {
         "cfg",
         "players",
@@ -263,6 +265,7 @@ def test_snapshot_covers_every_engine_attribute(snapshot: dict[str, object]) -> 
         "_ledger_digests",
         "_ledger_player_ids",
         "_resumable",
+        "_connectivity",
     }
     assert set(snapshot) == TOP_LEVEL_KEYS
 
