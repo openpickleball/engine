@@ -3719,7 +3719,8 @@ def _check_log_players(
     state is never reseeded, and a frozen player's baseline is found
     through the movers' links (RatingEngine._in_counted_match). So
     for an entry's latest date, every named player has a baseline on or
-    after it or a played state with those links, and some named player has
+    after it or a played state last played on or after it with those
+    links, and some named player has
     no such baseline. Entries are checked in snapshot order, and within an
     entry every named player's state first, then the movers' links, each
     in sorted order, so the first error is the same for the same snapshot.
@@ -3809,9 +3810,10 @@ def _check_verified_against_log(
     "open_provisional" state); the dated-state edits _check_resumable
     rejects, in a snapshot that is not resumable; in a resumable
     snapshot, a state dated on or after an earlier match that moved it,
-    when its last_played and every partner and opponent date are still
-    after the new date (for example, because it met the same partners and
-    opponents again later), since those maps keep only the latest date; a
+    with verified_matches_played raised to match, when its last_played
+    and every partner and opponent date are still after the new date (for
+    example, because it met the same partners and opponents again later),
+    since those maps keep only the latest date; a
     log name swapped to a player who later played in that format with the
     same teammates and opponents, on or after the entry's latest date,
     with the verified counts adjusted to match; a whole log entry
@@ -4248,10 +4250,11 @@ class RatingEngine:
         named player has a baseline dated on or after it (the state's
         initial_source_date in the entry's format or, with no state stored
         there, under category_feeds_parent in a category format, the
-        overall doubles state's), or a played state in that format that
-        records every teammate in partners and every player of the other
-        team in opponents, each dated on or after it; and at least one
-        named player is of the second kind. A snapshot edited in several
+        overall doubles state's), or a played state in that format whose
+        last_played is on or after it and that records every teammate in
+        partners and every player of the other team in opponents, each
+        dated on or after it; and at least one named player has no
+        baseline on or after it. A snapshot edited in several
         fields can still load, for example: one that is not resumable
         where a played state gets an initial_source_date before every
         logged date that moved it and verified_matches_played raised to
@@ -4259,17 +4262,17 @@ class RatingEngine:
         dated with its parent; a dated "open_provisional" state does not
         load); the dated-state edits the resumable rules below reject, in
         a snapshot that is not resumable; in a resumable snapshot, a state
-        dated on or after an earlier match that moved it, when its
-        last_played and every partner and opponent date are still after
-        the new date (for example, because it met the same partners and
-        opponents again later), since those maps keep only the latest
-        date; a log name swapped to a player who later played in that
-        format with the same teammates and opponents, on or after the
-        entry's latest date, with the verified counts adjusted to match;
-        a whole log entry deleted with
-        the named players' verified counts raised, since the snapshot does
-        not tie a match id to its match type; and edits that also rewrite
-        the partner and opponent names or dates to match. Identities
+        dated on or after an earlier match that moved it, with
+        verified_matches_played raised to match, when its last_played and
+        every partner and opponent date are still after the new date (for
+        example, because it met the same partners and opponents again
+        later), since those maps keep only the latest date; a log name
+        swapped to a player who later played in that format with the same
+        teammates and opponents, on or after the entry's latest date, with
+        the verified counts adjusted to match; a whole log entry deleted
+        with the named players' verified counts raised, since the snapshot
+        does not tie a match id to its match type; and edits that also
+        rewrite the partner and opponent names or dates to match. Identities
         follow the seed and link rules: account_user_id is null or a
         non-blank str, every external_ids source and id is a non-blank str,
         and no two players hold the same account or the same (source,
