@@ -473,3 +473,14 @@ def test_a_visitor_for_one_day_does_not_tie_into_the_pool() -> None:
         assert summary.connectivity.outside_players == 1, pid
         assert summary.connectivity.connected is False, pid
     assert engine.player_summary("wide000", DOUBLES).connectivity.connected is True
+
+
+def test_a_full_cache_drops_only_its_oldest_entry() -> None:
+    # Summaries at more reference dates than the cache holds keep the most
+    # recent ones, so a pass over players with many distinct default dates
+    # does not rebuild every date again.
+    engine = replay(club_rows(), as_of=END)
+    days = [END + timedelta(days=day) for day in range(20)]
+    for day in days:
+        engine.player_summary("club00", DOUBLES, as_of=day)
+    assert [key[1] for key in engine._connectivity] == days[-16:]
