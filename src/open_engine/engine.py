@@ -776,7 +776,8 @@ class Config:
     - 0 <= k_min <= k_max, and the largest K, k_min + (k_max - k_min) *
       1.0 as player_k computes it (it can round just above k_max), times
       the largest match weight times max_information_multiplier is
-      finite in floats.
+      finite in floats. Exact int arithmetic from int weights and
+      multipliers near 2**511 is not bounded yet (issue #93).
     - 0 < rd_min < rd_max <= 2**511, and rd_max - rd_min is greater
       than 0 as computed (an int and a float that are equal once
       converted are rejected). The three seed RDs lie within
@@ -1082,8 +1083,10 @@ class Config:
         # The largest step size a match can reach. When it overflows to inf,
         # a surprise of exactly 0 gives a NaN change. The largest K is what
         # player_k returns at fraction 1.0, which can round above k_max. The
-        # product is in floats, as the engine computes it: an all-int product
-        # is exact, and math.isfinite raises on one too large for a float.
+        # check bounds the step as computed in floats: an all-int product is
+        # exact, and math.isfinite raises on one too large for a float. An
+        # exact int product the engine can form from int config values, such
+        # as on a self-reported match, is not covered yet (issue #93).
         largest_k = _as_float(self.k_min + (self.k_max - self.k_min) * 1.0)
         largest_weight = _as_float(max(self.match_weights.values())) * _as_float(
             self.max_information_multiplier
