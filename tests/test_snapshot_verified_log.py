@@ -282,30 +282,102 @@ CONFIGS = [
     Config(category_feeds_parent=False),
     Config(max_doubles_partner_gap=0.05),
     Config(reject_content_duplicates=True),
+    Config(self_reported_requires_both_teams=False),
 ]
+CONFIG_IDS = ["default", "no-feed", "partner-gap", "reject-dups", "one-team-confirms"]
 
 
-@pytest.mark.parametrize("cfg", CONFIGS, ids=["default", "no-feed", "partner-gap", "reject-dups"])
-@pytest.mark.parametrize("seed", range(6))
+def _exact_doubles_states(snap: dict[str, object], cfg: Config) -> int:
+    """
+    Assert the #84 rule's count on every doubles state it covers; return how many.
+
+    The rule must never be looser than the engine: each covered state's
+    unverified count equals its logged doubles and category dates.
+    """
+    if not cfg.category_feeds_parent or cfg.max_doubles_partner_gap is not None:
+        return 0
+    logged: dict[str, list[date]] = {}
+    entries = snap["self_reported_log"]
+    assert isinstance(entries, list)
+    for entry in entries:
+        fmt = RatingFormat(entry["rating_format"])
+        if fmt is not D and fmt.parent is not D:
+            continue
+        for team in entry["teams"]:
+            for pid in team:
+                logged.setdefault(pid, []).extend(date.fromisoformat(on) for on in entry["dates"])
+    players = snap["players"]
+    assert isinstance(players, list)
+    covered = 0
+    for player in players:
+        state = player["ratings"].get("doubles")
+        if state is None:
+            continue
+        source_date = state["initial_source_date"]
+        if source_date is not None and not snap["resumable"]:
+            continue
+        after = None if source_date is None else date.fromisoformat(source_date)
+        dates = logged.get(player["id"], [])
+        expected = sum(1 for on in dates if after is None or on > after)
+        assert state["matches_played"] - state["verified_matches_played"] == expected
+        covered += 1
+    return covered
+
+
+def _loads(engine: RatingEngine, cfg: Config) -> int:
+    snap = _json(engine)
+    RatingEngine.from_snapshot(snap, cfg)
+    return _exact_doubles_states(snap, cfg)
+
+
+def _maybe_reseed(rng: random.Random, engine: RatingEngine) -> None:
+    pid = rng.choice([f"syn-{c}" for c in "abcdefgh"])
+    fmt = rng.choice([S, D, MX, D])
+    on = START + timedelta(days=rng.randint(-5, 120))
+    snapshot = ExternalRatingSnapshot("ext", rng.choice([3.0, 4.0, 5.0]), on)
+    try:
+        engine.seed_external_rating(pid, fmt, snapshot, replace_unplayed_seed=True)
+    except InvalidSeedError:
+        pass
+
+
+@pytest.mark.parametrize("cfg", CONFIGS, ids=CONFIG_IDS)
+@pytest.mark.parametrize("seed", range(15))
 def test_engines_the_code_produces_load(cfg: Config, seed: int) -> None:
     rng = random.Random(seed)
     rows = _random_ledger(rng, 80)
     seeds = _random_seeds(rng)
     as_of = START + timedelta(days=130)
+    covered = 0
     replayed = replay(rows, seeds, cfg=cfg, as_of=as_of)
-    RatingEngine.from_snapshot(_json(replayed), cfg)
+    covered += _loads(replayed, cfg)
     checkpoint = replay(rows, seeds, cfg=cfg, as_of=START + timedelta(days=60))
+    covered += _loads(checkpoint, cfg)
     resumed = replay(rows, cfg=cfg, as_of=as_of, from_snapshot=_json(checkpoint))
-    RatingEngine.from_snapshot(_json(resumed), cfg)
-    # Live, in random arrival order, so many matches are late.
+    covered += _loads(resumed, cfg)
+    unique = list({m.match_id: m for m in rows}.values())
+    # Live after resuming from the checkpoint, with reseed attempts between rows.
+    after_checkpoint = RatingEngine.from_snapshot(_json(checkpoint), cfg)
+    for match in unique:
+        if match.played_on > START + timedelta(days=60):
+            if rng.random() < 0.1:
+                _maybe_reseed(rng, after_checkpoint)
+            after_checkpoint.record(match)
+    covered += _loads(after_checkpoint, cfg)
+    # Live, in random arrival order, so many matches are late, with reseed
+    # attempts (accepted and refused) between rows.
     live = RatingEngine(cfg)
     for player in seeds:
         live.add_player(player)
-    shuffled = list({m.match_id: m for m in rows}.values())
+    shuffled = list(unique)
     rng.shuffle(shuffled)
     for match in shuffled:
+        if rng.random() < 0.1:
+            _maybe_reseed(rng, live)
         live.record(match)
-    RatingEngine.from_snapshot(_json(live), cfg)
+    covered += _loads(live, cfg)
+    if cfg.category_feeds_parent and cfg.max_doubles_partner_gap is None:
+        assert covered > 0
 
 
 def test_live_import_with_frozen_logged_matches_loads_and_is_not_reseeded() -> None:
