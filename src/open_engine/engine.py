@@ -453,6 +453,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import sys
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import UTC, date, datetime
@@ -680,6 +681,8 @@ _INT_GROWTH_LIMIT = 2**500
 _INT_GROWTH_LIMIT_TEXT = "2**500"
 _INT_BONUS_LIMIT = 2**511
 _INT_BONUS_LIMIT_TEXT = "2**511"
+# The most games a match can hold: len() of a tuple is at most sys.maxsize.
+_MAX_GAME_COUNT = sys.maxsize
 
 # The longest day window a Config accepts: the days from date.min to
 # date.max, which timedelta holds. A window that reaches back before date.min
@@ -841,21 +844,26 @@ class Config:
     - 0 <= k_min <= k_max, and the largest K, k_min + (k_max - k_min) *
       1.0 as player_k computes it (it can round just above k_max), times
       the largest match weight times max_information_multiplier is
-      finite in floats. When the self-reported match weight,
+      finite in floats. A self-reported match's step weight can be an
+      exact int product: when the self-reported match weight,
       max_information_multiplier, and self_reported_repeat_factor are all
-      ints, a self-reported match's step weight is their exact int product:
-      it must convert to a float, the largest K times that float must be
-      finite, and with an int rd_shrink_per_match, rd_shrink_per_match
-      times the exact product must convert too.
+      ints, and information_multiplier can return
+      max_information_multiplier itself. It can when, for some allowed
+      format, the length weight times the game count factor at the
+      largest game count (sys.maxsize games) is not below it. Then the
+      weight times the multiplier must convert to a float, the largest K
+      times that float must be finite, and with an int
+      rd_shrink_per_match, rd_shrink_per_match times the exact product
+      must convert too.
     - 0 < rd_min < rd_max <= 2**511, and rd_max - rd_min is greater
       than 0 as computed (an int and a float that are equal once
       converted are rejected). The three seed RDs lie within
       rd_min..rd_max. rd_shrink_per_match >= 0, and rd_growth_per_day is
       from 0 to 2**511.
-    - Two bounds apply to ints only, because exact int arithmetic raises
+    - Some bounds apply to ints only, because exact int arithmetic raises
       OverflowError where float arithmetic goes to inf: an int
-      rd_growth_per_day is at most 2**500, and an int game_count_bonus
-      at most 2**511.
+      rd_growth_per_day is at most 2**500, an int game_count_bonus at
+      most 2**511, and the exact self-reported step weight rule above.
     - win_weight is from 0 to 1, game_count_bonus >= 0,
       max_information_multiplier >= 1, self_reported_repeat_factor is in
       (0, 1], and established_reliability_threshold and
@@ -1163,18 +1171,20 @@ class Config:
         if not math.isfinite(largest_k * largest_weight):
             raise ConfigError(k_message)
         # On a self-reported match the step weight is weight * factor**prior
-        # * multiplier. With an int weight, an int factor (factor**prior is
-        # then the int 1), and an int multiplier (information_multiplier
-        # returns it at most), that product is an exact int. Converting it
-        # can raise OverflowError, or land one ulp above the float product
-        # checked above, and an int rd_shrink_per_match times it is another
-        # exact int. So form those products as the engine does (issue #93).
+        # * information_multiplier. With an int weight, an int factor
+        # (factor**prior is then the int 1), and an int multiplier that
+        # information_multiplier returns, that product is an exact int.
+        # Converting it can raise OverflowError, or land one ulp above the
+        # float product checked above, and an int rd_shrink_per_match times
+        # it is another exact int. So form those products as the engine does
+        # (issue #93).
         weight = self.match_weights[MatchType.SELF_REPORTED]
         multiplier = self.max_information_multiplier
         if (
             isinstance(weight, int)
             and isinstance(multiplier, int)
             and isinstance(self.self_reported_repeat_factor, int)
+            and self._multiplier_reachable()
         ):
             exact_weight = int.__int__(weight) * int.__int__(multiplier)
             try:
@@ -1222,6 +1232,29 @@ class Config:
             gap = getattr(self, name)
             if gap is not None and gap < 0:
                 raise ConfigError(f"{name} must be None or at least 0")
+
+    def _multiplier_reachable(self) -> bool:
+        """
+        True when information_multiplier can return max_information_multiplier.
+
+        It returns the multiplier when length * count is not below it (min
+        keeps its first argument on a tie), for the length weight of an
+        allowed format (record rejects any other format first) and some game
+        count. count = 1.0 + game_count_bonus * (games - 1) never falls as
+        games grows, since the bonus is at least 0 and float rounding keeps
+        that order, so the largest game count decides. It converts: an int
+        bonus is at most 2**511. Computed on the plain values.
+        """
+
+        def plain(value: float) -> float:
+            return int.__int__(value) if isinstance(value, int) else float.__float__(value)
+
+        multiplier = plain(self.max_information_multiplier)
+        count = 1.0 + plain(self.game_count_bonus) * (_MAX_GAME_COUNT - 1)
+        return any(
+            not plain(self.game_length_weights[points]) * count < multiplier
+            for _, points in sorted(self.allowed_game_formats)
+        )
 
     def _payload(self) -> dict[str, object]:
         """Every parameter as fresh JSON-safe data: the input to fingerprint()."""
