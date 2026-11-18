@@ -330,3 +330,27 @@ def test_a_match_with_extra_instance_attributes_raises(name: str) -> None:
         replay([_plain("syn-m0", day=1), match], as_of=AS_OF)
     with pytest.raises(InvalidMatchError, match="match has attributes that are not Match fields"):
         prequential_predictions([match])
+
+
+class _HidingDict(dict):  # type: ignore[type-arg]
+    """An instance dict that reports only the field names."""
+
+    def __iter__(self):  # type: ignore[no-untyped-def]
+        return iter([k for k in dict.__iter__(self) if k in Match.__dataclass_fields__])
+
+    def __len__(self) -> int:
+        return len(Match.__dataclass_fields__)
+
+
+def test_a_match_whose_instance_dict_is_a_dict_subclass_raises() -> None:
+    match = _plain()
+    hidden = _HidingDict(vars(match))
+    hidden["validate"] = lambda: None
+    object.__setattr__(match, "__dict__", hidden)
+    engine = RatingEngine()
+    before = _state(engine)
+    with pytest.raises(InvalidMatchError, match="match has attributes that are not Match fields"):
+        engine.record(match)
+    assert _state(engine) == before
+    with pytest.raises(InvalidMatchError, match="match has attributes that are not Match fields"):
+        replay([match], as_of=AS_OF)
