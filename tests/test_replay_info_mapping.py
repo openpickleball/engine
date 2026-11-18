@@ -5,6 +5,7 @@ All values are synthetic.
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
 from datetime import date
 
 import pytest
@@ -42,11 +43,34 @@ def test_unknown_key_is_rejected() -> None:
         _info({"triples": 0.0})
 
 
+class _BothKeys(Mapping[object, float]):
+    """Yields RatingFormat.SINGLES and "singles" as separate keys.
+
+    A dict cannot hold both, since a StrEnum member equals its value, so
+    only a custom mapping can give ReplayInfo a repeated format.
+    """
+
+    _items = ((S, 0.5), ("singles", 0.25))
+
+    def __getitem__(self, key: object) -> float:
+        for item_key, value in self._items:
+            if item_key is key:
+                return value
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[object]:
+        return iter(key for key, _ in self._items)
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+
 def test_a_format_given_twice_is_rejected() -> None:
+    assert list(_BothKeys().items()) == [(S, 0.5), ("singles", 0.25)]
     with pytest.raises(
         SnapshotError, match=r"ReplayInfo\.net_rating_created repeats the format 'singles'"
     ):
-        _info({S: 0.5, "singles": 0.25})
+        _info(_BothKeys())
 
 
 @pytest.mark.parametrize("value", [None, [], 0.0, "singles"])
