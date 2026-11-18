@@ -190,11 +190,23 @@ def test_parent_reseed_keeps_the_derived_state_loadable_and_seedable() -> None:
     eng.seed_external_rating(
         "syn-b", D, ExternalRatingSnapshot("ext", 4.2, CAPTURED), replace_unplayed_seed=True
     )
-    assert eng.state("syn-b", MX).initial_source_date == EARLY
+    # The reseed refreshes the derived state (issue #101).
+    assert eng.state("syn-b", MX).initial_source_date == CAPTURED
     assert eng.state("syn-b", D).initial_source_date == CAPTURED
     loaded = RatingEngine.from_snapshot(json.loads(json.dumps(eng.to_snapshot())), cfg=CFG)
     assert loaded.to_snapshot() == eng.to_snapshot()
     RatingEngine(CFG).add_player(copy.deepcopy(eng.player("syn-b")))
+    # A seed or snapshot made before that fix can still date the derived
+    # state before its parent. It stays loadable and seedable.
+    seed = copy.deepcopy(eng.player("syn-b"))
+    seed.ratings[MX] = replace(
+        seed.ratings[MX], rd_as_of=EARLY, initial_source_date=EARLY, rating=4.0, initial_rating=4.0
+    )
+    stale = RatingEngine(CFG)
+    stale.add_player(seed)
+    assert stale.state("syn-b", MX).initial_source_date == EARLY
+    reloaded = RatingEngine.from_snapshot(json.loads(json.dumps(stale.to_snapshot())), cfg=CFG)
+    assert reloaded.to_snapshot() == stale.to_snapshot()
 
 
 def test_played_undated_parent_derivation_round_trips() -> None:

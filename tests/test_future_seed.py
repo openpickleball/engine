@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from datetime import date
 
 import pytest
@@ -31,14 +32,19 @@ def _imported(captured_on: date, fmt: RatingFormat = D, reliability: float = 100
     )
     if fmt is not D:
         eng.seed_provisional_rating("f", fmt)
-        # Reseed the parent to an earlier date, so only the derived state is
-        # dated after as_of. A derived state needs its parent state (issue #97).
-        eng.seed_external_rating(
+        # Give the seed a parent dated earlier, so only the derived state is
+        # dated after as_of. A derived state needs its parent state (issue
+        # #97). A reseed would refresh the derived state too (issue #101),
+        # so the seed is built by hand.
+        earlier = RatingEngine()
+        earlier.seed_external_rating(
             "f",
             D,
             ExternalRatingSnapshot("external_standard", 4.0, date(2026, 1, 1), reliability),
-            replace_unplayed_seed=True,
         )
+        seed = copy.deepcopy(eng.players["f"])
+        seed.ratings[D] = copy.deepcopy(earlier.players["f"].ratings[D])
+        return seed
     return eng.players["f"]
 
 
