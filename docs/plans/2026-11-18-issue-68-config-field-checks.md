@@ -185,6 +185,7 @@ connectivity counts ("must be a positive int"). Every other field uses the messa
   the "other scalar fields are not yet" paragraph with the rules. No change to
   `fingerprint`, `_payload`, `to_dict`, `from_dict`, or any rating code.
 - `tests/test_config_checks.py` (new): the tests below.
+- `tests/test_config_checks_review.py`, `tests/test_config_checks_review2.py`, and `tests/test_config_float_override.py` (new, from the review rounds): the frozen tests for each review finding.
 - `tests/test_config_immutable.py`: the `("k_min", "low")` row of
   `test_from_dict_rejects_bad_data` matched `"Config"` (the wrapped `TypeError`); it now
   matches `"k_min must be a finite number"`.
