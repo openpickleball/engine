@@ -20,6 +20,7 @@ from open_engine import (
     fit_scale,
     fit_win_calibration,
     game_win_probability,
+    match_win_probability,
     replay,
 )
 
@@ -97,7 +98,8 @@ def test_replay_ratings_rds_and_info_are_pinned() -> None:
     info = engine.replay_info
     assert info is not None
     assert (info.as_of, info.matches_considered, info.matches_counted) == (AS_OF, 60, 60)
-    assert info.config_fingerprint == Config().fingerprint()
+    assert info.config_version == Config().version
+    assert info.config_fingerprint == Config().fingerprint() == "c5bb49f7c37a013a"
 
 
 def test_fit_scale_profile_is_pinned() -> None:
@@ -136,3 +138,9 @@ def test_win_probability_is_pinned() -> None:
     prob = engine.predict_win_probability(("p0", "p1"), ("p2", "p3"), D, first_to_11)
     assert prob.hex() == "0x1.78744e0d6ee93p-2"
     assert game_win_probability(0.024, first_to_11).hex() == "0x1.e3d87cebfb89fp-42"
+
+
+def test_win_by_2_and_best_of_5_sums_are_pinned() -> None:
+    # The deuce game's direct term and a best of 5 add several floats each.
+    assert game_win_probability(0.13436424411240122, GameFormat()).hex() == "0x1.00ae4904fb9a1p-16"
+    assert match_win_probability(0.6, GameFormat(), 5).hex() == "0x1.eebb89f7d1eeap-1"

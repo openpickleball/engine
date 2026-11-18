@@ -20,7 +20,7 @@ So the cause holds: the built-in `sum()` of floats changed in 3.12 to compensate
 1. Every `sum()` over floats in `src/open_engine/engine.py` and `src/open_engine/winprob.py` uses `math.fsum()`. Integer sums (points, games, counts) stay as they are.
 2. The same synthetic ledger, config, and `as_of` give byte-identical ratings, RD values, and `ReplayInfo` on Python 3.11, 3.12, and 3.13.
 3. `evaluate`, `fit_scale` (including the unrounded `profile`), `fit_win_calibration`, and `predict_win_probability` give identical results on those versions.
-4. A test pins exact replay, evaluation, fit, and win probability output (`float.hex`) for a small synthetic ledger, and runs on every CI Python version. It fails on 3.11 before the fix.
+4. A test pins exact replay, evaluation, fit, and win probability output (including the win-by-2 deuce sum and a best of 5) (`float.hex`) for a small synthetic ledger, and runs on every CI Python version. It fails on 3.11 before the fix.
 5. `CHANGELOG.md` records the change: ratings and RDs do not change (an `fsum` of two floats equals their plain sum), while win probabilities, evaluation errors, `ScaleFit.profile`, and Brier scores can move in the last bit on any version.
 6. CLAUDE.md's Determinism rule names the summation rule.
 
@@ -42,6 +42,7 @@ So the cause holds: the built-in `sum()` of floats changed in 3.12 to compensate
 ## Risks
 
 - `fsum` can differ from the old result in the last bit on 3.12+ too (Neumaier is not always correctly rounded), so stored evaluation output can change. Ratings cannot, since every rating-path sum has at most two terms.
+- `math.fsum` raises `OverflowError` where `sum()` returned `inf`. `Config` accepts an infinite or huge rating range, so with `max_rating=1e308, default_rating=1e308` a doubles `record` that silently gave `expected_a=0.0` on main now raises. Found in review. Range validation in `Config` is a separate change, filed as issue #70; this PR names the case in the changelog.
 - `fsum` is slower than `sum`. The sums are short (at most 11 terms in win probability, one pass over predictions in evaluation), so the cost is small.
 - The pinned values depend on `math.exp`, `math.log`, and `**`, which come from the platform C library. CI runs on Linux x86_64 like the local runs; a different libm could differ. That is outside this issue.
 
