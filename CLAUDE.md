@@ -18,7 +18,7 @@ The engine is a demonstration. Its methods have not been validated on real match
 - `src/open_engine/__init__.py`: the public API (`__all__`). It re-exports `__version__`.
 - `src/open_engine/_version.py`: `__version__`, the one place a release sets the version.
 - `tests/`: pytest suite. `tests/fixtures/` holds synthetic fixtures only (see its README).
-- `examples/basic_match.py`: a runnable example, linted with the rest of the code.
+- `examples/basic_match.py`: a runnable example, linted with the rest of the code. `tests/test_examples.py` runs every script in `examples/`.
 - `scripts/check_sdist.py`: checks a built source distribution's layout: one `openpickleball_engine-<version>` root, clean member paths, only allowed top-level entries, and the required ones present. CI runs it in the `package` job.
 - `scripts/check_wheel.py`: checks a built wheel's members: only the `open_engine` modules in `PACKAGE_FILES`, all of them present (`py.typed` included), and one `openpickleball_engine-<version>.dist-info` directory. CI's `package` job and the release build run it. A new module in `src/open_engine/` goes in `PACKAGE_FILES`.
 - `scripts/check_release.py`: checks that a release tag is `v` plus the version of the built sdist and wheel, and that `dist/` holds nothing else. The release workflow runs it.
