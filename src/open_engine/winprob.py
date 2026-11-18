@@ -26,7 +26,7 @@ PROBABILITY_CLIP = 1e-6
 def _first_to(p: float, n: int) -> float:
     """Probability of winning n points before the opponent does (no win-by rule)."""
     q = 1 - p
-    return sum(comb(n - 1 + k, k) * p**n * q**k for k in range(n))
+    return math.fsum(comb(n - 1 + k, k) * p**n * q**k for k in range(n))
 
 
 def _capped(p: float, points_to: int, win_by: int, cap: int) -> float:
@@ -81,7 +81,7 @@ def game_win_probability(p: float, game_format: GameFormat) -> float:
     if win_by == 1:
         return _first_to(p, n)
     q = 1 - p
-    direct = sum(comb(n - 1 + k, k) * p**n * q**k for k in range(n - 1))
+    direct = math.fsum(comb(n - 1 + k, k) * p**n * q**k for k in range(n - 1))
     reach_deuce = comb(2 * (n - 1), n - 1) * (p * q) ** (n - 1)
     return direct + reach_deuce * p**2 / (p**2 + q**2)
 
@@ -92,7 +92,7 @@ def match_win_probability(p: float, game_format: GameFormat, best_of: int) -> fl
         raise EvaluationError(f"best_of must be an odd integer >= 1, got {best_of!r}")
     g = game_win_probability(p, game_format)
     w = best_of // 2 + 1
-    return sum(comb(w - 1 + k, k) * g**w * (1 - g) ** k for k in range(w))
+    return math.fsum(comb(w - 1 + k, k) * g**w * (1 - g) ** k for k in range(w))
 
 
 def calibrate_win_probability(p: float, a: float) -> float:

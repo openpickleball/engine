@@ -2812,8 +2812,8 @@ class RatingEngine:
         ratings_a = [self._peek_state(pid, rating_format).rating for pid in team_a]
         ratings_b = [self._peek_state(pid, rating_format).rating for pid in team_b]
         return expected_point_share(
-            sum(ratings_a) / len(ratings_a),
-            sum(ratings_b) / len(ratings_b),
+            math.fsum(ratings_a) / len(ratings_a),
+            math.fsum(ratings_b) / len(ratings_b),
             self.cfg.scale_by_scoring[scoring],
         )
 
@@ -2991,8 +2991,8 @@ class RatingEngine:
 
         states_a = [work[pid] for pid in match.team_a]
         states_b = [work[pid] for pid in match.team_b]
-        rating_a = sum(s.rating for s in states_a) / len(states_a)
-        rating_b = sum(s.rating for s in states_b) / len(states_b)
+        rating_a = math.fsum(s.rating for s in states_a) / len(states_a)
+        rating_b = math.fsum(s.rating for s in states_b) / len(states_b)
 
         if (
             rating_format is RatingFormat.SINGLES
@@ -3059,8 +3059,8 @@ class RatingEngine:
         # 0.0 turns a negative zero into 0.0.
         imbalance = (
             round(
-                sum(applied[pid] for pid in match.team_a) / len(match.team_a)
-                + sum(applied[pid] for pid in match.team_b) / len(match.team_b),
+                math.fsum(applied[pid] for pid in match.team_a) / len(match.team_a)
+                + math.fsum(applied[pid] for pid in match.team_b) / len(match.team_b),
                 5,
             )
             + 0.0
@@ -3643,19 +3643,19 @@ def _report_from_predictions(
             bins.append(
                 (
                     lower,
-                    round(sum(e for e, _ in members) / len(members), 4),
-                    round(sum(a for _, a in members) / len(members), 4),
+                    round(math.fsum(e for e, _ in members) / len(members), 4),
+                    round(math.fsum(a for _, a in members) / len(members), 4),
                     len(members),
                 )
             )
-    mse = sum(e * e for e in errors) / len(errors)
+    mse = math.fsum(e * e for e in errors) / len(errors)
     report = EvaluationReport(
         scoring=scoring.value if scoring else None,
         scale=cfg.scale_by_scoring[scoring] if scoring else None,
         matches_scored=len(pairs),
         mse=round(mse, 6),
-        mae=round(sum(abs(e) for e in errors) / len(errors), 6),
-        bias=round(sum(errors) / len(errors), 6),
+        mae=round(math.fsum(abs(e) for e in errors) / len(errors), 6),
+        bias=round(math.fsum(errors) / len(errors), 6),
         calibration=tuple(bins),
     )
     return report, mse
@@ -3814,9 +3814,9 @@ def fit_win_calibration(
     def brier(a: float) -> float:
         key = round(a, 6)
         if key not in cache:
-            cache[key] = sum((calibrate_win_probability(r, key) - w) ** 2 for r, w in data) / len(
-                data
-            )
+            cache[key] = math.fsum(
+                (calibrate_win_probability(r, key) - w) ** 2 for r, w in data
+            ) / len(data)
         return cache[key]
 
     steps = 14
