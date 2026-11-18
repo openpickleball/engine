@@ -179,7 +179,7 @@ def test_swap_in_a_doubles_entry_to_an_unplayed_later_import_does_not_load() -> 
     _bump(snap, "syn-a", "doubles", 1)
     with pytest.raises(
         SnapshotError,
-        match=_link_message(snap, "doubles", "syn-b", "syn-x", "a partner", "2026-01-06"),
+        match=_link_message(snap, "doubles", "syn-b", "syn-x", "a partner", "2026-01-05"),
     ):
         RatingEngine.from_snapshot(snap)
 
