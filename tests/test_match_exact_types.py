@@ -311,3 +311,19 @@ def test_ledger_order_rejects_a_match_subclass() -> None:
         ledger_order(_flip())
     with pytest.raises(InvalidMatchError, match="match must be a Match, not str"):
         ledger_order("syn-m1")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("name", ["_validate_field_types", "validate", "extra"])
+def test_a_match_with_extra_instance_attributes_raises(name: str) -> None:
+    """An instance attribute beyond the fields could hide a method validate calls."""
+    match = _plain(team_a=("syn-a", "syn-b"), match_type="rec_verified")
+    match.__dict__[name] = lambda: None
+    engine = RatingEngine()
+    before = _state(engine)
+    with pytest.raises(InvalidMatchError, match="match has attributes that are not Match fields"):
+        engine.record(match)
+    assert _state(engine) == before
+    with pytest.raises(InvalidMatchError, match="match has attributes that are not Match fields"):
+        replay([_plain("syn-m0", day=1), match], as_of=AS_OF)
+    with pytest.raises(InvalidMatchError, match="match has attributes that are not Match fields"):
+        prequential_predictions([match])
