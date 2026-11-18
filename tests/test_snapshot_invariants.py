@@ -3,9 +3,11 @@
 A loaded snapshot sets every rating, so it must hold only states the
 engine itself can reach: unplayed states with a seed RD, played states
 with consistent counts and dates, bounded numbers, and, for a resumable
-snapshot, nothing dated after its replay. Identities are not checked
-here: the engine itself can build shared or blank ones (see
-test_snapshot_identities.py). All ids are synthetic.
+snapshot, nothing dated after its replay. Partners, opponents, and
+self-reported teams name only players in the snapshot, and a resumable
+snapshot has no live updates and no processed id or played player its
+replay did not see. Identities are checked in test_snapshot_identities.py.
+All ids are synthetic.
 """
 
 from __future__ import annotations
@@ -122,6 +124,40 @@ def _future_log(snap: Snap) -> None:
     ]
 
 
+def _unknown_partner(snap: Snap) -> None:
+    partners = _state(snap, "syn-a", "doubles")["partners"]
+    assert isinstance(partners, dict)
+    partners["syn-x"] = "2025-02-01"
+
+
+def _unknown_opponent(snap: Snap) -> None:
+    opponents = _state(snap, "syn-a", "doubles")["opponents"]
+    assert isinstance(opponents, dict)
+    opponents["syn-x"] = "2025-02-01"
+
+
+def _unknown_log_player(snap: Snap) -> None:
+    snap["self_reported_log"] = [
+        {"dates": ["2025-02-01"], "rating_format": "singles", "teams": [["syn-a"], ["syn-x"]]}
+    ]
+
+
+def _processed_without_digest(snap: Snap) -> None:
+    processed = snap["processed_match_ids"]
+    assert isinstance(processed, list)
+    processed.append("syn-x")
+    digests = snap["ledger_digests"]
+    assert isinstance(digests, dict)
+    digests["syn-y"] = "0" * 64
+    _set_info(matches_considered=len(digests), matches_counted=len(processed))(snap)
+
+
+def _played_not_in_ledger(snap: Snap) -> None:
+    named = snap["ledger_player_ids"]
+    assert isinstance(named, list)
+    named.remove("syn-a")
+
+
 UNPLAYED = "syn-v"
 IMPORTED = "syn-u"
 
@@ -198,6 +234,53 @@ TAMPERED: list[tuple[str, Callable[[Snap], None], str]] = [
         _set_info(matches_counted=1),
         r"matches_counted must equal the number of processed_match_ids",
     ),
+    (
+        "processed id without a digest",
+        _processed_without_digest,
+        r"^snapshot\.processed_match_ids names 'syn-x', which is not in ledger_digests "
+        r"in a resumable snapshot$",
+    ),
+    (
+        "live updates in a resumable snapshot",
+        _set("syn-a", "doubles", live_updates_since_replay=1),
+        r"^snapshot\.players\[0\]\.ratings\.doubles\.live_updates_since_replay must be 0 "
+        r"in a resumable snapshot$",
+    ),
+    (
+        "played player not in ledger_player_ids",
+        _played_not_in_ledger,
+        r"^snapshot\.players\[0\]\.id 'syn-a' has played matches but is not in "
+        r"ledger_player_ids in a resumable snapshot$",
+    ),
+    # f. partners, opponents, and self-reported teams name players in the snapshot
+    (
+        "unknown partner",
+        _unknown_partner,
+        r"^snapshot\.players\[0\]\.ratings\.doubles\.partners names 'syn-x', "
+        r"which is not in players$",
+    ),
+    (
+        "unknown opponent",
+        _unknown_opponent,
+        r"^snapshot\.players\[0\]\.ratings\.doubles\.opponents names 'syn-x', "
+        r"which is not in players$",
+    ),
+    (
+        "unknown partner, not resumable",
+        _both(_set_top(resumable=False), _unknown_partner),
+        r"^snapshot\.players\[0\]\.ratings\.doubles\.partners names 'syn-x', "
+        r"which is not in players$",
+    ),
+    (
+        "unknown log player",
+        _unknown_log_player,
+        r"^snapshot\.self_reported_log\[0\]\.teams names 'syn-x', which is not in players$",
+    ),
+    (
+        "unknown log player, not resumable",
+        _both(_set_top(resumable=False), _unknown_log_player),
+        r"^snapshot\.self_reported_log\[0\]\.teams names 'syn-x', which is not in players$",
+    ),
     # e. numbers stay in bounds json.dumps can always write
     (
         "initial rating",
@@ -264,3 +347,25 @@ def test_to_snapshot_rejects_a_huge_initial_rating() -> None:
     engine.players["syn-a"].ratings[D].initial_rating = 10**5000
     with pytest.raises(SnapshotError, match="initial_rating must be between"):
         engine.to_snapshot()
+
+
+def _round_trips(engine: RatingEngine) -> Snap:
+    snapshot = _snapshot(engine)
+    assert RatingEngine.from_snapshot(snapshot).to_snapshot() == snapshot
+    return snapshot
+
+
+def test_snapshots_the_engine_produces_load() -> None:
+    first = _round_trips(_engine())
+    later = Match("syn-3", ("syn-a", "syn-u"), ("syn-c", "syn-e"), ((11, 2),), date(2025, 3, 5), D)
+    ledger = [*LEDGER, later]
+    resumed = replay(ledger, as_of=date(2025, 3, 10), from_snapshot=first)
+    second = _round_trips(resumed)
+    assert second["resumable"] is True
+    last = Match("syn-4", ("syn-a", "syn-b"), ("syn-c", "syn-e"), ((11, 2),), date(2025, 3, 12), D)
+    chained = replay([*ledger, last], as_of=date(2025, 3, 15), from_snapshot=second)
+    assert _round_trips(chained)["resumable"] is True
+    live = Match("syn-5", ("syn-a", "syn-f"), ("syn-b", "syn-g"), ((11, 3),), date(2025, 4, 1), D)
+    assert chained.record(live).counted
+    assert not chained.record(live).counted
+    assert _round_trips(chained)["resumable"] is False

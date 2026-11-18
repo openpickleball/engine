@@ -276,7 +276,9 @@ def test_resume_rejects_a_live_update_count_without_a_live_match() -> None:
     players = snapshot["players"]
     assert isinstance(players, list)
     players[0]["ratings"]["doubles"]["live_updates_since_replay"] = 1
-    with pytest.raises(SnapshotError, match="live update"):
+    with pytest.raises(
+        SnapshotError, match=r"live_updates_since_replay must be 0 in a resumable snapshot"
+    ):
         replay(BOUNDARY_LEDGER, as_of=CUT, from_snapshot=snapshot)
 
 
