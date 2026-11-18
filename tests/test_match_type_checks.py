@@ -17,6 +17,7 @@ from open_engine import (
     GameFormat,
     InvalidMatchError,
     Match,
+    MatchStatus,
     MatchType,
     RatingEngine,
     RatingFormat,
@@ -188,3 +189,15 @@ def test_valid_rows_still_validate_and_record(changes: dict[str, Any]):
     row = dataclasses.replace(BASE, **changes)
     row.validate()
     assert RatingEngine().record(row).counted
+
+
+@pytest.mark.parametrize("kind", ["tournament", "self_reported"])
+def test_record_rejects_a_str_match_type_on_a_non_completed_row(kind: str):
+    engine = RatingEngine()
+    other = Match("syn-m0", ("syn-f",), ("syn-g",), ((11, 3),), ON, RatingFormat.SINGLES)
+    assert engine.record(other).counted
+    before = engine.to_snapshot()
+    forfeit = dataclasses.replace(BASE, status=MatchStatus.FORFEIT, games=(), match_type=kind)
+    with pytest.raises(InvalidMatchError, match="^match_type must be a MatchType, not str$"):
+        engine.record(forfeit)
+    assert engine.to_snapshot() == before
