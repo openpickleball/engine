@@ -3238,6 +3238,16 @@ def _check_resumable(snap: _Snapshot, paths: Mapping[str, str]) -> None:
                     f"{paths[player_id]}.ratings.{fmt.value}.last_played must be after "
                     "initial_source_date in a resumable snapshot"
                 )
+            # Partners and opponents are written only on a move, so they
+            # too are dated after the state's initial_source_date.
+            path = f"{paths[player_id]}.ratings.{fmt.value}"
+            for name, seen in (("partners", state.partners), ("opponents", state.opponents)):
+                for other_id in sorted(seen):
+                    if seen[other_id] <= source_date:
+                        raise SnapshotError(
+                            f"{path}.{name}[{other_id!r}] must be after initial_source_date "
+                            "in a resumable snapshot"
+                        )
     for player_id, player in snap.players.items():
         for fmt in sorted(player.ratings, key=lambda f: f.value):
             if player.ratings[fmt].live_updates_since_replay:
@@ -3691,37 +3701,62 @@ def _check_log_players(
     cfg: Config,
 ) -> None:
     """
-    Raise SnapshotError for a log entry naming a player its format never moved or froze.
+    Raise SnapshotError for a log entry its named players' states rule out.
 
     record appends a date to the log, under the match's own format, only
-    when that format's update counts. Each named player then moved in that
-    format, so their stored state there is played with last_played on or
-    after the date, or was frozen there, so the state the update started
-    from has an initial_source_date on or after the date. That state is
-    the stored one in the format, or, with none stored, under
-    category_feeds_parent in a category format, the one derived from the
-    stored doubles state, which carries its date (_baseline_date). Neither
-    last_played nor that date moves back once a counted match names the
-    player, so checking an entry's latest date covers its earlier ones.
-    Entries are checked in snapshot order and named players in sorted
-    order, so the first error is the same for the same snapshot.
+    when that format's update counts. In that update a named player is
+    frozen exactly when the state it starts from has an
+    initial_source_date on or after the date: the stored state in the
+    format, or, with none stored, under category_feeds_parent in a
+    category format, the one derived from the stored doubles state, which
+    carries its date (_baseline_date). Every other named player moves, and
+    at least one does, or the update would not count. A moved player's
+    stored state in the format is played and records every teammate in
+    partners and every player of the other team in opponents, each dated
+    on or after the match (_seen keeps the latest date). Once a counted
+    match names a player, neither that baseline nor those links change:
+    a played state is never reseeded, and a frozen player's baseline is
+    found through the movers' links (RatingEngine._in_counted_match). So
+    for an entry's latest date, every named player has a baseline on or
+    after it or a played state with those links, and some named player has
+    no such baseline. Entries are checked in snapshot order, and within an
+    entry every named player's state first, then the movers' links, each
+    in sorted order, so the first error is the same for the same snapshot.
     """
     for index, ((fmt, teams), dates) in enumerate(log):
         last = max(dates)
+        on = last.isoformat()
+        where = f"snapshot.self_reported_log[{index}].teams"
+        movers: list[tuple[str, RatingState]] = []
         for pid in sorted(pid for team in teams for pid in team):
             player = players[pid]
-            state = player.ratings.get(fmt)
-            # A stored state has a last_played exactly when it is played.
-            if state is not None and state.last_played is not None and state.last_played >= last:
-                continue
             baseline = _baseline_date(player, fmt, cfg)
             if baseline is not None and baseline >= last:
                 continue
-            raise SnapshotError(
-                f"snapshot.self_reported_log[{index}].teams names {pid!r}, who has no "
-                f"{fmt.value} state that a match on {last.isoformat()} could have moved "
-                "or frozen"
-            )
+            state = player.ratings.get(fmt)
+            # A stored state has a last_played exactly when it is played.
+            if state is None or state.last_played is None or state.last_played < last:
+                raise SnapshotError(
+                    f"{where} names {pid!r}, who has no {fmt.value} state that a match on "
+                    f"{on} could have moved or frozen"
+                )
+            movers.append((pid, state))
+        for pid, state in movers:
+            own = next(team for team in teams if pid in team)
+            other = next(team for team in teams if pid not in team)
+            for role, seen, ids in (
+                ("a partner", state.partners, own - {pid}),
+                ("an opponent", state.opponents, other),
+            ):
+                for linked in sorted(ids):
+                    recorded = seen.get(linked)
+                    if recorded is None or recorded < last:
+                        raise SnapshotError(
+                            f"{where} names {pid!r}, whose {fmt.value} state does not record "
+                            f"{linked!r} as {role} on or after {on}"
+                        )
+        if not movers:
+            raise SnapshotError(f"{where} names no player who moved in the match on {on}")
 
 
 def _check_verified_against_log(
@@ -3758,17 +3793,23 @@ def _check_verified_against_log(
     a state with an initial_source_date there the check keeps only the
     upper bound.
 
-    A snapshot edited in a second field as well is held to two more rules,
-    checked elsewhere: every player a log entry names moved or was frozen
-    in its format on or after the entry's latest date (_check_log_players),
-    and in a resumable snapshot a played dated state was last played after
-    its initial_source_date (_check_resumable). One case remains: in a
-    snapshot that is not resumable, a played state given an
-    initial_source_date before every logged date that moved it, with
-    verified_matches_played raised to match, cannot be told apart from a
-    live import followed by those matches. A dated "open_provisional"
-    state is rejected by the reserved-name rules, so that state needs an
-    external initial_source or an "open_parent:" one dated with its parent.
+    A snapshot edited in a second field as well is held to more rules,
+    checked elsewhere: the players a log entry names match the movers'
+    partners and opponents, or were frozen, in the entry's latest match
+    (_check_log_players), and in a resumable snapshot a played dated state
+    was last played, and met every partner and opponent, after its
+    initial_source_date (_check_resumable). Some edits to several fields
+    still load, for example: in a snapshot that is not resumable, a played
+    state given an initial_source_date before every logged date that moved
+    it, with verified_matches_played raised to match, which cannot be told
+    apart from a live import followed by those matches (it needs an
+    external initial_source or an "open_parent:" one dated with its
+    parent, since the reserved-name rules reject a dated
+    "open_provisional" state); the dated-state edits _check_resumable
+    rejects, in a snapshot that is not resumable; a whole log entry
+    deleted with the named players' verified counts raised, since the
+    snapshot does not tie a match id to its match type; and edits that
+    also rewrite the partner and opponent names or dates to match.
     """
     logged: dict[tuple[str, RatingFormat], list[date]] = {}
     for (fmt, teams), dates in log.items():
@@ -4195,18 +4236,24 @@ class RatingEngine:
         category_feeds_parent, the logged category matches. A snapshot
         that is not resumable does not record when each seed was set, so
         for a state with an initial_source_date there only the upper bound
-        is checked. Every player a self-reported log entry names has, in
-        the entry's format, a played state last played on or after the
-        entry's latest date, or a baseline dated on or after it: the
-        state's initial_source_date or, with no state stored there, under
-        category_feeds_parent in a category format, the overall doubles
-        state's. A snapshot edited in several fields can still load: one
-        that is not resumable, with a played state given an
-        initial_source_date before every logged date that moved it and
-        verified_matches_played raised to match, looks like a live import
-        followed by those matches. Such a state needs an external
-        initial_source, or an "open_parent:" one dated with its parent; a
-        dated "open_provisional" state does not load. Identities
+        is checked. For each self-reported log entry's latest date, every
+        named player has a baseline dated on or after it (the state's
+        initial_source_date in the entry's format or, with no state stored
+        there, under category_feeds_parent in a category format, the
+        overall doubles state's), or a played state in that format that
+        records every teammate in partners and every player of the other
+        team in opponents, each dated on or after it; and at least one
+        named player is of the second kind. A snapshot edited in several
+        fields can still load, for example: one that is not resumable
+        where a played state gets an initial_source_date before every
+        logged date that moved it and verified_matches_played raised to
+        match (with an external initial_source, or an "open_parent:" one
+        dated with its parent; a dated "open_provisional" state does not
+        load); the dated-state edits the resumable rules below reject, in
+        a snapshot that is not resumable; a whole log entry deleted with
+        the named players' verified counts raised, since the snapshot does
+        not tie a match id to its match type; and edits that also rewrite
+        the partner and opponent names or dates to match. Identities
         follow the seed and link rules: account_user_id is null or a
         non-blank str, every external_ids source and id is a non-blank str,
         and no two players hold the same account or the same (source,
@@ -4219,9 +4266,10 @@ class RatingEngine:
         its initial_external_player_id is null or a non-blank str that
         the same player's external_ids links under initial_source. A
         resumable snapshot also holds no date after calculated_as_of, no
-        played state with an initial_source_date whose last_played is on
-        or before that date (a replay adds every seed before any row, and
-        a row on or before a state's date freezes it), no
+        played state with an initial_source_date whose last_played, or
+        any partner or opponent date, is on or before that date (a replay
+        adds every seed before any row, and a row on or before a state's
+        date freezes it), no
         nonzero live_updates_since_replay or inherited_live_updates, no
         processed match id without a ledger digest, and no player with a
         played state missing from ledger_player_ids, and its replay_info
