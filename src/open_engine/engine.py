@@ -690,7 +690,7 @@ _MAX_ORDINAL = date.max.toordinal()
 
 def _days_before(day: date, days: int) -> date:
     """
-    The date `days` days before `day`, or date.min when that is earlier.
+    The date `days` days before `day`, clamped to date.min and date.max.
 
     Window cutoffs use it, so a match or reference date near date.min, or a
     very long window, never raises OverflowError. Every cutoff is compared
