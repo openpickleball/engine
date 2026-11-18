@@ -46,7 +46,8 @@ Decision (recorded on #99 by the maintainer): option 1, record and refuse.
 
 - `src/open_engine/engine.py`: new constant `_SEED_SENSITIVE_REASONS` (frozenset of the three reasons); new attribute in `__init__`; recording in `_consider`; helper `_in_seed_sensitive_rejection(player_id, rating_format) -> bool` that applies the format rule in criterion 2; checks in `seed_external_rating` and `add_player` (via a keyword-only flag on `_add_seed`, default off, so replay and resume are unchanged); `SNAPSHOT_VERSION = 8`; `_TOP_KEYS`; `_Snapshot` field; `to_snapshot` emits it; `_read_snapshot` validates and returns it (new `_snap_seed_sensitive_rejections`); `from_snapshot` restores it; `_check_resumable` or the new reader checks `ledger_player_ids`; docstrings.
 - `tests/test_snapshot.py`: attribute list, top-level keys, `_engine_state`.
-- New `tests/test_seed_sensitive_rejections.py`: refusal tests, recording tests, live versus replay, resume, round trip, snapshot validation rules.
+- New `tests/test_reseed_after_rejected_match.py`: the first red test, the issue repro and each in-scope reason (refused, snapshot unchanged). Kept in its own file so it stays frozen while later tests are added.
+- New `tests/test_seed_sensitive_rejections.py`: the other refusal tests, recording tests, live versus replay, resume, round trip, snapshot validation rules.
 - New fuzz test (in the same file or `tests/test_snapshot_engine_made.py`).
 - Any existing test that hard-codes `snapshot_version` 7 or the schema text.
 - `README.md`, `CHANGELOG.md`.
