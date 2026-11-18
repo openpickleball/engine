@@ -681,7 +681,7 @@ _INT_GROWTH_LIMIT = 2**500
 _INT_GROWTH_LIMIT_TEXT = "2**500"
 _INT_BONUS_LIMIT = 2**511
 _INT_BONUS_LIMIT_TEXT = "2**511"
-# The most games a match can hold: len() of a tuple is at most sys.maxsize.
+# The most games the multiplier check allows: len() returns at most sys.maxsize.
 _MAX_GAME_COUNT = sys.maxsize
 
 # The longest day window a Config accepts: the days from date.min to
@@ -848,9 +848,11 @@ class Config:
       exact int product: when the self-reported match weight,
       max_information_multiplier, and self_reported_repeat_factor are all
       ints, and information_multiplier can return
-      max_information_multiplier itself. It can when, for some allowed
-      format, the length weight times the game count factor at the
-      largest game count (sys.maxsize games) is not below it. Then the
+      max_information_multiplier itself. The check counts it as
+      reachable when, for some allowed format, the length weight times
+      the game count factor at sys.maxsize games (the most len()
+      returns) is not below it, so it can reject a config whose
+      multiplier only a match too long to build would reach. Then the
       weight times the multiplier must convert to a float, the largest K
       times that float must be finite, and with an int
       rd_shrink_per_match, rd_shrink_per_match times the exact product

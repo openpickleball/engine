@@ -1,9 +1,10 @@
 """Int config values can no longer overflow exact int arithmetic in rating code (issue #93).
 
 With int match weights, an int max_information_multiplier, and an int
-self_reported_repeat_factor of 1, a self-reported match's step weight is an
-exact int. Rating code then converts it to a float (OverflowError when it is
-too large, or one ulp above the float product the K check saw), and an int
+self_reported_repeat_factor of 1, a self-reported match's step weight can be
+an exact int (when information_multiplier returns max_information_multiplier).
+Rating code then converts it to a float (OverflowError when it is too large,
+or one ulp above the float product the K check saw), and an int
 rd_shrink_per_match times it is another exact int. Config now forms those
 products the way the engine does and raises ConfigError when one would
 overflow. Configs that still build rate exactly as before.
