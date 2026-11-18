@@ -1745,8 +1745,16 @@ _TOP_KEYS = frozenset(
     }
 )
 _REPLAY_INFO_KEYS = frozenset(
-    {"as_of", "config_version", "config_fingerprint", "matches_considered", "matches_counted"}
+    {
+        "as_of",
+        "config_version",
+        "config_fingerprint",
+        "matches_considered",
+        "matches_counted",
+        "net_rating_created",
+    }
 )
+_FORMAT_KEYS = frozenset(fmt.value for fmt in RatingFormat)
 _PLAYER_KEYS = frozenset({"id", "account_user_id", "external_ids", "ratings"})
 _STATE_KEYS = frozenset(
     {
@@ -1815,6 +1823,16 @@ def _state_form(state: RatingState) -> dict[object, object]:
         (name, _date_map_form(value) if name in ("partners", "opponents") else _iso(value))
         for name, value in items
     )
+
+
+def _replay_info_value(name: str, value: object) -> object:
+    """A ReplayInfo field in snapshot form: format values as keys, dates as ISO text."""
+    if name == "net_rating_created" and isinstance(value, Mapping):
+        return _sorted_dict(
+            (key.value if isinstance(key, RatingFormat) else key, item)
+            for key, item in value.items()
+        )
+    return _iso(value)
 
 
 def _player_form(player: Player) -> dict[object, object]:
@@ -2259,7 +2277,42 @@ def _snap_replay_info(
     counted = _snap_count(raw["matches_counted"], f"{path}.matches_counted")
     if counted > considered:
         raise SnapshotError(f"{path}.matches_counted must not exceed matches_considered")
-    return ReplayInfo(calculated_as_of, version, fingerprint, considered, counted)
+    created_path = f"{path}.net_rating_created"
+    created_raw = _snap_object(raw["net_rating_created"], created_path, _FORMAT_KEYS)
+    created: dict[RatingFormat, float] = {}
+    for fmt in RatingFormat:
+        value = created_raw[fmt.value]
+        # A float only: a resume must continue from the exact float a full
+        # replay had, and an int would change its type.
+        if type(value) is not float or not math.isfinite(value):
+            raise SnapshotError(f"{created_path}.{fmt.value} must be a finite float")
+        if counted == 0 and value != 0.0:
+            raise SnapshotError(f"{created_path}.{fmt.value} must be 0.0 when matches_counted is 0")
+        created[fmt] = value
+    return ReplayInfo(calculated_as_of, version, fingerprint, considered, counted, created)
+
+
+def _check_net_rating_created(info: ReplayInfo | None, players: Mapping[str, Player]) -> None:
+    """
+    Raise SnapshotError for a nonzero total in a format nobody has played.
+
+    A counted update moves at least one player who is not frozen, and a
+    played state is never removed or replaced, so a nonzero total needs a
+    played state in its format.
+    """
+    if info is None:
+        return
+    for fmt in RatingFormat:
+        if info.net_rating_created[fmt] == 0.0:
+            continue
+        if not any(
+            fmt in player.ratings and player.ratings[fmt].matches_played
+            for player in players.values()
+        ):
+            raise SnapshotError(
+                f"snapshot.replay_info.net_rating_created.{fmt.value} must be 0.0 when no "
+                f"player has a played {fmt.value} state"
+            )
 
 
 def _snap_content_keys(value: object, processed: set[str]) -> dict[str, str]:
@@ -2458,6 +2511,7 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
         player_paths[player.id] = path
     _check_held_identities(players, player_paths)
     _check_named_players(players, player_paths)
+    _check_net_rating_created(replay_info, players)
 
     processed = _snap_match_ids(raw["processed_match_ids"], "snapshot.processed_match_ids")
     reserved = _snap_match_ids(raw["reserved_match_ids"], "snapshot.reserved_match_ids")
@@ -2649,9 +2703,7 @@ class RatingEngine:
         replay_info: object = None
         if info is not None:
             replay_info = _sorted_dict(
-                (f.name, _iso(getattr(info, f.name)))
-                for f in fields(info)
-                if f.name in _REPLAY_INFO_KEYS
+                (f.name, _replay_info_value(f.name, getattr(info, f.name))) for f in fields(info)
             )
         snapshot: dict[str, object] = {
             "calculated_as_of": _iso(self.calculated_as_of),
