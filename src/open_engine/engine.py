@@ -421,7 +421,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from enum import Enum, StrEnum
@@ -625,8 +625,17 @@ _CONFIG_MAPPING_FIELDS = (
 _RATING_LIMIT = 2.0**511
 _RATING_LIMIT_TEXT = "2**511"
 
-# The longest day window a Config accepts. A window this long already covers
-# every pair of dates, and timedelta holds it.
+# Int-only bounds. Exact int arithmetic raises OverflowError where float
+# arithmetic goes to inf, so these two fields have a lower bound as ints.
+_INT_GROWTH_LIMIT = 2**500
+_INT_GROWTH_LIMIT_TEXT = "2**500"
+_INT_BONUS_LIMIT = 2**511
+_INT_BONUS_LIMIT_TEXT = "2**511"
+
+# The longest day window a Config accepts: the days from date.min to
+# date.max, which timedelta holds. It does not make every window safe: one
+# that reaches back before date.min from a match or reference date currently
+# raises OverflowError (issue #92).
 _MAX_DAYS = (date.max - date.min).days
 
 # Config scalar fields by kind, checked for type and finiteness first.
@@ -725,8 +734,11 @@ class Config:
 
     Mapping fields are stored as read-only copies whose values must be
     finite numbers, and allowed_game_formats as a frozenset of (scoring
-    type, whole number) pairs. Changing the dict or set a config was built
-    from does not change the config, and changing the config's own raises
+    type, whole number) pairs. Keys and pairs are stored as their own
+    types: a ScoringType or MatchType key given as its str value becomes
+    the enum member, and an int subclass becomes a plain int. Changing
+    the dict or set a config was built from does not change the config,
+    and changing the config's own raises
     TypeError. Two configs are equal exactly when their fingerprint payloads
     are equal, so equal configs share a fingerprint and a hash, and a Config
     can be a dict key or a set member. to_dict() and from_dict() store and
@@ -748,23 +760,32 @@ class Config:
     - min_rating, max_rating, and default_rating are each at most 2**511
       in magnitude, min_rating < max_rating, and default_rating lies
       between them.
-    - Mapping values are numbers greater than 0, with a value for every
-      scoring type or match type. game_length_weights keys are whole
+    - Mapping values are numbers greater than 0, with exactly one key for
+      every scoring type or match type. game_length_weights keys are whole
       numbers of at least 1, one for the points of every allowed format.
     - 0 <= k_min <= k_max, and k_max times the largest match weight times
       max_information_multiplier is finite.
-    - 0 < rd_min < rd_max <= 2**511. The three seed RDs lie within
+    - 0 < rd_min < rd_max <= 2**511, and rd_max - rd_min is greater
+      than 0 as computed (an int and a float that are equal once
+      converted are rejected). The three seed RDs lie within
       rd_min..rd_max. rd_shrink_per_match >= 0, and rd_growth_per_day is
       from 0 to 2**511.
+    - Two bounds apply to ints only, because exact int arithmetic raises
+      OverflowError where float arithmetic goes to inf: an int
+      rd_growth_per_day is at most 2**500, and an int game_count_bonus
+      at most 2**511.
     - win_weight is from 0 to 1, game_count_bonus >= 0,
       max_information_multiplier >= 1, self_reported_repeat_factor is in
       (0, 1], and established_reliability_threshold and
       connectivity_reliability_cap are from 0 to 100.
     - replay_interval_days, diversity_window_days, and
       self_reported_repeat_window_days are from 1 to 3,652,058 (the days
-      from date.min to date.max), and import_reliability_max_age_days
-      from 0 to that. diversity_target, self_reported_max_repeats, and the
-      three connectivity counts are at least 1;
+      from date.min to date.max, which timedelta holds), and
+      import_reliability_max_age_days from 0 to that. A window that
+      reaches back before date.min from a match or reference date
+      currently raises OverflowError (issue #92). diversity_target,
+      self_reported_max_repeats, and the three connectivity counts are at
+      least 1;
       import_reliability_carry_matches and
       established_min_verified_matches at least 0.
     - The gap filters are None or at least 0.
@@ -940,43 +961,57 @@ class Config:
             if not isinstance(getattr(self, name), bool):
                 raise ConfigError(must_be(name, "a bool"))
 
-        # Then the mapping and format fields: types, read-only copies, keys.
+        # Then the mapping and format fields: types, keys, and read-only
+        # copies. Keys and format entries are stored as their own types (an
+        # enum member, a plain int), so the fingerprint never depends on how
+        # an equal key prints or whether JSON can hold it.
         for name in _CONFIG_MAPPING_FIELDS:
             value = getattr(self, name)
             if not isinstance(value, Mapping):
                 raise ConfigError(f"{name} must be a mapping")
             if not all(_is_config_number(item) for item in value.values()):
                 raise ConfigError(f"{name} values must be finite numbers")
-            object.__setattr__(self, name, _FrozenMapping(value))
         if not all(_is_config_whole(key) for key in self.game_length_weights):
             raise ConfigError("game_length_weights keys must be whole numbers")
+        lengths = {int(key): item for key, item in self.game_length_weights.items()}
+        object.__setattr__(self, "game_length_weights", _FrozenMapping(lengths))
         if any(key < 1 for key in self.game_length_weights):
             raise ConfigError("game_length_weights keys must be at least 1")
         if any(value <= 0 for value in self.game_length_weights.values()):
             raise ConfigError("game_length_weights values must be positive")
         if not isinstance(self.allowed_game_formats, (set, frozenset)):
             raise ConfigError("allowed_game_formats must be a set or frozenset")
-        object.__setattr__(self, "allowed_game_formats", frozenset(self.allowed_game_formats))
         for entry in self.allowed_game_formats:
             if not (
                 isinstance(entry, tuple)
                 and len(entry) == 2
                 and entry[0] in _SCORING_VALUES
-                and _is_whole_number(entry[1])
+                and _is_config_whole(entry[1])
             ):
                 raise ConfigError(
                     "allowed_game_formats entries must be (scoring type, whole number) pairs"
                 )
-        if set(self.scale_by_scoring) != set(ScoringType):
-            raise ConfigError("scale_by_scoring needs a value for every scoring type")
+        formats = frozenset(
+            (ScoringType(scoring), int(points)) for scoring, points in self.allowed_game_formats
+        )
+        object.__setattr__(self, "allowed_game_formats", formats)
+        for name, kind, label in (
+            ("scale_by_scoring", ScoringType, "scoring type"),
+            ("win_calibration_by_scoring", ScoringType, "scoring type"),
+            ("match_weights", MatchType, "match type"),
+        ):
+            value = getattr(self, name)
+            if set(value) != set(kind):
+                raise ConfigError(f"{name} needs a value for every {label}")
+            try:
+                keyed = {kind(key): item for key, item in value.items()}
+            except ValueError as exc:
+                raise ConfigError(f"{name} has an unknown key") from exc
+            object.__setattr__(self, name, _FrozenMapping(keyed))
         if any(value <= 0 for value in self.scale_by_scoring.values()):
             raise ConfigError("scales must be positive")
-        if set(self.win_calibration_by_scoring) != set(ScoringType):
-            raise ConfigError("win_calibration_by_scoring needs a value for every scoring type")
         if any(value <= 0 for value in self.win_calibration_by_scoring.values()):
             raise ConfigError("win calibration values must be positive")
-        if set(self.match_weights) != set(MatchType):
-            raise ConfigError("match_weights needs a value for every match type")
         if any(value <= 0 for value in self.match_weights.values()):
             raise ConfigError("match_weights values must be positive")
         for _, points in self.allowed_game_formats:
@@ -994,7 +1029,9 @@ class Config:
             raise ConfigError("default_rating must be within rating bounds")
         if not 0 <= self.k_min <= self.k_max:
             raise ConfigError("K-factor bounds are invalid")
-        if not 0 < self.rd_min < self.rd_max:
+        # player_k and reliability divide by rd_max - rd_min as computed here,
+        # so an int and a float that differ only before conversion are equal.
+        if not (0 < self.rd_min < self.rd_max and self.rd_max - self.rd_min > 0):
             raise ConfigError("RD bounds are invalid")
         if self.rd_max > _RATING_LIMIT:
             raise ConfigError(f"rd_max must be at most {limit}")
@@ -1005,16 +1042,31 @@ class Config:
             raise ConfigError("rd_shrink_per_match must be at least 0")
         if not 0 <= self.rd_growth_per_day <= _RATING_LIMIT:
             raise ConfigError(f"rd_growth_per_day must be between 0 and {limit}")
+        # Exact int arithmetic raises where float arithmetic goes to inf, so an
+        # int gets a lower bound: rd_max**2 + growth**2 * _MAX_DAYS stays a float.
+        if isinstance(self.rd_growth_per_day, int) and self.rd_growth_per_day > _INT_GROWTH_LIMIT:
+            raise ConfigError(
+                f"rd_growth_per_day must be at most {_INT_GROWTH_LIMIT_TEXT} when it is an int"
+            )
         if not 0.0 <= self.win_weight <= 1.0:
             raise ConfigError("win_weight must be between 0 and 1")
         if self.game_count_bonus < 0:
             raise ConfigError("game_count_bonus must be at least 0")
+        # The same for an int bonus times a game count below 2**63.
+        if isinstance(self.game_count_bonus, int) and self.game_count_bonus > _INT_BONUS_LIMIT:
+            raise ConfigError(
+                f"game_count_bonus must be at most {_INT_BONUS_LIMIT_TEXT} when it is an int"
+            )
         if self.max_information_multiplier < 1.0:
             raise ConfigError("max_information_multiplier must be at least 1")
         # The largest step size a match can reach. When it overflows to inf,
         # a surprise of exactly 0 gives a NaN change.
-        largest_weight = max(self.match_weights.values()) * self.max_information_multiplier
-        if not math.isfinite(self.k_max * largest_weight):
+        # In floats, as the engine computes it: an all-int product is exact,
+        # and math.isfinite raises on one too large for a float.
+        largest_weight = float(max(self.match_weights.values())) * float(
+            self.max_information_multiplier
+        )
+        if not math.isfinite(float(self.k_max) * largest_weight):
             raise ConfigError(
                 "k_max times the largest match weight and max_information_multiplier must be finite"
             )
@@ -1111,7 +1163,7 @@ class Config:
         missing = sorted(set(names) - set(data))
         if missing:
             raise ConfigError(f"Config data has missing keys: {', '.join(missing)}")
-        unknown = sorted(str(key) for key in set(data) - set(names))
+        unknown = sorted(_shown(key, str) for key in set(data) - set(names))
         if unknown:
             raise ConfigError(f"Config data has unknown keys: {', '.join(unknown)}")
         values = {name: data[name] for name in names}
@@ -1145,8 +1197,16 @@ def _enum_keyed(value: object, kind: type[_E], name: str) -> dict[_E, object]:
         try:
             out[kind(key)] = item
         except ValueError as exc:
-            raise ConfigError(f"{name} has an unknown key: {key!r}") from exc
+            raise ConfigError(f"{name} has an unknown key: {_shown(key)}") from exc
     return out
+
+
+def _shown(value: object, show: Callable[[object], str] = repr) -> str:
+    """value for an error message. An int over the int-to-str limit cannot print."""
+    try:
+        return show(value)
+    except ValueError:
+        return "a value too large to show"
 
 
 def _int_keyed(value: object) -> dict[int, object]:
@@ -1157,9 +1217,16 @@ def _int_keyed(value: object) -> dict[int, object]:
         if _is_whole_number(key):
             points = key
         elif isinstance(key, str) and key.isascii() and key.isdigit():
-            points = int(key)
+            try:
+                points = int(key)
+            except ValueError as exc:  # more digits than int() converts
+                raise ConfigError(
+                    f"game_length_weights has a key that is not a whole number: {_shown(key)}"
+                ) from exc
         else:
-            raise ConfigError(f"game_length_weights has a key that is not a whole number: {key!r}")
+            raise ConfigError(
+                f"game_length_weights has a key that is not a whole number: {_shown(key)}"
+            )
         if points in out:
             raise ConfigError(f"game_length_weights repeats the game length {points}")
         out[points] = item
@@ -1172,17 +1239,19 @@ def _game_formats(value: object) -> frozenset[tuple[ScoringType, int]]:
     out: set[tuple[ScoringType, int]] = set()
     for item in value:
         if isinstance(item, (str, bytes)) or not isinstance(item, Sequence) or len(item) != 2:
-            raise ConfigError(f"allowed_game_formats has an entry that is not a pair: {item!r}")
+            raise ConfigError(
+                f"allowed_game_formats has an entry that is not a pair: {_shown(item)}"
+            )
         scoring, points = item
         if not isinstance(points, int) or isinstance(points, bool):
             raise ConfigError(
-                f"allowed_game_formats has points that are not a whole number: {item!r}"
+                f"allowed_game_formats has points that are not a whole number: {_shown(item)}"
             )
         try:
             out.add((ScoringType(scoring), points))
         except ValueError as exc:
             raise ConfigError(
-                f"allowed_game_formats has an unknown scoring type: {item!r}"
+                f"allowed_game_formats has an unknown scoring type: {_shown(item)}"
             ) from exc
     return frozenset(out)
 

@@ -58,7 +58,9 @@ Definitions used below:
   1.8e308 in magnitude, which keeps it well under Python's 4300-digit int-to-str limit).
 - `_RATING_LIMIT = 2.0 ** 511` (about 1.3e154). Squaring a value this size is finite.
 - `_MAX_DAYS = (date.max - date.min).days` (3,652,058). A window this long already covers
-  every pair of dates, so a longer one changes nothing, and `timedelta` holds it.
+  every pair of dates, so a longer one changes nothing, and `timedelta` holds it. It does
+  not make every window safe: one that reaches back before `date.min` from a match or
+  reference date raises `OverflowError` (issue #92).
 
 | Field | Type | Range |
 | --- | --- | --- |
@@ -67,15 +69,15 @@ Definitions used below:
 | `scale_by_scoring` | mapping, a value for every `ScoringType` (existing) | values numbers > 0 (existing message) |
 | `win_calibration_by_scoring` | same | values numbers > 0 (existing) |
 | `k_min`, `k_max` | number | `0 <= k_min <= k_max` (existing), and `k_max * (max(match_weights) * max_information_multiplier)` finite |
-| `rd_min`, `rd_max` | number | `0 < rd_min < rd_max <= _RATING_LIMIT` (`<` is new, was `<=`) |
+| `rd_min`, `rd_max` | number | `0 < rd_min < rd_max <= _RATING_LIMIT` (`<` is new, was `<=`), and `rd_max - rd_min > 0` as computed |
 | `new_player_rd`, `external_seed_rd`, `category_seed_rd` | number | within `rd_min..rd_max` (existing) |
 | `rd_shrink_per_match` | number | `>= 0` (new) |
-| `rd_growth_per_day` | number | `0 <= value <= _RATING_LIMIT` (new) |
+| `rd_growth_per_day` | number | `0 <= value <= _RATING_LIMIT` (new); an int at most `2**500` |
 | `win_weight` | number | `0..1` (existing) |
 | `match_weights` | mapping, a value for every `MatchType` (existing) | values numbers > 0 (new) |
 | `allowed_game_formats` | unchanged | unchanged |
 | `game_length_weights` | mapping, int keys (existing) | keys whole numbers >= 1 (new), values numbers > 0 (new); every allowed format's points has a key (existing) |
-| `game_count_bonus` | number | `>= 0` (new) |
+| `game_count_bonus` | number | `>= 0` (new); an int at most `2**511` |
 | `max_information_multiplier` | number | `>= 1` (existing) |
 | `replay_interval_days`, `diversity_window_days`, `self_reported_repeat_window_days` | whole number | `1.._MAX_DAYS` (upper bound new) |
 | `import_reliability_max_age_days` | whole number | `0.._MAX_DAYS` (upper bound new) |
@@ -119,6 +121,30 @@ Why each new range is the narrowest the math needs:
   main: all four players jumped to 8.0 on a 0.0 surprise).
 - Day counts at most `_MAX_DAYS`: `timedelta(days=...)` raises `OverflowError` above
   999,999,999, and no window longer than the whole date range changes a result.
+
+Review round (added after the first green commit):
+
+- The `k_max` product is computed in floats, as the engine computes it. An all-int product
+  is exact, and `math.isfinite` raises `OverflowError` on one too large for a float.
+- Two bounds apply to ints only, because exact int arithmetic raises `OverflowError` where
+  float arithmetic goes to inf. An int `rd_growth_per_day` is at most `2**500`, so
+  `rd_max**2 + growth**2 * _MAX_DAYS` stays below the float maximum with `rd_max <= 2**511`.
+  An int `game_count_bonus` is at most `2**511`; games minus 1 is below `2**63`, so the int
+  product stays below `2**574`. A float keeps the `2**511` growth bound and has no bonus
+  bound beyond being finite: it goes to inf, and the `min` with
+  `max_information_multiplier` or `rd_max` catches it.
+- `rd_max - rd_min > 0` as computed: an int and a float equal once converted give 0.0 and
+  divide by zero in `player_k`.
+- `allowed_game_formats` points use the whole-number rule (finite as a float), so a huge
+  int raises the entry message instead of the int-to-str `ValueError`. `from_dict` shows
+  a value too large to print as "a value too large to show".
+- Keys and format entries are stored as their own types: enum members for the enum-keyed
+  mappings and for format scoring types, plain ints for game lengths and points. A config
+  that builds on main keeps its fingerprint (tested against values measured on main), except
+  an int subclass whose `str` is not its digits.
+- `_MAX_DAYS` is what `timedelta` holds. A window that reaches back before `date.min` from a
+  match or reference date still raises `OverflowError`; issue #92 tracks it. The stress test
+  uses 365-day windows for that reason.
 
 Message rules: keep every existing message. A type or finiteness failure on a scalar says
 `"<name> must be a finite number"`, `"<name> must be a whole number"` (int fields),
