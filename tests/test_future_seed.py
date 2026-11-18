@@ -31,7 +31,14 @@ def _imported(captured_on: date, fmt: RatingFormat = D, reliability: float = 100
     )
     if fmt is not D:
         eng.seed_provisional_rating("f", fmt)
-        del eng.players["f"].ratings[D]
+        # Reseed the parent to an earlier date, so only the derived state is
+        # dated after as_of. A derived state needs its parent state (issue #97).
+        eng.seed_external_rating(
+            "f",
+            D,
+            ExternalRatingSnapshot("external_standard", 4.0, date(2026, 1, 1), reliability),
+            replace_unplayed_seed=True,
+        )
     return eng.players["f"]
 
 

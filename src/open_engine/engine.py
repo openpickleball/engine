@@ -241,7 +241,12 @@ Published behavior notes:
   seed state that breaks the seed rules in `RatingEngine.add_player`,
   including a field of the wrong type (a str or dict subclass, or a
   Player or RatingState subclass, counts as the wrong type), a blank id,
-  a blank `initial_source` or `initial_external_player_id`, an external player id
+  a blank `initial_source`, `initial_external_player_id`, or
+  `initial_evidence_reference`, an `external_ids` source or an
+  `initial_source` that starts with the reserved prefix `open_` (such
+  an `initial_source` is allowed only as `open_provisional` or a
+  category's `open_parent:` name under the rules listed in
+  `RatingEngine.add_player`), an external player id
   the seed's own `external_ids` does not link under its `initial_source`,
   or a rating or initial rating outside the bounds, raised by
   `add_player`, `replay`, and `prequential_predictions`, and so by
@@ -252,9 +257,11 @@ Published behavior notes:
   exactly an `ExternalRatingSnapshot`, a source, external id, or
   `evidence_reference` that is not exactly a str (a str subclass
   included, and None allowed for the external id and evidence
-  reference), and a blank or whitespace-only source or external id),
+  reference), a blank or whitespace-only source, external id, or
+  evidence reference, and a source that starts with `open_`),
   `PlayerError` covers player identities, including a seed whose
-  account or external identity another player holds (its subclass
+  account or external identity another player holds and an
+  `attach_external_id` source that starts with `open_` (its subclass
   `UnknownPlayerError` covers a read of a player id with no player
   record), `EvaluationError` covers
   evaluation, fits and win probabilities, `LedgerConflictError` covers
@@ -2436,6 +2443,76 @@ def _seed_type_broken(state: RatingState) -> str | None:
     return None
 
 
+# Provenance names that start with this prefix belong to the engine: no
+# external source may use one (seed_external_rating, attach_external_id, seed
+# external_ids, and snapshot external_ids reject it), and a seed or snapshot
+# state may hold one only in the shapes _reserved_source_broken checks.
+_RESERVED_SOURCE_PREFIX = "open_"
+
+
+def _reserved_source_broken(
+    state: RatingState,
+    fmt: RatingFormat,
+    states: Mapping[RatingFormat, RatingState],
+    cfg: Config,
+) -> str | None:
+    """
+    A message when the state's reserved initial_source breaks a shape rule, or None.
+
+    states holds the same player's states (the seed's ratings, or the
+    snapshot player's), and cfg is the config they are checked under. A
+    reserved initial_source carries no imported reliability, external player
+    id, or evidence reference, and is one of:
+    - "open_provisional" with no initial_source_date (any provisional
+      rating, since it is RatingState's default initial_source);
+    - in a category format, "open_parent:" plus that format's parent's
+      value, as _new_state derives it: category_feeds_parent is on, the
+      player has a parent state, the state is dated exactly when the parent
+      state is (the dates may differ, since a parent can be reseeded after
+      the derivation), an undated state has a played parent, and an
+      unplayed state has an RD of at least category_seed_rd.
+    This does not check the rating or the date against the parent state's,
+    so a caller can still build a state in these shapes.
+    """
+    source = state.initial_source
+    if not source.startswith(_RESERVED_SOURCE_PREFIX):
+        return None
+    prefix = (
+        f"initial_source {source!r} uses the reserved prefix {_RESERVED_SOURCE_PREFIX} "
+        "but is not provenance the engine writes: "
+    )
+    if (
+        state.initial_source_reliability is not None
+        or state.initial_external_player_id is not None
+        or state.initial_evidence_reference is not None
+    ):
+        return prefix + (
+            "it has an imported reliability, initial_external_player_id, or "
+            "initial_evidence_reference"
+        )
+    if source == "open_provisional":
+        if state.initial_source_date is not None:
+            return prefix + "open_provisional must have no initial_source_date"
+        return None
+    parent = fmt.parent
+    if parent is None or source != f"open_parent:{parent.value}":
+        return prefix + "the engine writes no such initial_source in this format"
+    if not cfg.category_feeds_parent:
+        return prefix + "category_feeds_parent is off"
+    base = states.get(parent)
+    if base is None:
+        return prefix + f"the player has no {parent.value} state"
+    if (state.initial_source_date is None) != (base.initial_source_date is None):
+        return prefix + (
+            f"initial_source_date must be set exactly when the {parent.value} state's is"
+        )
+    if state.initial_source_date is None and base.matches_played == 0:
+        return prefix + f"an undated derived state needs a played {parent.value} state"
+    if state.matches_played == 0 and state.rd < cfg.category_seed_rd:
+        return prefix + "rd must be at least category_seed_rd while the state is unplayed"
+    return None
+
+
 def _seed_rule_broken(state: RatingState, cfg: Config) -> str | None:
     """The first seed rule a state breaks, or None when it follows every rule."""
     wrong_type = _seed_type_broken(state)
@@ -2446,6 +2523,9 @@ def _seed_rule_broken(state: RatingState, cfg: Config) -> str | None:
     external_id = state.initial_external_player_id
     if external_id is not None and not _is_id(external_id):
         return "initial_external_player_id must not be blank"
+    reference = state.initial_evidence_reference
+    if reference is not None and not _is_id(reference):
+        return "initial_evidence_reference must not be blank"
     if state.matches_played != 0:
         return "matches_played must be 0"
     if state.verified_matches_played != 0:
@@ -2546,6 +2626,11 @@ def _validate_seed(player: Player, cfg: Config) -> None:
         raise InvalidSeedError(
             f"Seed for {player.id}: external_ids must not have a blank source or id"
         )
+    if any(k.startswith(_RESERVED_SOURCE_PREFIX) for k in player.external_ids):
+        raise InvalidSeedError(
+            f"Seed for {player.id}: external_ids source must not start with "
+            f"{_RESERVED_SOURCE_PREFIX}"
+        )
     for key in player.ratings:
         if not isinstance(key, RatingFormat):
             raise InvalidSeedError(
@@ -2560,6 +2645,8 @@ def _validate_seed(player: Player, cfg: Config) -> None:
                 f"Seed for {player.id} in {fmt}: rating state must be a RatingState"
             )
         rule = _seed_rule_broken(state, cfg)
+        if rule is None:
+            rule = _reserved_source_broken(state, fmt, player.ratings, cfg)
         if rule is not None:
             raise InvalidSeedError(f"Seed for {player.id} in {fmt}: {rule}")
         # The seed's own external_ids must hold its provenance pair, so the
@@ -2920,6 +3007,10 @@ def _snap_player(value: object, path: str, cfg: Config) -> Player:
             raise SnapshotError(f"{path}.external_ids must map str to str")
         if not _is_id(source) or not _is_id(external_id):
             raise SnapshotError(f"{path}.external_ids must map non-blank str to non-blank str")
+        if source.startswith(_RESERVED_SOURCE_PREFIX):
+            raise SnapshotError(
+                f"{path}.external_ids source must not start with {_RESERVED_SOURCE_PREFIX}"
+            )
         external_ids[source] = external_id
     account_user_id = _snap_opt_str(raw["account_user_id"], f"{path}.account_user_id")
     if account_user_id is not None and not _is_id(account_user_id):
@@ -2932,7 +3023,7 @@ def _snap_player(value: object, path: str, cfg: Config) -> Player:
         fmt = _snap_format(key, f"{path}.ratings key")
         states[fmt] = _snap_state(state, f"{path}.ratings.{fmt.value}", player_id, cfg)
     _check_inherited_live_updates(states, path, cfg)
-    _check_provenance(states, external_ids, path)
+    _check_provenance(states, external_ids, path, cfg)
     return Player(
         id=player_id,
         ratings=states,
@@ -2942,12 +3033,22 @@ def _snap_player(value: object, path: str, cfg: Config) -> Player:
 
 
 def _check_provenance(
-    states: Mapping[RatingFormat, RatingState], external_ids: Mapping[str, str], path: str
+    states: Mapping[RatingFormat, RatingState],
+    external_ids: Mapping[str, str],
+    path: str,
+    cfg: Config,
 ) -> None:
     """
     Raise SnapshotError for a state's provenance the engine cannot produce.
 
-    Every initial_source the engine writes is non-blank. A state that names
+    Every initial_source and initial_evidence_reference the engine writes is
+    non-blank. Every entry point rejects an external source that starts with
+    the reserved prefix, and a state's reserved initial_source must pass
+    _reserved_source_broken under the snapshot's config, which checks the
+    name, the import-only fields, and, for "open_parent:", the rules of
+    how _new_state derives a category state. It does not check the rating
+    or the date against the parent state's, so a state that passes can
+    still be one a caller built or an older version imported. A state that names
     an external id comes in through seed_external_rating, which links the
     (source, id) pair to the same player, or through a seed (add_player,
     replay seeds, resume), which must already list the pair in its own
@@ -2969,6 +3070,14 @@ def _check_provenance(
             raise SnapshotError(
                 f"{state_path}.initial_external_player_id must be null or not blank"
             )
+        reference = state.initial_evidence_reference
+        if reference is not None and not _is_id(reference):
+            raise SnapshotError(
+                f"{state_path}.initial_evidence_reference must be null or not blank"
+            )
+        reserved = _reserved_source_broken(state, fmt, states, cfg)
+        if reserved is not None:
+            raise SnapshotError(f"{state_path}.{reserved}")
         if not _provenance_linked(state, external_ids):
             raise SnapshotError(
                 f"{state_path}.initial_external_player_id must be linked in "
@@ -3797,8 +3906,13 @@ class RatingEngine:
         follow the seed and link rules: account_user_id is null or a
         non-blank str, every external_ids source and id is a non-blank str,
         and no two players hold the same account or the same (source,
-        external id) pair. Every state's initial_source is a non-blank str,
-        and its initial_external_player_id is null or a non-blank str that
+        external id) pair. No external_ids source starts with "open_".
+        Every state's initial_source is a non-blank str, and one that starts
+        with "open_" follows the reserved-name rules in add_player, checked
+        under cfg (an "open_parent:" state may also be played, and is then
+        undated only with a played parent state, with no RD rule). Every
+        state's initial_evidence_reference is null or a non-blank str, and
+        its initial_external_player_id is null or a non-blank str that
         the same player's external_ids links under initial_source. A
         resumable snapshot also holds no date after calculated_as_of, no
         nonzero live_updates_since_replay or inherited_live_updates, no
@@ -3871,7 +3985,28 @@ class RatingEngine:
           and initial_external_player_id and initial_evidence_reference
           are each a str or None.
         - initial_source is not blank or whitespace only, and neither is
-          an initial_external_player_id that is set.
+          an initial_external_player_id or initial_evidence_reference
+          that is set.
+        - No external_ids source starts with "open_", the prefix reserved
+          for provenance the engine writes. The prefix is matched exactly,
+          so "OPEN_x" or " open_x" is not reserved. An initial_source that
+          starts with it has no imported reliability,
+          initial_external_player_id, or initial_evidence_reference, and
+          is one of two names. "open_provisional" (RatingState's default)
+          has no initial_source_date, so a dated seed must set its own
+          initial_source. In a category format, "open_parent:" plus that
+          format's parent's value (doubles) needs Config.category_feeds_parent
+          on, a doubles state in the same seed, an initial_source_date
+          when that doubles state has one and none when it has none (the
+          two dates may differ), and an RD of at least
+          Config.category_seed_rd. An undated one also needs a played
+          doubles state, which a seed cannot have, so such a seed is
+          always rejected. A seed taken from an engine with
+          category_feeds_parent on is rejected by one with it off when it
+          holds an "open_parent:" state. These rules do not check the
+          rating or the date against the doubles state's, so a seed can
+          still claim a derived state with any rating in range, and an
+          "open_provisional" seed can carry any rating in range.
         - An initial_external_player_id that is set is linked in the seed's
           own external_ids under initial_source, so the uniqueness check
           below covers it. Since the seed must be exactly a Player, each
@@ -3959,6 +4094,8 @@ class RatingEngine:
         """Raise PlayerError unless the identity can link to player_id. Changes nothing."""
         if not _is_id(source) or not _is_id(external_player_id):
             raise PlayerError("source and external_player_id are required")
+        if source.startswith(_RESERVED_SOURCE_PREFIX):
+            raise PlayerError(f"source must not start with {_RESERVED_SOURCE_PREFIX}")
         self._check_player_id(player_id)
         player = self.players.get(player_id)
         if player is not None and player.external_ids.get(source) not in (
@@ -3991,9 +4128,10 @@ class RatingEngine:
 
         player_id, source, and external_player_id must be exactly str (not
         a subclass). Raises PlayerError for a blank or non-str player id, a
-        blank, whitespace-only, or non-str source or external id, when the
-        player already has a different id from that source, or when the
-        identity is linked to another player.
+        blank, whitespace-only, or non-str source or external id, a source
+        that starts with "open_" (the prefix reserved for provenance the
+        engine writes), when the player already has a different id from
+        that source, or when the identity is linked to another player.
         Every check runs before anything changes, so a failed call creates
         no player.
         """
@@ -4019,9 +4157,11 @@ class RatingEngine:
         Once OPEN matches exist, external refreshes cannot overwrite the rating.
         That holds in every rating format: it refuses to replace a category
         state derived from overall doubles (initial_source "open_parent:"
-        plus the parent's value), and it refuses to seed a format in which
-        a counted OPEN update included the player, even one in which the
-        player was frozen, with or without a stored state in that format.
+        plus the parent's value; an import through this method cannot take
+        that name, since a source that starts with "open_" is rejected),
+        and it refuses to seed a format in which a counted OPEN update
+        included the player, even one in which the player was frozen, with
+        or without a stored state in that format.
         For overall doubles, that includes the doubles update of a category
         match. Under category_feeds_parent, it also refuses to seed overall
         doubles when a counted category match included the player, whatever
@@ -4044,9 +4184,12 @@ class RatingEngine:
         snapshot must be exactly an ExternalRatingSnapshot (not a subclass),
         and the snapshot is checked before anything changes: captured_on is a
         date (not a datetime), source is a str that is not blank or whitespace
-        only, external_player_id is None or a str that is not blank or
-        whitespace only, evidence_reference is None or a str (each of these
-        strs exactly a str, not a subclass), rating is an int or finite float
+        only and does not start with "open_" (the prefix reserved for
+        provenance the engine writes, matched exactly), external_player_id
+        is None or a str that is not blank or whitespace only,
+        evidence_reference is None or a str that is not blank or whitespace
+        only (each of these strs exactly a str, not a subclass; the same
+        evidence reference may be used for many seeds), rating is an int or finite float
         (not bool) within the rating bounds, and reliability is None or an int
         or finite float (not bool) between 0 and 100. An external_player_id
         links the (source, external_player_id) pair to the player, and None
@@ -4088,8 +4231,14 @@ class RatingEngine:
             raise InvalidSeedError("External snapshot evidence_reference must be a str or None")
         if not _is_id(snapshot.source):
             raise InvalidSeedError("External snapshot source must not be blank")
+        if snapshot.source.startswith(_RESERVED_SOURCE_PREFIX):
+            raise InvalidSeedError(
+                f"External snapshot source must not start with {_RESERVED_SOURCE_PREFIX}"
+            )
         if snapshot.external_player_id is not None and not _is_id(snapshot.external_player_id):
             raise InvalidSeedError("External snapshot external_player_id must not be blank")
+        if snapshot.evidence_reference is not None and not _is_id(snapshot.evidence_reference):
+            raise InvalidSeedError("External snapshot evidence_reference must not be blank")
         if not _is_finite_number(snapshot.rating):
             raise InvalidSeedError("External rating must be a finite number")
         if snapshot.reliability is not None and not _is_finite_number(snapshot.reliability):
