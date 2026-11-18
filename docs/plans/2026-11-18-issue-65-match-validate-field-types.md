@@ -56,7 +56,7 @@ No other code changes. `record`'s equality comparison of `match_type` (from #59)
 ## Files that change
 
 - `src/open_engine/engine.py`: `Match.validate`, and the `Match` docstring if it states field types.
-- `tests/test_match_field_types.py` (new): parametrized rule table for criteria 1 to 6.
+- `tests/test_match_type_checks.py` (new): parametrized rule table for criteria 1 to 6. The plan first named it `tests/test_match_field_types.py`, but that file already exists on main (issue #24), so the new tests take another name.
 - `tests/test_snapshot.py`: the "str vs enum" and "int vs float best_of" params of `test_digest_separates_rows_canonical_separates` move to a new test asserting `InvalidMatchError` from `validate()` for those rows.
 - `tests/test_engine.py`: `LOOSE_PAIRS` drops the `best_of` (3 vs 3.0) and `match_type` (enum vs str) pairs; a new test asserts `replay` and `prequential_predictions` raise `InvalidMatchError` for a ledger holding the loose row, in either order. The `points_to` pair stays (GameFormat field types are out of scope).
 - `tests/test_str_match_type.py`: its premise (validate accepts a str `match_type`) is reversed by the decision. Replace its tests with ones asserting that a str `match_type` (`"self_reported"`, `"tournament"`) raises `InvalidMatchError` from `validate`, `record` (engine unchanged), and `replay`. Update its module docstring.
@@ -64,7 +64,7 @@ No other code changes. `record`'s equality comparison of `match_type` (from #59)
 
 ## Order of work
 
-1. Write `tests/test_match_field_types.py`; confirm it fails on the current code for the expected reasons (wrong exception type, or accepted). Commit it red alone.
+1. Write `tests/test_match_type_checks.py`; confirm it fails on the current code for the expected reasons (wrong exception type, or accepted). Commit it red alone.
 2. Add the checks to `Match.validate`; the new tests pass.
 3. Update the existing tests listed above, with the reason in the commit body.
 4. CHANGELOG and README.
@@ -78,9 +78,9 @@ No other code changes. `record`'s equality comparison of `match_type` (from #59)
 
 ## Proof
 
-- Criteria 1, 4, 6: `test_match_field_types.py` validate table.
-- Criterion 2: `test_match_field_types.py` record test with `to_snapshot()` comparison.
-- Criterion 3: `test_match_field_types.py` replay positions test and prequential test; `test_engine.py` loose-row test.
-- Criterion 5: positive table in `test_match_field_types.py` and the existing suite.
+- Criteria 1, 4, 6: `test_match_type_checks.py` validate table.
+- Criterion 2: `test_match_type_checks.py` record test with `to_snapshot()` comparison.
+- Criterion 3: `test_match_type_checks.py` replay positions test and prequential test; `test_engine.py` loose-row test.
+- Criterion 5: positive table in `test_match_type_checks.py` and the existing suite.
 - Criterion 7: changelog and README review.
 - Live drive: the repo has no app. Run the issue's repro script against the branch and show each row raises `InvalidMatchError`.
