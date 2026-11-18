@@ -37,7 +37,7 @@ Residual: a dated `open_parent:<parent>` state that meets (a) to (d) and has non
 ## Files that change
 
 - `src/open_engine/engine.py`:
-  - New private constant `_RESERVED_SOURCE_PREFIX = "open_"` and helper `_reserved_source_broken(state: RatingState, fmt: RatingFormat) -> str | None` that returns None when `initial_source` does not start with the prefix or the state has one of the two engine shapes, else a message naming the value.
+  - New private constant `_RESERVED_SOURCE_PREFIX = "open_"` and helper `_reserved_source_broken(state, fmt, states, cfg) -> str | None` that returns None when `initial_source` does not start with the prefix, or when it is `open_provisional` with no date and no import-only field, or `open_parent:<fmt.parent>` with no import-only field that meets rules (a) to (d) (review round 1: `category_feeds_parent` on, the parent state present in `states`, dated exactly when the parent is dated and undated only with a played parent, and RD at least `category_seed_rd` while unplayed); else a message naming the value and the reason.
   - `_seed_rule_broken`: `initial_evidence_reference` not blank when set.
   - `_validate_seed`: reject an `external_ids` key with the prefix (after the blank check); call `_reserved_source_broken` per state (after `_seed_rule_broken`, before the link check).
   - `seed_external_rating`: reject a reserved `source` after the blank check; reject a blank `evidence_reference`.
@@ -45,6 +45,8 @@ Residual: a dated `open_parent:<parent>` state that meets (a) to (d) and has non
   - `_snap_player`: reject a reserved `external_ids` key; `_check_provenance`: reserved `initial_source` via the helper, and a blank `initial_evidence_reference`.
   - Docstrings listed in criterion 10.
 - `tests/test_reserved_provenance.py` (new): criteria 1 to 8, parametrized per entry point, asserting the specific error subclass with `match=` and that state is unchanged (`to_snapshot()` equal before and after).
+- `tests/test_reserved_provenance_shapes.py` (new, review round 1): rules (a) to (d), the cross-config clone, resume with seeds, and snapshot parity rows.
+- `tests/test_future_seed.py`: its mixed doubles case reseeds the parent instead of deleting it from engine internals, which rule (b) now rejects.
 - `README.md`, `CHANGELOG.md`.
 
 ## Order of work
