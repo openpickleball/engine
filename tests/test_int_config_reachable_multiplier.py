@@ -4,8 +4,9 @@ information_multiplier returns max_information_multiplier itself only when
 length * count is not below it, for some allowed format's length weight and
 some game count. Otherwise it returns a float, the self-reported step weight
 is a float, and the exact int product never forms. So a config whose int
-multiplier no match can reach builds and rates as before, and one whose
-multiplier only a longer match reaches is still rejected.
+multiplier the check counts as unreachable (even at sys.maxsize games) builds
+and rates as before, and one whose multiplier only a longer match reaches is
+still rejected.
 """
 
 from __future__ import annotations

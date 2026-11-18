@@ -1176,8 +1176,8 @@ class Config:
         # * information_multiplier. With an int weight, an int factor
         # (factor**prior is then the int 1), and an int multiplier that
         # information_multiplier returns, that product is an exact int.
-        # Converting it can raise OverflowError, or land one ulp above the
-        # float product checked above, and an int rd_shrink_per_match times
+        # Converting it can raise OverflowError, or land above the float
+        # product checked above, and an int rd_shrink_per_match times
         # it is another exact int. So form those products as the engine does
         # (issue #93).
         weight = self.match_weights[MatchType.SELF_REPORTED]
