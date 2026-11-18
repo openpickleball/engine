@@ -1699,8 +1699,11 @@ def _require_plain_match(match: object) -> None:
     if type(match) is not Match:
         raise InvalidMatchError(f"match must be a Match, not {type(match).__name__}")
     held = vars(match)
-    if len(held) != len(_MATCH_FIELD_NAMES) or not all(
-        type(name) is str and name in _MATCH_FIELD_NAMES for name in held
+    # An exact dict, so __len__ and __iter__ cannot hide an entry.
+    if (
+        type(held) is not dict
+        or len(held) != len(_MATCH_FIELD_NAMES)
+        or not all(type(name) is str and name in _MATCH_FIELD_NAMES for name in held)
     ):
         raise InvalidMatchError("match has attributes that are not Match fields")
 
