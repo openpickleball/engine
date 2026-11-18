@@ -41,8 +41,13 @@ RD_MESSAGE = (
 # max_information_multiplier itself.
 HUGE_LENGTHS = {11: int(sys.float_info.max), 15: 1.1, 21: 1.2}
 
-# The issue's repro: w * m is too large to convert to a float.
+# The issue's repro: w * m converts (about 1.0786e308), but the int
+# rd_shrink_per_match of 2 times it does not.
 ISSUE_W = math.isqrt(6 * 2**1024 // 10)
+# Each rounds down to a float (2**511 and 2**513 - 2**460) whose product is
+# the largest finite float, but the exact product is too large to convert.
+CONVERT_W = 2**511 + 2**458 - 1
+CONVERT_M = 2**513 - 2**459 - 1
 # float(ULP_W * ULP_W) is one ulp above float(ULP_W) ** 2.
 ULP_W = 2**511 + 2**457
 
@@ -100,11 +105,13 @@ def _match(match_id: str, match_type: MatchType, games: tuple[tuple[int, int], .
 EVEN_GAMES = ((11, 9), (0, 11), (11, 2))  # 22 points each, so the surprise can be 0
 
 REPRO = {"k_min": 0, "k_max": 1, "rd_shrink_per_match": 2}
+CONVERT = {"k_min": 0, "k_max": 1, "rd_shrink_per_match": 0}
 ULP = {"k_min": ULP_K, "k_max": ULP_K, "rd_shrink_per_match": 0, "win_weight": 0}
 RD = {"k_min": 0, "k_max": 1, "rd_shrink_per_match": 4}
 
 REJECTED = [
-    pytest.param(ISSUE_W, ISSUE_W, REPRO, K_MESSAGE, id="issue-repro"),
+    pytest.param(ISSUE_W, ISSUE_W, REPRO, RD_MESSAGE, id="issue-repro"),
+    pytest.param(CONVERT_W, CONVERT_M, CONVERT, K_MESSAGE, id="no-float-conversion"),
     pytest.param(ULP_W, ULP_W, ULP, K_MESSAGE, id="ulp"),
     pytest.param(2**511, 2**511, RD, RD_MESSAGE, id="rd-shrink"),
 ]
