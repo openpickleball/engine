@@ -240,9 +240,8 @@ Published behavior notes:
   `initial_source` or `initial_external_player_id`, an external player id
   the seed's own `external_ids` does not link under its `initial_source`,
   or a rating or initial rating outside the bounds, raised by
-  `add_player`, `replay`,
-  and `prequential_predictions`, and so
-  by `evaluate`, `fit_scale`, and `fit_win_calibration`; `replay` also
+  `add_player`, `replay`, and `prequential_predictions`, and so by
+  `evaluate`, `fit_scale`, and `fit_win_calibration`; `replay` also
   rejects a seed dated after `as_of`, and `prequential_predictions` one
   dated after its last completed ledger match, and
   `RatingEngine.seed_external_rating` rejects a blank or whitespace-only
@@ -2807,10 +2806,13 @@ def _check_provenance(
     """
     Raise SnapshotError for a state's provenance the engine cannot produce.
 
-    Every initial_source the engine writes is non-blank, and a state that
-    names an external id was seeded by seed_external_rating, which links
-    that (source, id) pair to the same player. The engine never unlinks an
-    id, so the pair stays in the player's external_ids.
+    Every initial_source the engine writes is non-blank. A state that names
+    an external id comes in through seed_external_rating, which links the
+    (source, id) pair to the same player, or through a seed (add_player,
+    replay seeds, resume), which must already list the pair in its own
+    external_ids. No engine method unlinks an id, so the pair stays in the
+    player's external_ids. Issue #96 covers str and dict subclasses that
+    can pass these checks and still give a snapshot that does not load.
     """
     for fmt in sorted(states, key=lambda f: f.value):
         state = states[fmt]
@@ -3638,8 +3640,8 @@ class RatingEngine:
         processed match id without a ledger digest, and no player with a
         played state missing from ledger_player_ids, and its replay_info
         counts equal the number of ledger digests and processed match ids.
-        These checks cover shape and invariants, not authenticity. Raises SnapshotError
-        naming the first bad value. The engine shares no state with the
+        These checks cover shape and invariants, not authenticity. Raises
+        SnapshotError naming the first bad value. The engine shares no state with the
         snapshot.
         """
         engine = cls(cfg)
@@ -3702,8 +3704,9 @@ class RatingEngine:
           an initial_external_player_id that is set.
         - An initial_external_player_id that is set is linked in the seed's
           own external_ids under initial_source, so the uniqueness check
-          below covers it. A seed cannot carry another player's external
-          identity as its provenance.
+          below covers it. With plain str and dict values, a seed cannot
+          carry another player's external identity as its provenance
+          (issue #96 covers str and dict subclasses).
         - No matches, last_played, partners, opponents, or live updates:
           matches_played, verified_matches_played,
           live_updates_since_replay, and inherited_live_updates are 0.
@@ -3850,17 +3853,19 @@ class RatingEngine:
         date (not a datetime), source is a str that is not blank or
         whitespace only, external_player_id is None or a str that is not
         blank or whitespace only, rating is an int or finite float (not
-        bool) within the rating bounds, and reliability is None or an int or finite float
-        (not bool) between 0 and 100. An external_player_id links the
-        (source, external_player_id) pair to the player, and None links
-        nothing. So every state seeded here passes the seed rules in
+        bool) within the rating bounds, and reliability is None or an int
+        or finite float (not bool) between 0 and 100. An external_player_id
+        links the (source, external_player_id) pair to the player, and None
+        links nothing. So every state seeded here passes the seed rules in
         add_player.
 
         Raises InvalidSeedError when the rating format, a checked snapshot
-        field, or the existing rating does not allow the seed, and PlayerError
-        when player_id is blank or the snapshot's external identity cannot be
-        linked (see attach_external_id). Every check runs before anything
-        changes, so a failed call creates no player.
+        field, or the existing rating does not allow the seed. Once the
+        rating format and snapshot fields pass their checks, it raises
+        PlayerError when player_id is blank, when the snapshot's external
+        identity is already linked to another player, or when the player
+        already has a different id from that source. Every check runs
+        before anything changes, so a failed call creates no player.
         """
         cfg = self.cfg
         # The same type rules the seed check applies, so every state seeded
