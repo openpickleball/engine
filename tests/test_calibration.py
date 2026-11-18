@@ -9,6 +9,7 @@ import pytest
 import open_engine.engine as engine_module
 from open_engine import (
     Config,
+    EvaluationError,
     ExternalRatingSnapshot,
     GameFormat,
     Match,
@@ -311,3 +312,40 @@ def test_fit_scale_picks_lower_unrounded_mse_when_rounded_values_tie(monkeypatch
     fit = fit_scale([], cfg=cfg, scoring=ScoringType.RALLY)
     assert abs(fit.scale - 5.0) <= 0.05
     assert not fit.at_bound
+
+
+SEARCH_ARGUMENT_CASES = [
+    pytest.param({"low": 3.0, "high": 0.5}, "low must be less than high", id="low-above-high"),
+    pytest.param({"low": 2.0, "high": 2.0}, "low must be less than high", id="low-equals-high"),
+    pytest.param({"low": math.nan}, "low and high must be finite", id="low-nan"),
+    pytest.param({"high": math.inf}, "low and high must be finite", id="high-inf"),
+    pytest.param({"low": -math.inf}, "low and high must be finite", id="low-minus-inf"),
+    pytest.param({"tolerance": 0.0}, "tolerance must be finite and greater than 0", id="tol-zero"),
+    pytest.param({"tolerance": -1.0}, "tolerance must be finite and greater than 0", id="tol-neg"),
+    pytest.param({"tolerance": math.nan}, "tolerance must be finite and greater than 0", id="tol-nan"),
+    pytest.param({"tolerance": math.inf}, "tolerance must be finite and greater than 0", id="tol-inf"),
+]
+
+
+def _no_prediction_work(*args: object, **kwargs: object) -> list[PrequentialPrediction]:
+    raise AssertionError("the search arguments must be checked before any prediction work")
+
+
+@pytest.mark.parametrize(("kwargs", "message"), SEARCH_ARGUMENT_CASES)
+def test_fit_scale_rejects_bad_search_arguments(
+    monkeypatch: pytest.MonkeyPatch, kwargs: dict[str, float], message: str
+) -> None:
+    # tolerance <= 0 used to hang the golden-section loop, and low >= high
+    # returned a fit from a meaningless search range.
+    monkeypatch.setattr(engine_module, "prequential_predictions", _no_prediction_work)
+    with pytest.raises(EvaluationError, match=message):
+        fit_scale([], scoring=ScoringType.RALLY, **kwargs)
+
+
+@pytest.mark.parametrize(("kwargs", "message"), SEARCH_ARGUMENT_CASES)
+def test_fit_win_calibration_rejects_bad_search_arguments(
+    monkeypatch: pytest.MonkeyPatch, kwargs: dict[str, float], message: str
+) -> None:
+    monkeypatch.setattr(engine_module, "prequential_predictions", _no_prediction_work)
+    with pytest.raises(EvaluationError, match=message):
+        fit_win_calibration([], **kwargs)
