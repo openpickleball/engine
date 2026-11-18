@@ -426,7 +426,7 @@ def test_validate_rejects_a_subclass_team_id() -> None:
 def test_record_rejects_a_subclass_id_and_changes_nothing(match: Match) -> None:
     engine = _base_engine()
     before = engine.to_snapshot()
-    with pytest.raises(InvalidMatchError):
+    with pytest.raises(InvalidMatchError, match=r"^(match_id is required|Player ids must be)"):
         engine.record(match)
     assert engine.to_snapshot() == before
 
