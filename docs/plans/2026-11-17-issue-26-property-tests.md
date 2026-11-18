@@ -107,16 +107,17 @@ applicable because this is a standard-library Python package with no web, UI, or
   leave the rating range, and every other player that is not frozen moves by that step.
   Category cases seed varied overall doubles states, so the parent checks see nonzero
   imbalance.
-- Criterion 3: the late test seeds players mid-ledger and requires cases that are late only
-  because of a frozen player; the weekly verified schedules drive RD to `rd_min` and assert
-  it stays there.
+- Criterion 2: the same tests parametrized over singles, plus `tests/test_singles.py` if added.
+- Criterion 3: the repeat window, reliability, duplicate, and late tests. The late test
+  seeds players mid-ledger and requires cases that are late only because of a frozen
+  player. The weekly schedules assert RD never drops below `rd_min`, and each verified
+  schedule asserts that once the player's RD first equals `rd_min`, every later post-match
+  RD equals it too, and that it ends there.
+- Criterion 4: `tests/test_examples.py`.
+- Criterion 5: `pytest --durations=0` on the new files.
 - Each strengthened check was shown to fail against an engine mutation (the RD floor
   dropped, `late` ignoring frozen players, `clamped` never set, the parent update computed
   from category states), reverted before commit.
-- Criterion 2: the same tests parametrized over singles, plus `tests/test_singles.py` if added.
-- Criterion 3: the repeat window, reliability, duplicate, and late tests.
-- Criterion 4: `tests/test_examples.py`.
-- Criterion 5: `pytest --durations=0` on the new files.
 - No live drive: the gate fully covers a test-only change.
 
 Measured on main (commit 9033934), symmetry: a probe over 2000 seeded cases (singles and

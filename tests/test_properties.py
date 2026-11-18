@@ -311,7 +311,9 @@ def test_imbalance_is_the_net_team_mean_change(fmt: RatingFormat) -> None:
             )
             parent_nonzero += result.parent.imbalance != 0.0
     assert counted > 100
-    assert clamps > 10
+    # A sanity floor: these seeds give 11 (singles), 14 (doubles), and 17 plus 19 (mixed
+    # doubles and its parent), so a generator tweak does not trip it.
+    assert clamps >= 5
     if fmt.parent:
         assert parent_nonzero > 50
 
@@ -746,16 +748,19 @@ def test_reliability_never_falls_across_a_weekly_schedule(
     for _ in range(5):
         engine = RatingEngine()
         earned = []
+        rds = []
         for match in weekly_schedule(rng, fmt, self_reported):
             assert engine.record(match).counted
             earned.append(engine.player_summary("syn-focus", fmt, as_of=match.played_on))
-            assert engine.state("syn-focus", fmt).rd >= engine.cfg.rd_min
+            rds.append(engine.state("syn-focus", fmt).rd)
         values = [summary.reliability for summary in earned]
         assert values == sorted(values)
         assert values[-1] > values[0]
+        assert min(rds) >= engine.cfg.rd_min
         if not self_reported:
             # Verified matches drive RD down to the floor, and it stays there.
-            assert engine.state("syn-focus", fmt).rd == engine.cfg.rd_min
+            first = rds.index(engine.cfg.rd_min)
+            assert rds[first:] == [engine.cfg.rd_min] * (len(rds) - first)
 
 
 # -- self-reported repeat window --------------------------------------------------
