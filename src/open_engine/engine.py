@@ -4186,11 +4186,8 @@ class RatingEngine:
         "open_parent:doubles") with the state a category match would start
         from right after the seed: the new rating and date, with an RD of
         at least Config.category_seed_rd. Other category states, imported
-        or provisional, are not changed. So a replay given the stored state
-        and one without it agree on the state that category rating starts
-        from, as long as no counted match changes the player's doubles
-        state before that first category match. A stored
-        state does not follow later doubles changes (issue #112).
+        or provisional, are not changed. A stored category state does not
+        follow later changes to the doubles state from matches (issue #112).
         The seed's RD is always Config.external_seed_rd: an external
         reliability is kept for display (imported_reliability), never turned
         into OPEN RD. There is no reference date here, so a snapshot captured
