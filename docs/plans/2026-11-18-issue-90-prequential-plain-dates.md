@@ -32,6 +32,7 @@ Finding from Phase 1: `EvaluationError` is the existing subclass for bad evaluat
 ## Risks
 
 - A caller passing a datetime to `score_from` on an empty ledger got `[]` and now gets an error. Called out in the Migration note.
+- Found in review: live mode never reads `anchor`, so a live call with any `anchor` used to run normally and now raises. A `score_from` that no row was compared against (rows all filtered out by `scoring`) was accepted too. The changelog entry names these cases.
 
 ## Proof
 

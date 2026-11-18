@@ -52,10 +52,11 @@ def test_bad_date_raises(
         func(ledger, mode=mode, **{argument: value})
 
 
+@pytest.mark.parametrize("mode", ["live", "scheduled"])
 @pytest.mark.parametrize("argument", ["score_from", "anchor"])
-def test_bad_date_raises_before_the_ledger_is_read(argument: str) -> None:
+def test_bad_date_raises_before_the_ledger_is_read(argument: str, mode: str) -> None:
     with pytest.raises(EvaluationError, match=f"^{argument} must be a plain date"):
-        prequential_predictions([BAD_ROW], **{argument: datetime(2026, 3, 1)})
+        prequential_predictions([BAD_ROW], mode=mode, **{argument: datetime(2026, 3, 1)})
 
 
 @pytest.mark.parametrize("mode", ["live", "scheduled"])
