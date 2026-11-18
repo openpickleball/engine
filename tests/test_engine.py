@@ -678,16 +678,26 @@ def test_played_at_outside_utc_range_rejected():
 TWO_GAMES = ((11, 5), (11, 5))
 LOOSE_PAIRS = [
     pytest.param(
-        {"best_of": 3, "games": TWO_GAMES}, {"best_of": 3.0, "games": TWO_GAMES}, id="best_of"
-    ),
-    pytest.param(
         {"game_format": GameFormat(points_to=11)},
         {"game_format": GameFormat(points_to=11.0)},
         id="points_to",
     ),
+]
+
+# Rows equal under == to a valid row but of another field type. Since issues
+# #65 and #83, Match.validate rejects them, so a ledger holding one raises
+# InvalidMatchError before any duplicate check.
+INVALID_LOOSE_PAIRS = [
+    pytest.param(
+        {"best_of": 3, "games": TWO_GAMES},
+        {"best_of": 3.0, "games": TWO_GAMES},
+        "best_of must be an int, not float",
+        id="best_of",
+    ),
     pytest.param(
         {"match_type": MatchType.SELF_REPORTED},
         {"match_type": "self_reported"},
+        "match_type must be a MatchType, not str",
         id="match_type",
     ),
 ]
@@ -708,6 +718,28 @@ def test_loosely_equal_duplicates_conflict_in_replay(strict, loose, flip: bool):
     assert rows[0] == rows[1]
     with pytest.raises(open_engine.LedgerConflictError, match="x"):
         replay(ledger_with(rows[::-1] if flip else rows), as_of=LEDGER_AS_OF)
+
+
+@pytest.mark.parametrize("flip", [False, True], ids=["strict_first", "loose_first"])
+@pytest.mark.parametrize(("strict", "loose", "message"), INVALID_LOOSE_PAIRS)
+def test_loose_row_of_the_wrong_type_is_invalid_in_replay(strict, loose, message, flip: bool):
+    rows = [match("x", ("a", "b"), ("c", "d"), **kw) for kw in (strict, loose)]
+    assert rows[0] == rows[1]
+    with pytest.raises(open_engine.InvalidMatchError, match=f"^{message}$"):
+        replay(ledger_with(rows[::-1] if flip else rows), as_of=LEDGER_AS_OF)
+
+
+@pytest.mark.parametrize("mode", ["live", "scheduled"])
+@pytest.mark.parametrize("flip", [False, True], ids=["strict_first", "loose_first"])
+@pytest.mark.parametrize(("strict", "loose", "message"), INVALID_LOOSE_PAIRS)
+def test_loose_row_of_the_wrong_type_is_invalid_in_prequential(
+    strict, loose, message, flip: bool, mode
+):
+    rows = [match("x", ("a", "b"), ("c", "d"), **kw) for kw in (strict, loose)]
+    with pytest.raises(open_engine.InvalidMatchError, match=f"^{message}$"):
+        prequential_predictions(
+            ledger_with(rows[::-1] if flip else rows), burn_in_matches=0, mode=mode
+        )
 
 
 @pytest.mark.parametrize("mode", ["live", "scheduled"])

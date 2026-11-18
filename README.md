@@ -181,6 +181,8 @@ A match moves ratings by how the result compared with the expectation.
 
 A retired or incomplete match records zero or more finished games, each valid in its game format, and no decided winner. So in a best of 1 it has no games. A partial game in progress, such as `(7, 4)` to 11, is not recorded. `games` must be a tuple or list for every status.
 
+`Match.validate` also checks the type of other `Match` fields, and raises `InvalidMatchError` naming the field. `rating_format` must be a `RatingFormat` and `match_type` a `MatchType`, so a str such as `"tournament"` raises even though it equals a member's value. `team_a` and `team_b` must be tuples, `confirmed_by` a set or frozenset, `sequence` and `best_of` ints (not a `bool` or a float), `game_format` a `GameFormat`, and `played_at` a `datetime` or `None`. The fields inside a `GameFormat` are not type-checked.
+
 A match that is not completed is never rated:
 
 - `record` validates the match, then checks the `match_id` before the status: a `match_id` already processed or reserved gets `RejectionReason.DUPLICATE_MATCH_ID`. Otherwise it returns a result that is not counted, with `RejectionReason.MATCH_NOT_COMPLETED`. It moves no rating and does not mark the `match_id` processed, but it reserves the `match_id`. Every later `record` call for a match with that id that does not raise returns `DUPLICATE_MATCH_ID`, whether that match is completed or not and whatever its players. This matches `replay`, which never counts a second row with one `match_id`. To relabel a forfeit as completed live, use a new `match_id`. A live reservation sets the snapshot's `resumable` to `false`.

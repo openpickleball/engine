@@ -1,29 +1,34 @@
-"""A match_type given as its str value gets the same rules as the enum member.
+"""A match_type given as its str value is rejected (issues #65 and #83).
 
-Match.validate accepts the str value, so a self-reported match written as
-"self_reported" must still face the confirmation rule, the repeat discount
-and limit, and the self-reported log. All ids are synthetic.
+Match.validate requires a MatchType member, so a str such as "self_reported"
+or "tournament" raises InvalidMatchError from validate, record, and replay,
+even when it equals a member's value. record leaves the engine unchanged.
+All ids are synthetic.
 """
 
 from __future__ import annotations
 
-import json
 from datetime import date, timedelta
 
+import pytest
+
 from open_engine import (
+    InvalidMatchError,
     Match,
     MatchType,
     RatingEngine,
     RatingFormat,
-    RejectionReason,
     replay,
 )
 
 S = RatingFormat.SINGLES
 START = date(2026, 1, 5)
+BOTH = frozenset({"syn-a", "syn-b"})
+MESSAGE = "^match_type must be a MatchType, not str$"
+STR_KINDS = ["self_reported", "tournament"]
 
 
-def _row(match_id: str, on: date, kind: str, confirmed: frozenset[str]) -> Match:
+def _row(match_id: str, on: date, kind: object) -> Match:
     return Match(
         match_id,
         ("syn-a",),
@@ -32,59 +37,35 @@ def _row(match_id: str, on: date, kind: str, confirmed: frozenset[str]) -> Match
         on,
         S,
         match_type=kind,  # type: ignore[arg-type]
-        confirmed_by=confirmed,
+        confirmed_by=BOTH,
     )
 
 
-BOTH = frozenset({"syn-a", "syn-b"})
+@pytest.mark.parametrize("kind", STR_KINDS)
+def test_validate_rejects_a_str_match_type(kind: str) -> None:
+    with pytest.raises(InvalidMatchError, match=MESSAGE):
+        _row("syn-m1", START, kind).validate()
 
 
-def test_unconfirmed_str_self_reported_is_rejected() -> None:
+@pytest.mark.parametrize("kind", STR_KINDS)
+def test_record_rejects_a_str_match_type_and_changes_nothing(kind: str) -> None:
     engine = RatingEngine()
-    result = engine.record(_row("syn-m1", START, "self_reported", frozenset({"syn-a"})))
-    assert result.counted is False
-    assert result.reason is RejectionReason.SELF_REPORTED_UNCONFIRMED
-    assert "syn-a" not in engine.players
+    assert engine.record(_row("syn-m0", START, MatchType(kind))).counted
+    before = engine.to_snapshot()
+    with pytest.raises(InvalidMatchError, match=MESSAGE):
+        engine.record(_row("syn-m1", START + timedelta(days=1), kind))
+    assert engine.to_snapshot() == before
 
 
-def test_confirmed_str_self_reported_is_logged_and_not_verified() -> None:
+@pytest.mark.parametrize("kind", STR_KINDS)
+def test_replay_rejects_a_str_match_type(kind: str) -> None:
+    rows = [_row(f"syn-m{i}", START + timedelta(days=i), MatchType(kind)) for i in range(3)]
+    rows.append(_row("syn-m9", START + timedelta(days=9), kind))
+    with pytest.raises(InvalidMatchError, match=MESSAGE):
+        replay(rows, as_of=START + timedelta(days=30))
+
+
+@pytest.mark.parametrize("kind", STR_KINDS)
+def test_the_member_of_the_same_value_still_counts(kind: str) -> None:
     engine = RatingEngine()
-    assert engine.record(_row("syn-m1", START, "self_reported", BOTH)).counted
-    assert [dates for dates in engine.self_reported_log.values()] == [[START]]
-    state = engine.players["syn-a"].ratings[S]
-    assert (state.matches_played, state.verified_matches_played) == (1, 0)
-    RatingEngine.from_snapshot(json.loads(json.dumps(engine.to_snapshot())))
-
-
-def test_str_self_reported_gets_the_repeat_discount_and_limit() -> None:
-    as_str = RatingEngine()
-    as_enum = RatingEngine()
-    results = []
-    for i in range(6):
-        on = START + timedelta(days=i)
-        got = as_str.record(_row(f"syn-m{i}", on, "self_reported", BOTH))
-        want = as_enum.record(_row(f"syn-m{i}", on, MatchType.SELF_REPORTED, BOTH))
-        assert got == want
-        results.append(got)
-    assert results[-1].reason is RejectionReason.SELF_REPORTED_REPEAT_LIMIT
-    assert as_str.players == as_enum.players
-
-
-def test_str_self_reported_replay_snapshots_load_and_resume() -> None:
-    rows = [
-        _row(f"syn-m{i}", START + timedelta(days=10 * i), "self_reported", BOTH) for i in range(4)
-    ]
-    full = replay(rows, as_of=START + timedelta(days=60))
-    RatingEngine.from_snapshot(json.loads(json.dumps(full.to_snapshot())))
-    checkpoint = replay(rows, as_of=START + timedelta(days=15))
-    snap = json.loads(json.dumps(checkpoint.to_snapshot()))
-    resumed = replay(rows, as_of=START + timedelta(days=60), from_snapshot=snap)
-    assert resumed.players == full.players
-    assert resumed.replay_info == full.replay_info
-
-
-def test_str_tournament_counts_as_verified() -> None:
-    engine = RatingEngine()
-    assert engine.record(_row("syn-m1", START, "tournament", frozenset())).counted
-    state = engine.players["syn-a"].ratings[S]
-    assert (state.matches_played, state.verified_matches_played) == (1, 1)
+    assert engine.record(_row("syn-m1", START, MatchType(kind))).counted

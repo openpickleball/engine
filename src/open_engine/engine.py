@@ -1101,6 +1101,16 @@ class Match:
     gets DUPLICATE_MATCH_ID), it returns RejectionReason.MATCH_NOT_COMPLETED
     and reserves the match_id: a later record call for a match with it
     that does not raise returns DUPLICATE_MATCH_ID.
+
+    validate checks the type of status, rating_format, match_type, team_a,
+    team_b, confirmed_by, game_format, played_at, sequence, and best_of. It
+    raises InvalidMatchError when status is not a MatchStatus, rating_format
+    is not a RatingFormat, or match_type is not a MatchType (a str is
+    rejected, even one equal to a member's value); when a team is not a
+    tuple; when confirmed_by is not a set or frozenset; when game_format is
+    not a GameFormat; when played_at is not a datetime or None; or when
+    sequence or best_of is not an int (a bool or float is rejected). games may
+    be a tuple or list. The fields inside game_format are not type-checked.
     """
 
     match_id: str
@@ -1136,6 +1146,7 @@ class Match:
             raise InvalidMatchError(
                 f"status must be a MatchStatus, not {type(self.status).__name__}"
             )
+        self._validate_field_types()
         completed = self.status is MatchStatus.COMPLETED
         expected_size = self.rating_format.team_size
         if len(self.team_a) != expected_size or len(self.team_b) != expected_size:
@@ -1200,6 +1211,33 @@ class Match:
             raise InvalidMatchError("Match score does not contain a completed winner")
         if not completed and decided:
             raise InvalidMatchError(f"A {self.status.value} match cannot have a decided winner")
+
+    def _validate_field_types(self) -> None:
+        """
+        Raise InvalidMatchError when a field has the wrong type.
+
+        Runs before validate uses any of these fields. A str equal to an enum
+        member's value is rejected, a list team is rejected, and a bool or
+        float sequence or best_of is rejected.
+        """
+        checks: tuple[tuple[str, object, type | tuple[type, ...], str], ...] = (
+            ("rating_format", self.rating_format, RatingFormat, "a RatingFormat"),
+            ("match_type", self.match_type, MatchType, "a MatchType"),
+            ("team_a", self.team_a, tuple, "a tuple"),
+            ("team_b", self.team_b, tuple, "a tuple"),
+            ("confirmed_by", self.confirmed_by, (set, frozenset), "a set or frozenset"),
+            ("game_format", self.game_format, GameFormat, "a GameFormat"),
+        )
+        for name, value, kind, label in checks:
+            if not isinstance(value, kind):
+                raise InvalidMatchError(f"{name} must be {label}, not {type(value).__name__}")
+        if self.played_at is not None and not isinstance(self.played_at, datetime):
+            raise InvalidMatchError(
+                f"played_at must be a datetime or None, not {type(self.played_at).__name__}"
+            )
+        for name, number in (("sequence", self.sequence), ("best_of", self.best_of)):
+            if not isinstance(number, int) or isinstance(number, bool):
+                raise InvalidMatchError(f"{name} must be an int, not {type(number).__name__}")
 
 
 def _is_id(value: object) -> bool:

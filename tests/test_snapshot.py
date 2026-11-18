@@ -19,6 +19,7 @@ import open_engine.engine as engine_module
 from open_engine import (
     Config,
     ExternalRatingSnapshot,
+    InvalidMatchError,
     Match,
     MatchType,
     Player,
@@ -587,8 +588,6 @@ def _canonical_equal(a: Match, b: Match) -> bool:
 @pytest.mark.parametrize(
     ("a", "b"),
     [
-        pytest.param(BASE, dataclasses.replace(BASE, best_of=1.0), id="int vs float best_of"),
-        pytest.param(BASE, dataclasses.replace(BASE, match_type="rec_verified"), id="str vs enum"),
         pytest.param(BASE, dataclasses.replace(BASE, games=((11, 4),)), id="score"),
         pytest.param(
             dataclasses.replace(BASE, played_at=AT),
@@ -603,6 +602,26 @@ def test_digest_separates_rows_canonical_separates(a: Match, b: Match) -> None:
     b.validate()
     assert not _canonical_equal(a, b)
     assert engine_module._match_digest(a) != engine_module._match_digest(b)
+
+
+@pytest.mark.parametrize(
+    ("row", "message"),
+    [
+        pytest.param(
+            dataclasses.replace(BASE, best_of=1.0),
+            "best_of must be an int, not float",
+            id="float best_of",
+        ),
+        pytest.param(
+            dataclasses.replace(BASE, match_type="rec_verified"),
+            "match_type must be a MatchType, not str",
+            id="str match_type",
+        ),
+    ],
+)
+def test_rows_that_differ_from_base_only_in_type_are_invalid(row: Match, message: str) -> None:
+    with pytest.raises(InvalidMatchError, match=f"^{message}$"):
+        row.validate()
 
 
 @pytest.mark.parametrize(
