@@ -109,6 +109,17 @@ until #74 decides the entry-point rule. Leave #74 open.
 - `README.md`: the snapshot schema / loading rules text, where it says
   identities are only type checked or lists the load rules.
 - `CHANGELOG.md`: one entry under `## [Unreleased]`, **Breaking**.
+- `tests/test_replay_resume.py`: (added during the work)
+  `test_resume_rejects_a_live_update_count_without_a_live_match` matched
+  "live update" on the resume message. The load check now rejects that
+  resumable snapshot first, so its match changes to the
+  `live_updates_since_replay must be 0 in a resumable snapshot` message.
+  The behavior it pins (resume refuses) is the same.
+- Check order (added during the work): the live update check runs after
+  the date and inherited checks in `_check_resumable`, so a snapshot with
+  both a parent live count and an inherited count still reports
+  `inherited_live_updates must be 0 in a resumable snapshot`, as
+  `tests/test_inherited_live_updates.py` expects.
 
 ## Order of work
 

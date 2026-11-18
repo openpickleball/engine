@@ -1989,8 +1989,12 @@ def _snap_player(value: object, path: str, cfg: Config) -> Player:
     for source, external_id in external_raw.items():
         if not isinstance(source, str) or not isinstance(external_id, str):
             raise SnapshotError(f"{path}.external_ids must map str to str")
+        if not _is_id(source) or not _is_id(external_id):
+            raise SnapshotError(f"{path}.external_ids must map non-blank str to non-blank str")
         external_ids[source] = external_id
     account_user_id = _snap_opt_str(raw["account_user_id"], f"{path}.account_user_id")
+    if account_user_id is not None and not _is_id(account_user_id):
+        raise SnapshotError(f"{path}.account_user_id must be null or a non-blank str")
     ratings = raw["ratings"]
     if not isinstance(ratings, Mapping):
         raise SnapshotError(f"{path}.ratings must be an object")
@@ -2099,6 +2103,12 @@ def _check_resumable(snap: _Snapshot, paths: Mapping[str, str]) -> None:
             raise SnapshotError(f"{path} is after calculated_as_of in a resumable snapshot")
 
     for player_id, player in snap.players.items():
+        played = any(state.matches_played for state in player.ratings.values())
+        if played and player_id not in snap.ledger_player_ids:
+            raise SnapshotError(
+                f"{paths[player_id]}.id {player_id!r} has played matches but is not in "
+                "ledger_player_ids in a resumable snapshot"
+            )
         for fmt, state in player.ratings.items():
             path = f"{paths[player_id]}.ratings.{fmt.value}"
             check(state.initial_source_date, f"{path}.initial_source_date")
@@ -2114,6 +2124,13 @@ def _check_resumable(snap: _Snapshot, paths: Mapping[str, str]) -> None:
     for index, dates in enumerate(snap.self_reported_log.values()):
         for position, on in enumerate(dates):
             check(on, f"snapshot.self_reported_log[{index}].dates[{position}]")
+    for player_id, player in snap.players.items():
+        for fmt in sorted(player.ratings, key=lambda f: f.value):
+            if player.ratings[fmt].live_updates_since_replay:
+                raise SnapshotError(
+                    f"{paths[player_id]}.ratings.{fmt.value}.live_updates_since_replay "
+                    "must be 0 in a resumable snapshot"
+                )
     if info.matches_considered != len(snap.ledger_digests):
         raise SnapshotError(
             "snapshot.replay_info.matches_considered must equal the number of "
@@ -2123,6 +2140,12 @@ def _check_resumable(snap: _Snapshot, paths: Mapping[str, str]) -> None:
         raise SnapshotError(
             "snapshot.replay_info.matches_counted must equal the number of "
             "processed_match_ids in a resumable snapshot"
+        )
+    undigested = sorted(snap.processed_match_ids - snap.ledger_digests.keys())
+    if undigested:
+        raise SnapshotError(
+            f"snapshot.processed_match_ids names {undigested[0]!r}, which is not in "
+            "ledger_digests in a resumable snapshot"
         )
 
 
@@ -2298,6 +2321,43 @@ def _snap_match_ids(value: object, path: str) -> set[str]:
     return ids
 
 
+def _check_held_identities(players: Mapping[str, Player], paths: Mapping[str, str]) -> None:
+    """
+    Raise SnapshotError when two players hold the same account or external id.
+
+    The seed and link methods give each identity to one player, so a
+    snapshot names the later holder in player order.
+    """
+    held = _HeldIdentities()
+    for player_id, player in players.items():
+        path = paths[player_id]
+        if player.account_user_id is not None and player.account_user_id in held.accounts:
+            raise SnapshotError(f"{path}.account_user_id is held by another player")
+        for source in sorted(player.external_ids):
+            if (source, player.external_ids[source]) in held.external_ids:
+                raise SnapshotError(f"{path}.external_ids[{source!r}] is held by another player")
+        held.add(player)
+
+
+def _check_named_players(players: Mapping[str, Player], paths: Mapping[str, str]) -> None:
+    """
+    Raise SnapshotError for a partner or opponent that is not a player in the snapshot.
+
+    record creates every match player before it writes partners and
+    opponents, and no method removes a player.
+    """
+    for player_id, player in players.items():
+        for fmt in sorted(player.ratings, key=lambda f: f.value):
+            state = player.ratings[fmt]
+            path = f"{paths[player_id]}.ratings.{fmt.value}"
+            for name, seen in (("partners", state.partners), ("opponents", state.opponents)):
+                for other in sorted(seen):
+                    if other not in players:
+                        raise SnapshotError(
+                            f"{path}.{name} names {other!r}, which is not in players"
+                        )
+
+
 def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
     """Validate a snapshot against cfg and read it. Raises SnapshotError naming the bad value."""
     if not isinstance(snapshot, Mapping):
@@ -2336,6 +2396,8 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
             raise SnapshotError(f"{path}: duplicate player id {player.id!r}")
         players[player.id] = player
         player_paths[player.id] = path
+    _check_held_identities(players, player_paths)
+    _check_named_players(players, player_paths)
 
     processed = _snap_match_ids(raw["processed_match_ids"], "snapshot.processed_match_ids")
     reserved = _snap_match_ids(raw["reserved_match_ids"], "snapshot.reserved_match_ids")
@@ -2347,6 +2409,9 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
         key, dates = _snap_log_entry(value, path)
         if key in log:
             raise SnapshotError(f"{path} repeats a matchup")
+        for pid in sorted(pid for team in key[1] for pid in team):
+            if pid not in players:
+                raise SnapshotError(f"{path}.teams names {pid!r}, which is not in players")
         log[key] = dates
 
     content_keys = _snap_content_keys(raw["content_keys"], processed)
@@ -2588,14 +2653,17 @@ class RatingEngine:
         parent's initial_source_date, and no imported reliability, external
         player id, or evidence reference; while such a state is unplayed,
         also an RD of at least category_seed_rd and an rd_as_of that is set
-        and no later than the parent state's. Identities are only type checked
-        (account_user_id a str or null, external_ids str to str), since
-        they do not affect ratings. The engine's seed and link methods
-        do not create shared or blank ones, but a snapshot holding them
-        still loads. A resumable snapshot also holds no
-        date after calculated_as_of and no nonzero inherited_live_updates,
-        and its replay_info counts equal the
-        number of ledger digests and processed match ids. These checks
+        and no later than the parent state's. Every partner, opponent, and
+        self-reported team member is a player in the snapshot. Identities
+        follow the seed and link rules: account_user_id is null or a
+        non-blank str, every external_ids source and id is a non-blank str,
+        and no two players hold the same account or the same (source,
+        external id) pair. A resumable snapshot also holds no date after
+        calculated_as_of, no nonzero live_updates_since_replay or
+        inherited_live_updates, no processed match id without a ledger
+        digest, and no player with a played state missing from
+        ledger_player_ids, and its replay_info counts equal the number of
+        ledger digests and processed match ids. These checks
         cover shape and invariants, not authenticity. Raises SnapshotError
         naming the first bad value. The engine shares no state with the
         snapshot.
