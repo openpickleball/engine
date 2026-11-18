@@ -21,8 +21,9 @@ Decision (recorded on #109): exact types.
 
 - `src/open_engine/engine.py`: `Match.validate`, `Match._validate_field_types`, a new `_validate_match(match)` helper (type check, then `validate`), used in `RatingEngine._record`, `_ledger`, and `prequential_predictions`'s `step`. `Match` docstring.
 - `tests/test_match_exact_types.py`: new.
+- `tests/test_match_digest_strict.py`: its "list member int vs int subclass" case is now an invalid match, so it becomes "list member list vs tuple", a case that still validates and still differs inside a list (revision during implementation).
 - `CHANGELOG.md`: a `**Breaking:**` entry under Changed, with Migration.
-- README if it states the Match type rules.
+- `README.md`: the `InvalidMatchError` entry and the Match type rules.
 
 ## Order of work
 
