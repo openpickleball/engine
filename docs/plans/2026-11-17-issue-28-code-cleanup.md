@@ -19,7 +19,7 @@ Domain skills: superpowers:test-driven-development: invoke. django, django-ninja
 
 1. `fit_scale` raises `EvaluationError` before any prediction work when `low` or `high` is not finite, when `low >= high`, or when `tolerance` is not finite or not greater than 0. Today `tolerance <= 0` hangs in the golden-section loop and `low >= high` returns a meaningless fit.
 2. `fit_win_calibration` applies the same checks (same defect, same search code).
-2a. Added after review: both fits also reject a finite range whose width `high - low` overflows, and both golden-section loops end when the bracket stops shrinking, so a positive tolerance below the float spacing near the optimum no longer hangs. The break fires only when the bracket width does not decrease, which never happens before the tolerance stops a normal search, so valid fits are unchanged.
+2a. Added after review: both fits also reject a finite range whose width `high - low` or sum `low + high` overflows (the search takes midpoints), and both golden-section loops end when the bracket stops shrinking, so a positive tolerance below the float spacing near the optimum no longer hangs. The break fires only when the bracket width does not decrease, which never happens before the tolerance stops a normal search, so valid fits are unchanged.
 3. Valid arguments give exactly the same fits as before.
 4. The README states that a standard external rating system is the intended source of seed ratings and that the engine uses none of its code or internals.
 5. A synthetic ledger's `replay` output, `to_snapshot()` JSON, and `Config().fingerprint()` are byte-identical before and after the change.

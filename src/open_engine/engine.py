@@ -3878,8 +3878,9 @@ def _check_search_bounds(low: float, high: float, tolerance: float) -> None:
     """Raise EvaluationError for a search range or tolerance the fits cannot use."""
     if not (math.isfinite(low) and math.isfinite(high)):
         raise EvaluationError("low and high must be finite")
-    if not math.isfinite(high - low):
-        raise EvaluationError("high - low must be finite")
+    # The search takes differences and midpoints of points in the range.
+    if not (math.isfinite(high - low) and math.isfinite(low + high)):
+        raise EvaluationError("high - low and low + high must be finite")
     if not low < high:
         raise EvaluationError("low must be less than high")
     if not (math.isfinite(tolerance) and tolerance > 0):
@@ -3926,8 +3927,8 @@ def fit_scale(
     Coarse grid first, then golden-section search around the best grid point.
     Publish the returned ScaleFit alongside the config that adopts it.
     Raises EvaluationError, before any prediction work, unless low, high,
-    and high - low are finite, low < high, and tolerance is finite and
-    greater than 0.
+    high - low, and low + high are finite, low < high, and tolerance is
+    finite and greater than 0.
     """
     _check_search_bounds(low, high, tolerance)
     cfg = cfg or Config()
