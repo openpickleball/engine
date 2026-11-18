@@ -37,8 +37,15 @@ Published behavior notes:
   again and again, or lose rating faster on purpose. `imbalance` is a
   per-match value in team-average units, so a match adds
   `team_size * imbalance` to the pool's total rating (twice the value in
-  doubles). The backend should total it per pool (and per replay) and
-  monitor it.
+  doubles). Each replay totals it per rating format in
+  `ReplayInfo.net_rating_created`, from the unrounded changes, a category
+  match adding to its own format and, when category_feeds_parent is on
+  and its parent update counts, to doubles. The backend should store and
+  monitor that total. Between replays it can add `team_size * imbalance`
+  of each live MatchResult (and its parent); that running total is
+  approximate, since imbalance is rounded to 5 places, and the next
+  replay gives the exact total. The engine reports the total but does
+  not limit it.
 - Match performance is team A's share of all points across the match's
   games, blended with the match result by Config.win_weight:
   `(1 - win_weight) * point_share + win_weight * (1 if A won else 0)`.
@@ -103,17 +110,29 @@ Published behavior notes:
   clock.
 - PlayerSummary.established is True when OPEN-earned reliability, as
   displayed (rounded to 1 place), is at least
-  Config.established_reliability_threshold (60 by default). Imported
-  reliability never counts, and it is measured at the same reference date
-  as reliability, so it lapses with inactivity. Under the defaults, a new
+  Config.established_reliability_threshold (60 by default) and the state
+  has at least Config.established_min_verified_matches (3 by default)
+  counted tournament, league, or recreational verified matches
+  (RatingState.verified_matches_played). Self-reported matches never
+  count toward that minimum, and neither does a match in which the
+  player was frozen. So while the minimum is above 0, a player with
+  fewer counted verified matches in the format than the minimum is not
+  established at any reliability. A category state derived from overall
+  doubles starts its count at 0, as it starts matches_played at 0. With
+  a minimum of 0 the rule is reliability alone. Imported
+  reliability never counts toward established, and established is
+  measured at the same reference date as reliability, so it lapses with
+  inactivity. Under the defaults, a new
   player with no imported rating, playing one match a week with varied
   partners and opponents, becomes established after about 10 to 13
   tournament, league, or recreational verified matches (10 tournament, 11
   league, or 13 recreational verified matches of one game, fewer for best
   of 3), and after about twice as many against the same players.
-  Self-reported matches need about 20 to 25 with varied players and never
-  get there against the same players, because repeat matches are
-  discounted and then rejected. A player seeded from a recently captured
+  Self-reported matches raise reliability past the threshold after about
+  20 to 25 with varied players (never against the same players, because
+  repeat matches are discounted and then rejected), but such a player is
+  established only once they also have the minimum of counted verified
+  matches. A player seeded from a recently captured
   imported rating starts at a lower RD (Config.external_seed_rd) and is
   established after about 3 to 4 tournament, league, or recreational
   verified matches. RD grows from the capture date, so an older import
@@ -122,9 +141,9 @@ Published behavior notes:
   established is what external rating systems usually call provisional.
   That is different from OPEN's provisional live updates between replays
   and from the open_provisional initial source. The threshold is a label
-  only: it changes no rating, prediction, evaluate,
-  prequential_predictions, fit_scale, or fit_win_calibration output.
-  Evaluation has its own eligibility rule: it scores a match only when
+  only, and so is the minimum: neither changes any rating, prediction,
+  evaluate, prequential_predictions, fit_scale, or fit_win_calibration
+  output. Evaluation has its own eligibility rule: it scores a match only when
   every participant has an imported baseline or at least burn_in_matches
   OPEN matches. That rule is separate from PlayerSummary.established.
 - Ledger order: `replay` and `prequential_predictions` sort matches by
@@ -160,7 +179,7 @@ Published behavior notes:
   `player_summary` call with no date to measure at or with an as_of that
   is not a plain date.
 - Snapshots and checkpoints: `RatingEngine.to_snapshot()` gives the whole
-  engine state as JSON-safe data (schema version 5) with sorted keys and
+  engine state as JSON-safe data (schema version 6) with sorted keys and
   lists, and `RatingEngine.from_snapshot` loads it back after validating
   every key, type, and range and checking the config version and
   fingerprint. A replay's snapshot is a checkpoint:
@@ -278,6 +297,12 @@ Production notes:
   a loss as a forfeit, retirement, or unfinished match to avoid it. The
   engine cannot tell; the backend must. The engine does not record which
   team forfeited or retired, so the backend stores that.
+- Set match_type from organizer, league, or club provenance, and never
+  let whoever submits a match choose a verified type (tournament, league,
+  or rec_verified). match_type sets a match's weight and decides whether
+  it counts toward PlayerSummary.established, so a self-reported match
+  relabeled as verified would let players report their way to
+  established. The engine cannot tell; the backend must.
 - Assign match_ids in the backend. A party that can choose a match_id
   can submit a non-completed match under it first, and then the real
   match with that id never counts live (replay raises
@@ -287,7 +312,9 @@ Production notes:
   external rating. An external refresh can never overwrite an OPEN-earned
   rating once OPEN matches have been processed.
 - Store each replay's `ReplayInfo` (as_of date, config version, config
-  fingerprint) for auditability.
+  fingerprint, counts, net_rating_created) for auditability. Watch
+  net_rating_created for a pool that grows or shrinks: colluding accounts
+  with different K can create rating, and the engine does not cap it.
 - Reject a match whose `played_on` is after the date it was submitted.
   The engine never reads the clock, so it cannot tell. A future-dated
   live match, by typo or on purpose, holds last_played, rd_as_of, and
@@ -394,6 +421,12 @@ class MatchType(_StrEnum):
     LEAGUE = "league"
     REC_VERIFIED = "rec_verified"
     SELF_REPORTED = "self_reported"
+
+
+# Match types an organizer, club, or verified record stands behind.
+# RatingState.verified_matches_played counts these, and
+# PlayerSummary.established needs Config.established_min_verified_matches of them.
+_VERIFIED_MATCH_TYPES = frozenset({MatchType.TOURNAMENT, MatchType.LEAGUE, MatchType.REC_VERIFIED})
 
 
 class ScoringType(_StrEnum):
@@ -530,7 +563,9 @@ class Config:
     can be a dict key or a set member. to_dict() and from_dict() store and
     load a config.
 
-    Only the mapping and format fields are type-checked so far. A scalar
+    The mapping and format fields, established_min_verified_matches (a
+    nonnegative int, not a bool), and reject_content_duplicates (a bool)
+    are type-checked; other scalar fields are not yet. Such a scalar
     field given a value JSON cannot hold (a Decimal, say) makes
     fingerprint(), ==, and hash() raise TypeError, and a non-finite float
     is written as NaN or Infinity, which strict JSON rejects.
@@ -645,9 +680,14 @@ class Config:
     import_reliability_max_age_days: int = 365
 
     # Reliability label. PlayerSummary.established is True when OPEN-earned
-    # reliability, as displayed, is at least this value (0-100). A label
-    # only: it changes no rating, prediction, or evaluation.
+    # reliability, as displayed, is at least the threshold (0-100) and the
+    # state has at least established_min_verified_matches counted
+    # tournament, league, or recreational verified matches. Self-reported
+    # matches never count toward the minimum. A label only: it changes no
+    # rating, prediction, or evaluation. A minimum of 0 leaves the
+    # reliability rule alone.
     established_reliability_threshold: float = 60.0
+    established_min_verified_matches: int = 3
 
     # Category doubles matches also update overall doubles.
     category_feeds_parent: bool = True
@@ -719,6 +759,9 @@ class Config:
             raise ConfigError("import reliability limits must be nonnegative")
         if not 0.0 <= self.established_reliability_threshold <= 100.0:
             raise ConfigError("established_reliability_threshold must be between 0 and 100")
+        minimum = self.established_min_verified_matches
+        if not _is_whole_number(minimum) or minimum < 0:
+            raise ConfigError("established_min_verified_matches must be a nonnegative int")
         if not isinstance(self.reject_content_duplicates, bool):
             raise ConfigError("reject_content_duplicates must be a bool")
 
@@ -910,6 +953,11 @@ class RatingState:
     # derivation; 0 for a state not derived from its parent. A replay
     # gives 0, since no state has live updates during a replay.
     inherited_live_updates: int = 0
+
+    # Counted tournament, league, and recreational verified matches that
+    # moved this state: matches_played without the self-reported ones. A
+    # seed, and a category state derived from its parent, start at 0.
+    verified_matches_played: int = 0
 
 
 @dataclass
@@ -1299,9 +1347,13 @@ class PlayerSummary:
     reliability.
 
     established is True when reliability (as displayed, rounded to 1 place)
-    is at least Config.established_reliability_threshold. Imported
-    reliability never counts toward it, and it is measured at the same
-    reference date as reliability, so it lapses with inactivity. A recently
+    is at least Config.established_reliability_threshold and the state's
+    verified_matches_played (counted tournament, league, and recreational
+    verified matches) is at least Config.established_min_verified_matches.
+    Self-reported matches never count toward that minimum. Imported
+    reliability never counts toward established, and established is
+    measured at the same reference date as reliability, so it lapses with
+    inactivity. A recently
     captured imported rating can reach the threshold in fewer OPEN matches
     because of its lower starting RD; see the module docstring for counts.
     It is a label only and changes no rating. A rating that is not
@@ -1323,7 +1375,7 @@ class PlayerSummary:
     rating: float  # rounded to 3 places
     reliability: float  # OPEN-earned reliability, 0-100
     imported_reliability: float | None  # carried imported reliability, 0-100
-    established: bool  # reliability >= Config.established_reliability_threshold
+    established: bool  # reliability over the threshold and enough verified matches
     rd: float  # inflated to the reference date, rounded to 4 places
     matches_played: int
     last_played: date | None
@@ -1337,15 +1389,66 @@ class PlayerSummary:
     account_linked: bool
 
 
+_FORMAT_VALUES = frozenset(fmt.value for fmt in RatingFormat)
+
+
+def _zero_by_format() -> dict[RatingFormat, float]:
+    return dict.fromkeys(RatingFormat, 0.0)
+
+
 @dataclass(frozen=True)
 class ReplayInfo:
-    """Provenance of one replay: as_of date, config version and fingerprint, counts."""
+    """
+    Provenance of one replay: as_of date, config version and fingerprint, counts.
+
+    net_rating_created is, per rating format, the rating the replay's
+    counted updates added to that pool (negative when they removed it):
+    the sum over every counted update of the unrounded rating changes of
+    every player in it, a frozen player adding 0.0. A category match adds
+    its category update to its own format and, when category_feeds_parent
+    is on and its overall doubles update counts, that update to doubles.
+    Each player moves by their own K, so it can be nonzero when K differs
+    between the teams or a player is clamped or frozen, and colluding
+    accounts can grow it on purpose. It is
+    stored as a read-only mapping with a key for every RatingFormat in
+    definition order (0.0 where nothing counted). Building a ReplayInfo
+    copies the mapping given: a key may be a RatingFormat or its str
+    value, a missing format gets 0.0, and a value that is not a mapping,
+    an unknown key, or a format given twice raises SnapshotError (a
+    ReplayInfo is built only by replay and by snapshot loading). Updates
+    are added in ledger order, and a resume continues from the checkpoint's total, so
+    a resume gives the same floats as a full replay. Live updates after
+    the replay do not change it. The backend can add team_size *
+    imbalance of each live MatchResult (and its parent) to follow them;
+    that is approximate (imbalance is rounded to 5 places), and the next
+    replay gives the exact total.
+    """
 
     as_of: date
     config_version: str
     config_fingerprint: str
     matches_considered: int
     matches_counted: int
+    net_rating_created: Mapping[RatingFormat, float] = field(default_factory=_zero_by_format)
+
+    def __post_init__(self) -> None:
+        given = self.net_rating_created
+        name = "ReplayInfo.net_rating_created"
+        if not isinstance(given, Mapping):
+            raise SnapshotError(f"{name} must be a mapping")
+        values: dict[RatingFormat, float] = {}
+        for key, value in given.items():
+            if isinstance(key, RatingFormat):
+                fmt = key
+            elif isinstance(key, str) and key in _FORMAT_VALUES:
+                fmt = RatingFormat(key)
+            else:
+                raise SnapshotError(f"{name} has an unknown key: {key!r}")
+            if fmt in values:
+                raise SnapshotError(f"{name} repeats the format {fmt.value!r}")
+            values[fmt] = value
+        ordered = {fmt: values.get(fmt, 0.0) for fmt in RatingFormat}
+        object.__setattr__(self, "net_rating_created", _FrozenMapping(ordered))
 
 
 # ---------------------------------------------------------------------------
@@ -1538,7 +1641,12 @@ def _is_plain_date(value: object) -> bool:
 
 def _seed_type_broken(state: RatingState) -> str | None:
     """The first seed field with the wrong type, or None."""
-    for name in ("matches_played", "live_updates_since_replay", "inherited_live_updates"):
+    for name in (
+        "matches_played",
+        "verified_matches_played",
+        "live_updates_since_replay",
+        "inherited_live_updates",
+    ):
         value = getattr(state, name)
         if not isinstance(value, int) or isinstance(value, bool):
             return f"{name} must be an int"
@@ -1565,6 +1673,8 @@ def _seed_rule_broken(state: RatingState, cfg: Config) -> str | None:
         return wrong_type
     if state.matches_played != 0:
         return "matches_played must be 0"
+    if state.verified_matches_played != 0:
+        return "verified_matches_played must be 0"
     if state.last_played is not None:
         return "last_played must be None"
     if state.partners:
@@ -1669,7 +1779,7 @@ def _validate_seed(player: Player, cfg: Config) -> None:
 # Snapshots
 # ---------------------------------------------------------------------------
 
-SNAPSHOT_VERSION = 5
+SNAPSHOT_VERSION = 6
 
 _TOP_KEYS = frozenset(
     {
@@ -1691,7 +1801,14 @@ _TOP_KEYS = frozenset(
     }
 )
 _REPLAY_INFO_KEYS = frozenset(
-    {"as_of", "config_version", "config_fingerprint", "matches_considered", "matches_counted"}
+    {
+        "as_of",
+        "config_version",
+        "config_fingerprint",
+        "matches_considered",
+        "matches_counted",
+        "net_rating_created",
+    }
 )
 _PLAYER_KEYS = frozenset({"id", "account_user_id", "external_ids", "ratings"})
 _STATE_KEYS = frozenset(
@@ -1699,6 +1816,7 @@ _STATE_KEYS = frozenset(
         "rating",
         "rd",
         "matches_played",
+        "verified_matches_played",
         "last_played",
         "rd_as_of",
         "initial_rating",
@@ -1760,6 +1878,16 @@ def _state_form(state: RatingState) -> dict[object, object]:
         (name, _date_map_form(value) if name in ("partners", "opponents") else _iso(value))
         for name, value in items
     )
+
+
+def _replay_info_value(name: str, value: object) -> object:
+    """A ReplayInfo field in snapshot form: format values as keys, dates as ISO text."""
+    if name == "net_rating_created" and isinstance(value, Mapping):
+        return _sorted_dict(
+            (key.value if isinstance(key, RatingFormat) else key, item)
+            for key, item in value.items()
+        )
+    return _iso(value)
 
 
 def _player_form(player: Player) -> dict[object, object]:
@@ -1910,6 +2038,8 @@ def _check_state_invariants(state: RatingState, path: str, player_id: str, cfg: 
         raise SnapshotError(f"{path}: matches_played must be 0 exactly when last_played is null")
     if state.live_updates_since_replay > state.matches_played:
         raise SnapshotError(f"{path}.live_updates_since_replay must not exceed matches_played")
+    if state.verified_matches_played > state.matches_played:
+        raise SnapshotError(f"{path}.verified_matches_played must not exceed matches_played")
     if player_id in state.partners:
         raise SnapshotError(f"{path}.partners: a player cannot be their own partner")
     if player_id in state.opponents:
@@ -1954,6 +2084,9 @@ def _snap_state_fields(value: object, path: str, cfg: Config) -> RatingState:
         rating=rating,
         rd=rd,
         matches_played=_snap_count(raw["matches_played"], f"{path}.matches_played"),
+        verified_matches_played=_snap_count(
+            raw["verified_matches_played"], f"{path}.verified_matches_played"
+        ),
         last_played=_snap_opt_date(raw["last_played"], f"{path}.last_played"),
         rd_as_of=_snap_opt_date(raw["rd_as_of"], f"{path}.rd_as_of"),
         initial_rating=_snap_number(raw["initial_rating"], f"{path}.initial_rating"),
@@ -2199,7 +2332,46 @@ def _snap_replay_info(
     counted = _snap_count(raw["matches_counted"], f"{path}.matches_counted")
     if counted > considered:
         raise SnapshotError(f"{path}.matches_counted must not exceed matches_considered")
-    return ReplayInfo(calculated_as_of, version, fingerprint, considered, counted)
+    created_path = f"{path}.net_rating_created"
+    created_raw = _snap_object(raw["net_rating_created"], created_path, _FORMAT_VALUES)
+    created: dict[RatingFormat, float] = {}
+    for fmt in RatingFormat:
+        value = created_raw[fmt.value]
+        # A float only: a resume must continue from the exact float a full
+        # replay had, and an int would change its type.
+        if type(value) is not float or not math.isfinite(value):
+            raise SnapshotError(f"{created_path}.{fmt.value} must be a finite float")
+        if value == 0.0 and math.copysign(1.0, value) < 0:
+            # Totals start at 0.0 and every term adds 0.0, so replay never
+            # writes -0.0, and a resume from it would write different text.
+            raise SnapshotError(f"{created_path}.{fmt.value} must not be a negative zero")
+        if counted == 0 and value != 0.0:
+            raise SnapshotError(f"{created_path}.{fmt.value} must be 0.0 when matches_counted is 0")
+        created[fmt] = value
+    return ReplayInfo(calculated_as_of, version, fingerprint, considered, counted, created)
+
+
+def _check_net_rating_created(info: ReplayInfo | None, players: Mapping[str, Player]) -> None:
+    """
+    Raise SnapshotError for a nonzero total in a format nobody has played.
+
+    A counted update moves at least one player who is not frozen, and a
+    played state is never removed or replaced, so a nonzero total needs a
+    played state in its format.
+    """
+    if info is None:
+        return
+    for fmt in RatingFormat:
+        if info.net_rating_created[fmt] == 0.0:
+            continue
+        if not any(
+            fmt in player.ratings and player.ratings[fmt].matches_played
+            for player in players.values()
+        ):
+            raise SnapshotError(
+                f"snapshot.replay_info.net_rating_created.{fmt.value} must be 0.0 when no "
+                f"player has a played {fmt.value} state"
+            )
 
 
 def _snap_content_keys(value: object, processed: set[str]) -> dict[str, str]:
@@ -2358,6 +2530,75 @@ def _check_named_players(players: Mapping[str, Player], paths: Mapping[str, str]
                         )
 
 
+def _check_verified_against_log(
+    players: Mapping[str, Player],
+    paths: Mapping[str, str],
+    log: Mapping[MatchupKey, list[date]],
+    cfg: Config,
+    resumable: bool,
+) -> None:
+    """
+    Raise SnapshotError for a verified_matches_played the self-reported log rules out.
+
+    record appends one date to the log, under the match's own format, for
+    every counted self-reported match, and the log is never pruned. So
+    matches_played - verified_matches_played (the self-reported updates
+    that moved a state) is at most the logged matches that could move it:
+    those in its format, plus, for doubles under category_feeds_parent,
+    those in the category formats. A frozen player is logged but not
+    moved, so that is only an upper bound. A state with no
+    initial_source_date is never frozen and, once logged, never reseeded,
+    so for it the count equals the logged matches in its format (for
+    doubles, at least the doubles ones). A resumable snapshot is exactly
+    a replay, whose seeds precede every row, so a logged match dated
+    after a state's initial_source_date moved that state: the same exact
+    rule then holds counting only those dates. A live import can be
+    reseeded while unplayed, so a logged match in which it was frozen
+    under an earlier capture date cannot be told apart, and only the
+    upper bound applies to it.
+    """
+    logged: dict[tuple[str, RatingFormat], list[date]] = {}
+    for (fmt, teams), dates in log.items():
+        for team in teams:
+            for pid in team:
+                logged.setdefault((pid, fmt), []).extend(dates)
+    categories = [f for f in RatingFormat if f.parent is RatingFormat.DOUBLES]
+
+    def count(pid: str, fmt: RatingFormat, after: date | None) -> int:
+        dates = logged.get((pid, fmt), [])
+        return len(dates) if after is None else sum(1 for on in dates if on > after)
+
+    for player_id, player in players.items():
+        for fmt in sorted(player.ratings, key=lambda f: f.value):
+            state = player.ratings[fmt]
+            path = f"{paths[player_id]}.ratings.{fmt.value}"
+            unverified = state.matches_played - state.verified_matches_played
+            exact = state.initial_source_date is None or resumable
+            after = state.initial_source_date if exact else None
+            own = count(player_id, fmt, after)
+            prefix = f"{path}: matches_played - verified_matches_played ({unverified})"
+            if exact and fmt is not RatingFormat.DOUBLES:
+                if unverified != own:
+                    raise SnapshotError(
+                        f"{prefix} must equal the self-reported {fmt.value} matches logged for "
+                        f"this player ({own})"
+                    )
+                continue
+            feeds = fmt is RatingFormat.DOUBLES and cfg.category_feeds_parent
+            upper = own + (sum(count(player_id, c, after) for c in categories) if feeds else 0)
+            what = "doubles and category" if feeds else fmt.value
+            if unverified > upper:
+                raise SnapshotError(
+                    f"{prefix} must not exceed the self-reported {what} matches logged for "
+                    f"this player ({upper})"
+                )
+            if exact and unverified < own:
+                raise SnapshotError(
+                    f"{prefix} must be at least the self-reported doubles matches logged "
+                    f"for this player ({own})"
+                )
+
+
 def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
     """Validate a snapshot against cfg and read it. Raises SnapshotError naming the bad value."""
     if not isinstance(snapshot, Mapping):
@@ -2398,6 +2639,7 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
         player_paths[player.id] = path
     _check_held_identities(players, player_paths)
     _check_named_players(players, player_paths)
+    _check_net_rating_created(replay_info, players)
 
     processed = _snap_match_ids(raw["processed_match_ids"], "snapshot.processed_match_ids")
     reserved = _snap_match_ids(raw["reserved_match_ids"], "snapshot.reserved_match_ids")
@@ -2415,6 +2657,10 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
         log[key] = dates
 
     content_keys = _snap_content_keys(raw["content_keys"], processed)
+    resumable = raw["resumable"]
+    if not isinstance(resumable, bool):
+        raise SnapshotError("snapshot.resumable must be a bool")
+    _check_verified_against_log(players, player_paths, log, cfg, resumable)
     digests_raw = raw["ledger_digests"]
     if not isinstance(digests_raw, Mapping):
         raise SnapshotError("snapshot.ledger_digests must be an object")
@@ -2436,10 +2682,6 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
         if player_id in ledger_player_ids:
             raise SnapshotError(f"{path}: duplicate player id {player_id!r}")
         ledger_player_ids.add(player_id)
-
-    resumable = raw["resumable"]
-    if not isinstance(resumable, bool):
-        raise SnapshotError("snapshot.resumable must be a bool")
 
     possible_duplicates = _snap_possible_duplicates(
         raw["possible_duplicates"],
@@ -2536,7 +2778,7 @@ class RatingEngine:
 
     def to_snapshot(self) -> dict[str, object]:
         """
-        The engine's whole state as JSON-safe data (schema version 5).
+        The engine's whole state as JSON-safe data (schema version 6).
 
         json.dumps(snapshot, allow_nan=False) works with no custom encoder,
         and RatingEngine.from_snapshot rebuilds the engine from it, or from
@@ -2544,10 +2786,11 @@ class RatingEngine:
         every list in a fixed order, so the same state always gives the same
         text. Numbers keep their type: an int stays an int.
 
-        Keys: snapshot_version (5), engine_version (informational),
+        Keys: snapshot_version (6), engine_version (informational),
         config_version and config_fingerprint (of this engine's Config),
         calculated_as_of (ISO date or null), replay_info (null, or its
-        fields with as_of as an ISO date), players (sorted by id: id,
+        fields with as_of as an ISO date and net_rating_created as format
+        value to float), players (sorted by id: id,
         account_user_id, external_ids, and ratings by format value, each
         state with every RatingState field, dates as ISO text, and partners
         and opponents as id to ISO date), processed_match_ids (sorted),
@@ -2588,7 +2831,9 @@ class RatingEngine:
         info = self.replay_info
         replay_info: object = None
         if info is not None:
-            replay_info = _sorted_dict((f.name, _iso(getattr(info, f.name))) for f in fields(info))
+            replay_info = _sorted_dict(
+                (f.name, _replay_info_value(f.name, getattr(info, f.name))) for f in fields(info)
+            )
         snapshot: dict[str, object] = {
             "calculated_as_of": _iso(self.calculated_as_of),
             "config_fingerprint": self.cfg.fingerprint(),
@@ -2622,13 +2867,16 @@ class RatingEngine:
         cfg must be the Config the snapshot was taken under (default
         Config()): its version and fingerprint must equal the snapshot's.
         The whole snapshot is validated before anything is built: exactly
-        the schema's keys at every level, snapshot_version 5, dates as
+        the schema's keys at every level, snapshot_version 6, dates as
         YYYY-MM-DD text, non-blank str ids with no repeated player or match
         id, RatingFormat values as format keys, ratings within min_rating
         and max_rating, RD within rd_min and rd_max, an imported
         reliability between 0 and 100, nonnegative int counts no larger
         than 2**63 - 1, replay_info present exactly when calculated_as_of
-        is and consistent with it, self-reported matchups of two disjoint
+        is and consistent with it (its net_rating_created a finite float,
+        not a negative zero, for every RatingFormat, 0.0 for every format when matches_counted
+        is 0 and for a format in which no player has a played state),
+        self-reported matchups of two disjoint
         teams of the format's size, content keys and ledger digests of 64
         lowercase hex characters, content keys that each name a different
         processed match id, possible duplicates that each name another
@@ -2644,7 +2892,8 @@ class RatingEngine:
         within the rating bounds; an unplayed state with RD new_player_rd,
         external_seed_rd, or at least category_seed_rd, and no partners,
         opponents, or live updates; matches_played 0 exactly when
-        last_played is null; live updates no more than matches played; no
+        last_played is null; live updates and verified matches no more
+        than matches played; no
         player their own partner or opponent; an imported reliability only
         with an initial_source_date; a nonzero inherited_live_updates only
         on a category state derived from its parent (category_feeds_parent
@@ -2654,7 +2903,14 @@ class RatingEngine:
         player id, or evidence reference; while such a state is unplayed,
         also an RD of at least category_seed_rd and an rd_as_of that is set
         and no later than the parent state's. Every partner, opponent, and
-        self-reported team member is a player in the snapshot. Identities
+        self-reported team member is a player in the snapshot. Each state's
+        matches_played - verified_matches_played (its self-reported updates)
+        is at most the self-reported log dates in its format that name the
+        player, plus, for doubles under category_feeds_parent, those in the
+        category formats. For a state with no initial_source_date, and for
+        every state of a resumable snapshot counting only log dates after
+        its initial_source_date, it equals the logged matches in its format
+        (for doubles, it is at least the doubles ones). Identities
         follow the seed and link rules: account_user_id is null or a
         non-blank str, every external_ids source and id is a non-blank str,
         and no two players hold the same account or the same (source,
@@ -2723,8 +2979,9 @@ class RatingEngine:
         - rating, rd, initial_rating, and an imported reliability are ints
           or finite floats (not bool), the counts are ints, partners and
           opponents are dicts, and dates are dates.
-        - No matches, last_played, partners, opponents, or live updates, and
-          inherited_live_updates is 0.
+        - No matches, last_played, partners, opponents, or live updates:
+          matches_played, verified_matches_played,
+          live_updates_since_replay, and inherited_live_updates are 0.
         - rating and initial_rating are within Config.min_rating and
           Config.max_rating.
         - A provisional state (no initial_source_date) has RD new_player_rd,
@@ -3082,6 +3339,20 @@ class RatingEngine:
         match_id and game format checks and before the self-reported
         checks, so a rejected duplicate never enters the self-reported log.
         """
+        return self._record(match, as_of=as_of)[0]
+
+    def _record(
+        self, match: Match, *, as_of: date | None = None
+    ) -> tuple[MatchResult, dict[RatingFormat, float]]:
+        """
+        record, also returning the net rating each counted update added, by format.
+
+        The net of one update is math.fsum of the unrounded rating changes
+        it applied, a frozen player adding 0.0. A format appears only when
+        its update counted. replay totals these into
+        ReplayInfo.net_rating_created.
+        """
+        net: dict[RatingFormat, float] = {}
         match.validate()
         if as_of is not None and not _is_plain_date(as_of):
             raise InvalidMatchError(
@@ -3091,19 +3362,28 @@ class RatingEngine:
             raise InvalidMatchError("as_of cannot be earlier than the match date")
         match_id = match.match_id
         if match_id in self.processed_match_ids or match_id in self._reserved_match_ids:
-            return MatchResult(False, match.rating_format, RejectionReason.DUPLICATE_MATCH_ID)
+            return (
+                MatchResult(False, match.rating_format, RejectionReason.DUPLICATE_MATCH_ID),
+                net,
+            )
         if match.status is not MatchStatus.COMPLETED:
             # Reserve the id, so a later record with it that does not raise
             # is a duplicate, as in replay. No rating, count, or content key
             # changes.
             self._changed()
             self._reserved_match_ids.add(match_id)
-            return MatchResult(False, match.rating_format, RejectionReason.MATCH_NOT_COMPLETED)
+            return (
+                MatchResult(False, match.rating_format, RejectionReason.MATCH_NOT_COMPLETED),
+                net,
+            )
 
         cfg = self.cfg
         format_key = (match.game_format.scoring, match.game_format.points_to)
         if format_key not in cfg.allowed_game_formats:
-            return MatchResult(False, match.rating_format, RejectionReason.GAME_FORMAT_NOT_ACCEPTED)
+            return (
+                MatchResult(False, match.rating_format, RejectionReason.GAME_FORMAT_NOT_ACCEPTED),
+                net,
+            )
 
         live = as_of is None
 
@@ -3112,43 +3392,53 @@ class RatingEngine:
         if twin is not None and cfg.reject_content_duplicates:
             self._changed()
             self.possible_duplicates[match.match_id] = twin
-            return MatchResult(
+            rejected = MatchResult(
                 False,
                 match.rating_format,
                 RejectionReason.POSSIBLE_DUPLICATE,
                 possible_duplicate_of=twin,
             )
+            return rejected, net
 
         repeat_factor = 1.0
         matchup = None
-        if match.match_type is MatchType.SELF_REPORTED:
+        if match.match_type == MatchType.SELF_REPORTED:
             if cfg.self_reported_requires_both_teams:
                 confirmed = set(match.confirmed_by)
                 if not (confirmed & set(match.team_a) and confirmed & set(match.team_b)):
-                    return MatchResult(
+                    unconfirmed = MatchResult(
                         False, match.rating_format, RejectionReason.SELF_REPORTED_UNCONFIRMED
                     )
+                    return unconfirmed, net
             matchup = _matchup_key(match)
             cutoff = match.played_on - timedelta(days=cfg.self_reported_repeat_window_days)
             prior = sum(
                 1 for d in self.self_reported_log.get(matchup, []) if cutoff <= d <= match.played_on
             )
             if prior >= cfg.self_reported_max_repeats:
-                return MatchResult(
+                limited = MatchResult(
                     False, match.rating_format, RejectionReason.SELF_REPORTED_REPEAT_LIMIT
                 )
+                return limited, net
             repeat_factor = cfg.self_reported_repeat_factor**prior
 
-        primary, primary_updates = self._compute(match, match.rating_format, repeat_factor)
+        primary, primary_updates, primary_net = self._compute(
+            match, match.rating_format, repeat_factor
+        )
         if not primary.counted or primary_updates is None:
-            return primary
+            return primary, net
         primary.possible_duplicate_of = twin
+        net[match.rating_format] = primary_net
 
         parent_updates = None
         parent_format = match.rating_format.parent if cfg.category_feeds_parent else None
         if parent_format is not None:
             # A parent rejection (baseline or filter) never blocks the category.
-            primary.parent, parent_updates = self._compute(match, parent_format, repeat_factor)
+            primary.parent, parent_updates, parent_net = self._compute(
+                match, parent_format, repeat_factor
+            )
+            if parent_updates is not None:
+                net[parent_format] = parent_net
 
         self._commit(match.rating_format, primary_updates, live)
         if parent_updates and parent_format is not None:
@@ -3162,7 +3452,7 @@ class RatingEngine:
         else:
             self.possible_duplicates[match.match_id] = twin
         self.processed_match_ids.add(match.match_id)
-        return primary
+        return primary, net
 
     def _commit(
         self, rating_format: RatingFormat, updates: dict[str, RatingState], live: bool
@@ -3174,8 +3464,15 @@ class RatingEngine:
 
     def _compute(
         self, match: Match, rating_format: RatingFormat, repeat_factor: float
-    ) -> tuple[MatchResult, dict[str, RatingState] | None]:
-        """Compute one format's update on working copies. Mutates nothing."""
+    ) -> tuple[MatchResult, dict[str, RatingState] | None, float]:
+        """
+        Compute one format's update on working copies. Mutates nothing.
+
+        Returns the result, the new states of the players who moved (None
+        when the update does not count), and the net rating the update adds:
+        math.fsum of the unrounded applied changes (0.0 when it does not
+        count).
+        """
         cfg = self.cfg
         self._validate_teams(match.team_a, match.team_b, rating_format)
         ids = match.team_a + match.team_b
@@ -3190,7 +3487,11 @@ class RatingEngine:
             and match.played_on <= baseline_date
         }
         if len(frozen) == len(ids):
-            return MatchResult(False, rating_format, RejectionReason.BEFORE_IMPORTED_BASELINE), None
+            return (
+                MatchResult(False, rating_format, RejectionReason.BEFORE_IMPORTED_BASELINE),
+                None,
+                0.0,
+            )
 
         # Live results apply in arrival order. A match dated before any
         # player's last match here, or before the date a copied category
@@ -3207,13 +3508,15 @@ class RatingEngine:
             and cfg.max_singles_rating_gap is not None
             and abs(rating_a - rating_b) > cfg.max_singles_rating_gap
         ):
-            return MatchResult(False, rating_format, RejectionReason.SINGLES_RATING_GAP), None
+            return MatchResult(False, rating_format, RejectionReason.SINGLES_RATING_GAP), None, 0.0
         if cfg.max_doubles_partner_gap is not None and rating_format.team_size == 2:
             for team_states in (states_a, states_b):
                 if abs(team_states[0].rating - team_states[1].rating) > cfg.max_doubles_partner_gap:
-                    return MatchResult(
-                        False, rating_format, RejectionReason.DOUBLES_PARTNER_GAP
-                    ), None
+                    return (
+                        MatchResult(False, rating_format, RejectionReason.DOUBLES_PARTNER_GAP),
+                        None,
+                        0.0,
+                    )
 
         for pid in ids:
             if pid not in frozen:
@@ -3255,6 +3558,8 @@ class RatingEngine:
                 # inactivity or drop a recent partner from the window.
                 state.rd_as_of = _latest(state.rd_as_of, match.played_on)
                 state.matches_played += 1
+                if match.match_type in _VERIFIED_MATCH_TYPES:
+                    state.verified_matches_played += 1
                 state.last_played = _latest(state.last_played, match.played_on)
                 _seen(
                     state.partners, (other for other in team_ids if other != pid), match.played_on
@@ -3287,7 +3592,8 @@ class RatingEngine:
             imbalance=imbalance,
             late=late,
         )
-        return result, {pid: work[pid] for pid in ids if pid not in frozen}
+        moved = {pid: work[pid] for pid in ids if pid not in frozen}
+        return result, moved, math.fsum(applied.values()) + 0.0
 
     # -- reporting -------------------------------------------------------------
 
@@ -3366,7 +3672,10 @@ class RatingEngine:
             rating=round(state.rating, 3),
             reliability=earned,
             imported_reliability=imported,
-            established=earned >= cfg.established_reliability_threshold,
+            established=(
+                earned >= cfg.established_reliability_threshold
+                and state.verified_matches_played >= cfg.established_min_verified_matches
+            ),
             rd=round(inflated_rd(state, reference, cfg), 4),
             matches_played=state.matches_played,
             last_played=state.last_played,
@@ -3543,6 +3852,7 @@ def _replay(
 
     rows = _ledger(matches)
     considered = counted = 0
+    created = _zero_by_format()
     checkpoint: date | None = None
     if start is not None:
         checkpoint = start.calculated_as_of
@@ -3552,6 +3862,7 @@ def _replay(
         _check_resume_rows(rows, checkpoint, start._ledger_digests, whole_ledger)
         considered = info.matches_considered
         counted = info.matches_counted
+        created.update(info.net_rating_created)
 
     for match in rows:
         if match.played_on > as_of:
@@ -3562,8 +3873,12 @@ def _replay(
         if track:
             engine._ledger_digests[match.match_id] = _match_digest(match)
             engine._ledger_player_ids.update(match.team_a + match.team_b)
-        if engine.record(match, as_of=as_of).counted:
+        result, net = engine._record(match, as_of=as_of)
+        if result.counted:
             counted += 1
+        # Added in ledger order, so a resume continues from the same float.
+        for fmt, value in net.items():
+            created[fmt] += value
 
     engine.calculated_as_of = as_of
     engine._resumable = track
@@ -3573,6 +3888,7 @@ def _replay(
         config_fingerprint=engine.cfg.fingerprint(),
         matches_considered=considered,
         matches_counted=counted,
+        net_rating_created=created,
     )
     return engine
 

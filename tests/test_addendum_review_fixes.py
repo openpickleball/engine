@@ -50,8 +50,11 @@ def test_positional_partners_still_land_in_partners() -> None:
     assert state.inherited_live_updates == 0
 
 
-def test_inherited_live_updates_is_the_last_field() -> None:
-    assert [f.name for f in dataclasses.fields(RatingState)][-1] == "inherited_live_updates"
+def test_inherited_live_updates_comes_after_opponents() -> None:
+    # verified_matches_played (issue #59) was added after it, also at the end.
+    names = [f.name for f in dataclasses.fields(RatingState)]
+    assert names[-2:] == ["inherited_live_updates", "verified_matches_played"]
+    assert names.index("inherited_live_updates") > names.index("opponents")
 
 
 # AD4

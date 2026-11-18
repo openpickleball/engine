@@ -110,7 +110,7 @@ def test_threshold_boundary_uses_displayed_reliability() -> None:
 
 
 def test_threshold_zero_and_hundred() -> None:
-    zero = Config(established_reliability_threshold=0.0)
+    zero = Config(established_reliability_threshold=0.0, established_min_verified_matches=0)
     engine = RatingEngine(zero)
     engine.seed_provisional_rating("z", DOUBLES)
     summary = engine.player_summary("z", DOUBLES, as_of=START)
