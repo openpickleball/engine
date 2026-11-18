@@ -3250,22 +3250,22 @@ def _check_verified_against_log(
     those in its format, plus, for doubles under category_feeds_parent,
     those in the category formats. A frozen player is logged but not
     moved, so that is only an upper bound. A state with no
-    initial_source_date is never frozen and, once logged, never reseeded,
-    so for it the count equals the logged matches in its format. For
-    doubles under category_feeds_parent with max_doubles_partner_gap
-    unset, a counted category match's doubles update is rejected only
-    when every player is frozen in doubles, so the count then also
-    includes the logged category matches (#84). With
-    max_doubles_partner_gap set, the gap can reject that doubles update,
-    so the doubles count is only at least the doubles ones and at most
-    the upper bound. A resumable snapshot is exactly a replay, whose
+    initial_source_date is never frozen and, once logged, never reseeded.
+    For a singles or category state, or for doubles with
+    category_feeds_parent off, its count then equals the logged matches
+    in its format. For doubles under category_feeds_parent with
+    max_doubles_partner_gap unset, a counted category match's doubles
+    update is rejected only when every player is frozen in doubles, so
+    the count equals the logged doubles and category matches (#84). With
+    max_doubles_partner_gap set, the gap can also reject that doubles
+    update, so the doubles count is only at least the doubles ones and at
+    most the upper bound. A resumable snapshot is exactly a replay, whose
     seeds precede every row, so a logged match dated after a state's
-    initial_source_date moved that state: the same exact rules then hold
-    counting only those dates. A live import can be reseeded while
-    unplayed when no counted update in its format included the player
-    (for doubles, a category match whose doubles update was rejected), so
-    a logged match in which it was frozen under an earlier capture date
-    cannot be told apart, and only the upper bound applies to it.
+    initial_source_date moved that state: the same rules then hold
+    counting only those dates. A snapshot that is not resumable does not
+    record when each seed was set relative to the logged matches, so for
+    a state with an initial_source_date there the check keeps only the
+    upper bound.
     """
     logged: dict[tuple[str, RatingFormat], list[date]] = {}
     for (fmt, teams), dates in log.items():
@@ -3639,12 +3639,15 @@ class RatingEngine:
         player, plus, for doubles under category_feeds_parent, those in the
         category formats. For a state with no initial_source_date, and for
         every state of a resumable snapshot counting only log dates after
-        its initial_source_date, it equals the logged matches in its
-        format, plus, for doubles under category_feeds_parent with
-        max_doubles_partner_gap unset, the logged category matches. With
-        max_doubles_partner_gap set, such a doubles count is only at least
+        its initial_source_date, an overall doubles count under
+        category_feeds_parent with max_doubles_partner_gap set is at least
         the logged doubles matches, since the gap can reject a category
-        match's doubles update. Identities
+        match's doubles update; every other such count equals the logged
+        matches in its format, plus, for doubles under
+        category_feeds_parent, the logged category matches. A snapshot
+        that is not resumable does not record when each seed was set, so
+        for a state with an initial_source_date there only the upper bound
+        is checked. Identities
         follow the seed and link rules: account_user_id is null or a
         non-blank str, every external_ids source and id is a non-blank str,
         and no two players hold the same account or the same (source,
