@@ -33,7 +33,7 @@ Site 4: clamping the window's date key at `date.min` and keeping the filter `pla
 
 ## Files that change
 
-- `src/open_engine/engine.py`: a private helper `_days_before(day, days)` that returns `day` minus `days` days, or `date.min` when that is earlier, computed with ordinals so it never raises; used at sites 1 to 3 and for the scheduled replay date. The scheduled window loop keys windows by `k`. Comment and docstring updates.
+- `src/open_engine/engine.py`: a private helper `_days_before(day, days)` that returns `day` minus `days` days, clamped to `date.min` and `date.max` (the upper bound added after review, so a future forward caller cannot raise), computed with ordinals so it never raises; used at sites 1 to 3 and for the scheduled replay date. The scheduled window loop keys windows by `k`. Comment and docstring updates.
 - `tests/test_date_min_windows.py` (new): criteria 1 to 5.
 - `README.md`, `CHANGELOG.md`.
 
@@ -47,7 +47,7 @@ Site 4: clamping the window's date key at `date.min` and keeping the filter `pla
 ## Risks
 
 - Changing the scheduled window grouping could change which matches each replay sees. The `k` equivalence above and the existing scheduled-mode tests (which pin output) guard it.
-- `date.fromordinal` raises for an ordinal above `date.max`. The helper only moves back by a non-negative count, except the scheduled site, where the result is before `played_on`.
+- `date.fromordinal` raises for an ordinal outside its range. The helper clamps at both ends; the scheduled site, the only forward caller, is always before `played_on`.
 
 ## Proof
 
