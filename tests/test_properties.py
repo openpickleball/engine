@@ -10,6 +10,7 @@ ledger.
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta, timezone
@@ -29,10 +30,11 @@ from open_engine import (
     RatingFormat,
     RejectionReason,
     ScoringType,
+    expected_point_share,
     reliability,
     replay,
 )
-from open_engine.engine import inflated_rd
+from open_engine.engine import inflated_rd, information_multiplier, player_k
 
 S = RatingFormat.SINGLES
 D = RatingFormat.DOUBLES
@@ -105,6 +107,7 @@ class Seat:
     rd: float
     last_played: date | None = None
     import_on: date | None = None  # an imported baseline; frozen when on or after the match
+    parent: Seat | None = None  # the overall doubles state, for a category match
 
 
 @dataclass(frozen=True)
@@ -118,31 +121,49 @@ class Case:
         engine = RatingEngine(self.cfg)
         fmt = self.match.rating_format
         for seat in self.seats:
-            if seat.import_on is not None:
-                snap = ExternalRatingSnapshot("external_standard", seat.rating, seat.import_on)
-                engine.seed_external_rating(seat.pid, fmt, snap)
-                continue
-            state = engine.seed_provisional_rating(seat.pid, fmt)
-            state.rating = seat.rating
-            state.rd = seat.rd
-            if seat.last_played is not None:
-                state.last_played = seat.last_played
-                state.rd_as_of = seat.last_played
-                state.matches_played = 1
+            if seat.parent is not None and fmt.parent is not None:
+                put_seat(engine, seat.parent, fmt.parent)
+            put_seat(engine, seat, fmt)
         return engine
 
 
+def put_seat(engine: RatingEngine, seat: Seat, fmt: RatingFormat) -> None:
+    if seat.import_on is not None:
+        snap = ExternalRatingSnapshot("external_standard", seat.rating, seat.import_on)
+        engine.seed_external_rating(seat.pid, fmt, snap)
+        return
+    state = engine.seed_provisional_rating(seat.pid, fmt)
+    state.rating = seat.rating
+    state.rd = seat.rd
+    if seat.last_played is not None:
+        state.last_played = seat.last_played
+        state.rd_as_of = seat.last_played
+        state.matches_played = 1
+
+
 def random_seat(
-    rng: random.Random, pid: str, ratings: tuple[float, float], *, frozen: bool, late: bool
+    rng: random.Random,
+    pid: str,
+    ratings: tuple[float, float],
+    *,
+    frozen: bool,
+    late: bool,
+    category: bool = False,
 ) -> Seat:
+    parent = None
+    if category:
+        parent = random_seat(rng, pid, ratings, frozen=frozen, late=late)
     rating = round(rng.uniform(*ratings), 3)
     rd = round(rng.uniform(DEFAULT.rd_min, DEFAULT.rd_max), 3)
     roll = rng.random()
     if frozen and roll < 0.2:
-        return Seat(pid, rating, rd, import_on=ON + timedelta(days=rng.randint(-10, 5)))
+        return Seat(
+            pid, rating, rd, import_on=ON + timedelta(days=rng.randint(-10, 5)), parent=parent
+        )
     if late and roll < 0.5:
-        return Seat(pid, rating, rd, last_played=ON + timedelta(days=rng.randint(-60, 10)))
-    return Seat(pid, rating, rd)
+        last_played = ON + timedelta(days=rng.randint(-60, 10))
+        return Seat(pid, rating, rd, last_played=last_played, parent=parent)
+    return Seat(pid, rating, rd, parent=parent)
 
 
 RATING_BANDS = ((2.0, 8.0), (2.0, 2.4), (7.6, 8.0), (3.0, 7.0))
@@ -161,7 +182,8 @@ def random_case(
     size = fmt.team_size
     band = rng.choice(RATING_BANDS)
     seats = tuple(
-        random_seat(rng, f"syn-{i}", band, frozen=frozen, late=late) for i in range(2 * size)
+        random_seat(rng, f"syn-{i}", band, frozen=frozen, late=late, category=bool(fmt.parent))
+        for i in range(2 * size)
     )
     gf = game_format or rng.choice(GAME_FORMATS)
     pattern = pattern or winners(rng, rng.choice((1, 3)))
@@ -197,26 +219,101 @@ def check_conservation(result: MatchResult, match: Match, change: dict[str, floa
     assert abs(result.imbalance - (mean_a + mean_b)) <= 5e-6 + 1e-12
 
 
+def raw_steps(
+    engine: RatingEngine, match: Match, fmt: RatingFormat, frozen: set[str]
+) -> dict[str, float]:
+    """
+    Each player's unclamped step before the match: sign * K * effective_weight * surprise,
+    with K from the RD after inactivity (no inactivity for a frozen player).
+    """
+    cfg = engine.cfg
+    states = {pid: engine.state(pid, fmt) for pid in match.team_a + match.team_b}
+    rating_a = math.fsum(states[pid].rating for pid in match.team_a) / len(match.team_a)
+    rating_b = math.fsum(states[pid].rating for pid in match.team_b) / len(match.team_b)
+    expected = expected_point_share(
+        rating_a, rating_b, cfg.scale_by_scoring[match.game_format.scoring]
+    )
+    a_won = sum(a > b for a, b in match.games) * 2 > len(match.games)
+    actual = (1.0 - cfg.win_weight) * point_share(match.games) + cfg.win_weight * float(a_won)
+    weight = cfg.match_weights[match.match_type] * 1.0 * information_multiplier(match, cfg)
+    steps = {}
+    for team, sign in ((match.team_a, 1.0), (match.team_b, -1.0)):
+        for pid in team:
+            state = states[pid]
+            if pid not in frozen:
+                state = replace(state, rd=inflated_rd(state, match.played_on, cfg))
+            steps[pid] = sign * player_k(state, cfg) * weight * (actual - expected)
+    return steps
+
+
+def check_clamped(
+    engine: RatingEngine,
+    result: MatchResult,
+    before: dict[str, float],
+    steps: dict[str, float],
+    change: dict[str, float],
+) -> int:
+    """
+    A player is clamped exactly when the unclamped step would leave the rating range,
+    and every other player that is not frozen moves by that step. Returns the clamp count.
+    """
+    cfg = engine.cfg
+    for pid, step in steps.items():
+        if pid in result.frozen:
+            assert pid not in result.clamped and change[pid] == 0.0
+            continue
+        target = before[pid] + step
+        if abs(target - cfg.min_rating) < 1e-9 or abs(target - cfg.max_rating) < 1e-9:
+            continue  # too close to a bound to call either way
+        outside = not cfg.min_rating <= target <= cfg.max_rating
+        assert (pid in result.clamped) == outside
+        if outside:
+            assert before[pid] + change[pid] == min(cfg.max_rating, max(cfg.min_rating, target))
+        else:
+            assert abs(change[pid] - step) <= 1e-12
+    return len(result.clamped)
+
+
 @pytest.mark.parametrize("fmt", [S, D, MX])
 def test_imbalance_is_the_net_team_mean_change(fmt: RatingFormat) -> None:
     rng = random.Random(2601)
-    counted = 0
+    counted = clamps = parent_nonzero = 0
     for _ in range(150):
         case = random_case(rng, fmt)
         engine = case.build()
-        ids = case.match.team_a + case.match.team_b
+        match = case.match
+        ids = match.team_a + match.team_b
         before = ratings_of(engine, ids, fmt)
         parent_before = ratings_of(engine, ids, D) if fmt.parent else {}
-        result = engine.record(case.match)
+        frozen = {
+            pid
+            for pid in ids
+            if (baseline := engine.state(pid, fmt).initial_source_date) is not None
+            and match.played_on <= baseline
+        }
+        steps = raw_steps(engine, match, fmt, frozen)
+        parent_steps = raw_steps(engine, match, D, set()) if fmt.parent else {}
+        result = engine.record(match)
         if not result.counted:
             assert result.reason is RejectionReason.BEFORE_IMPORTED_BASELINE
             continue
         counted += 1
-        check_conservation(result, case.match, changes(before, engine, fmt))
+        assert set(result.frozen) == frozen
+        change = changes(before, engine, fmt)
+        check_conservation(result, match, change)
+        clamps += check_clamped(engine, result, before, steps, change)
         if fmt.parent:
             assert result.parent is not None and result.parent.counted
-            check_conservation(result.parent, case.match, changes(parent_before, engine, D))
+            parent_change = changes(parent_before, engine, D)
+            check_conservation(result.parent, match, parent_change)
+            clamps += check_clamped(
+                engine, result.parent, parent_before, parent_steps, parent_change
+            )
+            parent_nonzero += result.parent.imbalance != 0.0
     assert counted > 100
+    assert clamps > 10
+    if fmt.parent:
+        assert parent_nonzero > 50
 
 
 def equal_k_case(rng: random.Random, fmt: RatingFormat) -> Case:
@@ -290,6 +387,7 @@ def check_mirrored(
 def test_swapping_teams_mirrors_the_update(fmt: RatingFormat) -> None:
     rng = random.Random(2603)
     configs = (DEFAULT, Config(win_weight=0.3), Config(win_weight=1.0))
+    parent_moves = 0
     for _ in range(150):
         case = random_case(rng, fmt, cfg=rng.choice(configs))
         ids = case.match.team_a + case.match.team_b
@@ -303,12 +401,15 @@ def test_swapping_teams_mirrors_the_update(fmt: RatingFormat) -> None:
         )
         if fmt.parent and result.counted:
             assert result.parent is not None and flipped.parent is not None
+            parent_moves += result.parent.imbalance != 0.0
             check_mirrored(
                 result.parent,
                 flipped.parent,
                 changes(parent_before, engine, D),
                 changes(parent_before, flipped_engine, D),
             )
+    if fmt.parent:
+        assert parent_moves > 50
 
 
 # -- margin -----------------------------------------------------------------------
@@ -411,7 +512,11 @@ def random_row(
 
 
 def random_ledger(
-    rng: random.Random, formats: tuple[RatingFormat, ...] = (S, D, D, MX), n_rows: int = 36
+    rng: random.Random,
+    formats: tuple[RatingFormat, ...] = (S, D, D, MX),
+    n_rows: int = 36,
+    seed_days: tuple[int, int] = (-30, 10),
+    n_seeds: int = 3,
 ) -> Ledger:
     """
     A ledger with singles, doubles, a category, timed and untimed rows, self-reported
@@ -446,9 +551,9 @@ def random_ledger(
             pid,
             rng.choice(formats[:2]),
             round(rng.uniform(3.0, 6.0), 2),
-            DAY0 + timedelta(days=rng.randint(-30, 10)),
+            DAY0 + timedelta(days=rng.randint(*seed_days)),
         )
-        for pid in rng.sample(pool, 3)
+        for pid in rng.sample(pool, n_seeds)
     )
     return Ledger(tuple(rows), seeds)
 
@@ -494,8 +599,11 @@ def test_live_late_flag_matches_the_dates_already_reflected(
 ) -> None:
     rng = random.Random(2606)
     seen = {True: 0, False: 0}
-    for _ in range(10):
-        ledger = random_ledger(rng, formats=formats * 2)
+    frozen_only = 0  # late only because of a frozen player
+    for _ in range(15):
+        # Seeds captured mid-ledger, so a seeded player's later match can count before an
+        # earlier one that is on or before the capture date (frozen for that player) arrives.
+        ledger = random_ledger(rng, formats=formats * 2, seed_days=(4, 16), n_seeds=6)
         rows = list(ledger.rows)
         rng.shuffle(rows)
         engine = ledger.live_engine(DEFAULT, [])
@@ -509,12 +617,18 @@ def test_live_late_flag_matches_the_dates_already_reflected(
             )
             assert result.late == expected
             seen[result.late] += result.counted
+            frozen_only += result.late and not any(
+                reflected.get((pid, fmt), match.played_on) > match.played_on
+                for pid in ids
+                if pid not in result.frozen
+            )
             if result.counted:
                 for pid in ids:
                     if pid not in result.frozen:
                         key = (pid, fmt)
                         reflected[key] = max(reflected.get(key, match.played_on), match.played_on)
     assert seen[True] > 20 and seen[False] > 20
+    assert frozen_only >= 3
 
 
 # -- reliability and RD -----------------------------------------------------------
@@ -597,7 +711,7 @@ def weekly_schedule(rng: random.Random, fmt: RatingFormat, self_reported: bool) 
     """
     pool = [f"syn-{i:03d}" for i in range(200)]
     rows = []
-    for week in range(30):
+    for week in range(40):
         others = rng.sample(pool, 2 * fmt.team_size - 1)
         team_a = ("syn-focus", *others[: fmt.team_size - 1])
         team_b = tuple(others[fmt.team_size - 1 :])
@@ -635,9 +749,13 @@ def test_reliability_never_falls_across_a_weekly_schedule(
         for match in weekly_schedule(rng, fmt, self_reported):
             assert engine.record(match).counted
             earned.append(engine.player_summary("syn-focus", fmt, as_of=match.played_on))
+            assert engine.state("syn-focus", fmt).rd >= engine.cfg.rd_min
         values = [summary.reliability for summary in earned]
         assert values == sorted(values)
         assert values[-1] > values[0]
+        if not self_reported:
+            # Verified matches drive RD down to the floor, and it stays there.
+            assert engine.state("syn-focus", fmt).rd == engine.cfg.rd_min
 
 
 # -- self-reported repeat window --------------------------------------------------

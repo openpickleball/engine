@@ -102,7 +102,17 @@ applicable because this is a standard-library Python package with no web, UI, or
 
 ## Proof
 
-- Criterion 1: the four property tests in `tests/test_properties.py`.
+- Criterion 1: the four property tests in `tests/test_properties.py`. The conservation test
+  also checks `clamped`: a player is clamped exactly when its unclamped own-K step would
+  leave the rating range, and every other player that is not frozen moves by that step.
+  Category cases seed varied overall doubles states, so the parent checks see nonzero
+  imbalance.
+- Criterion 3: the late test seeds players mid-ledger and requires cases that are late only
+  because of a frozen player; the weekly verified schedules drive RD to `rd_min` and assert
+  it stays there.
+- Each strengthened check was shown to fail against an engine mutation (the RD floor
+  dropped, `late` ignoring frozen players, `clamped` never set, the parent update computed
+  from category states), reverted before commit.
 - Criterion 2: the same tests parametrized over singles, plus `tests/test_singles.py` if added.
 - Criterion 3: the repeat window, reliability, duplicate, and late tests.
 - Criterion 4: `tests/test_examples.py`.
