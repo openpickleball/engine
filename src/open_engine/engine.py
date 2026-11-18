@@ -258,7 +258,9 @@ Published behavior notes:
   `evidence_reference` that is not exactly a str (a str subclass
   included, and None allowed for the external id and evidence
   reference), a blank or whitespace-only source, external id, or
-  evidence reference, and a source that starts with `open_`),
+  evidence reference, and a source that starts with `open_`; it and
+  `add_player` also reject a seed that could change an update `record`
+  rejected for a reason that reads a seed, see `RejectionReason`),
   `PlayerError` covers player identities, including a seed whose
   account or external identity another player holds and an
   `attach_external_id` source that starts with `open_` (its subclass
@@ -271,7 +273,7 @@ Published behavior notes:
   `player_summary` or `replay` call with an as_of that is not a plain
   date.
 - Snapshots and checkpoints: `RatingEngine.to_snapshot()` gives the whole
-  engine state as JSON-safe data (schema version 7) with sorted keys and
+  engine state as JSON-safe data (schema version 8) with sorted keys and
   lists, and `RatingEngine.from_snapshot` loads it back after validating
   every key, type, and range and checking the config version and
   fingerprint. A replay's snapshot is a checkpoint:
@@ -1836,6 +1838,12 @@ class RejectionReason(_StrEnum):
     status itself is on the match. DUPLICATE_MATCH_ID covers a match_id
     already processed or reserved: record reserves the match_id of every
     match it rejects for any other reason.
+
+    BEFORE_IMPORTED_BASELINE, SINGLES_RATING_GAP, and DOUBLES_PARTNER_GAP
+    read the players' seeded ratings or dates, so record also keeps the
+    players of an update rejected for one of them, and the seed methods
+    refuse a seed that could change it (see
+    RatingEngine.seed_external_rating).
     """
 
     DUPLICATE_MATCH_ID = "duplicate_match_id"
@@ -3917,7 +3925,7 @@ class RatingEngine:
 
     def to_snapshot(self) -> dict[str, object]:
         """
-        The engine's whole state as JSON-safe data (schema version 7).
+        The engine's whole state as JSON-safe data (schema version 8).
 
         json.dumps(snapshot, allow_nan=False) works with no custom encoder,
         and RatingEngine.from_snapshot rebuilds the engine from it, or from
@@ -3925,7 +3933,7 @@ class RatingEngine:
         every list in a fixed order, so the same state always gives the same
         text. Numbers keep their type: an int stays an int.
 
-        Keys: snapshot_version (7), engine_version (informational),
+        Keys: snapshot_version (8), engine_version (informational),
         config_version and config_fingerprint (of this engine's Config),
         calculated_as_of (ISO date or null), replay_info (null, or its
         fields with as_of as an ISO date and net_rating_created as format
@@ -3947,8 +3955,15 @@ class RatingEngine:
         ledger_digests (match_id to the SHA-256 digest of every row any
         replay behind this engine considered, cumulative across resumes),
         ledger_player_ids (sorted ids of every player named in those rows,
-        counted or not), and resumable (true only while the engine is
-        exactly what a replay produced). The README lists the schema in
+        counted or not), seed_sensitive_rejections (sorted by match_id:
+        each update record rejected for BEFORE_IMPORTED_BASELINE,
+        SINGLES_RATING_GAP, or DOUBLES_PARTNER_GAP, live or in a replay,
+        as players, the sorted ids of the match's players, and
+        rating_format, the format of the rejected update: the match's own,
+        or overall doubles for the doubles update of a counted category
+        match; the seed methods refuse a seed that could change one, and
+        an entry never clears), and resumable (true only while the engine
+        is exactly what a replay produced). The README lists the schema in
         full.
 
         To use the snapshot as a checkpoint, take it right after replay,
@@ -4010,7 +4025,7 @@ class RatingEngine:
         cfg must be the Config the snapshot was taken under (default
         Config()): its version and fingerprint must equal the snapshot's.
         The whole snapshot is validated before anything is built: exactly
-        the schema's keys at every level, snapshot_version 7, dates as
+        the schema's keys at every level, snapshot_version 8, dates as
         YYYY-MM-DD text, non-blank str ids with no repeated player or match
         id (ids, external_ids sources and ids, and provenance strs exactly
         str, not a subclass), RatingFormat values as format keys, ratings
@@ -4033,6 +4048,18 @@ class RatingEngine:
         possible_duplicates key a reserved id under
         reject_content_duplicates, every ledger_digests id processed or
         reserved, and a bool resumable that is false without a replay.
+        Each seed_sensitive_rejections entry has a RatingFormat value as
+        rating_format and, as players, exactly twice that format's team
+        size of non-blank str ids, sorted with no repeats. Its match_id is
+        a reserved id that is not a possible_duplicates key, or a processed
+        id with rating_format doubles under category_feeds_parent whose
+        every named player is in players. With no gap rule for its format
+        (max_singles_rating_gap for singles, max_doubles_partner_gap for
+        the others), every named player has a state with an
+        initial_source_date there or, with none stored, under
+        category_feeds_parent in a category format, an overall doubles
+        state with one. In a resumable snapshot every named
+        player is in ledger_player_ids.
         Every state must be one the engine can produce: initial_rating
         within the rating bounds; an unplayed state with RD new_player_rd,
         external_seed_rd, or at least category_seed_rd, and no partners,
@@ -4189,6 +4216,14 @@ class RatingEngine:
           rd_as_of equal to initial_source_date, and an imported reliability
           that is None or between 0 and 100.
         Played states are rebuilt through replay instead.
+        - The seed has no state in the format of an update record rejected
+          for BEFORE_IMPORTED_BASELINE, SINGLES_RATING_GAP, or
+          DOUBLES_PARTNER_GAP that names the seed's id, nor, under
+          Config.category_feeds_parent, in that format's parent, as
+          seed_external_rating refuses. Only add_player checks this, after
+          the duplicate id: replay adds its seeds before any row, and
+          resume refuses a seed for any player in a row its checkpoint
+          considered.
         add_player has no reference date, so it does not check that
         initial_source_date is in the past: replay rejects a seed dated after
         its as_of, and prequential_predictions one dated after its last match.
@@ -4341,11 +4376,20 @@ class RatingEngine:
         change whether that match's doubles update counts, or the state a
         replay starts the category from. Otherwise a new seed rating or
         date could change a counted match, so live ratings and a replay
-        could disagree. A match that
-        did not count leaves no record of its players, so this does not
-        cover it. A category format with no stored state and no counted
-        match can still be seeded, even when the player has an overall
-        doubles rating.
+        could disagree. It also refuses to seed a player named in an
+        update record rejected for BEFORE_IMPORTED_BASELINE,
+        SINGLES_RATING_GAP, or DOUBLES_PARTNER_GAP (a match's own update,
+        or the doubles update of a counted category match; see
+        seed_sensitive_rejections in to_snapshot) when the seed's format
+        is that update's format or, under category_feeds_parent, its
+        parent. Those reasons read the players' ratings or dates, and a
+        replay adds every seed before any row, so a new seed could make
+        the replay count an update live rejected. This holds with or
+        without replace_unplayed_seed, and for a player with no record
+        yet. A rejection for another reason is not recorded and blocks no
+        seed. A category format with no stored state, no counted match,
+        and no such rejected update can still be seeded, even when the
+        player has an overall doubles rating.
         Under category_feeds_parent, a successful seed of overall doubles
         also replaces each of the player's stored category states that is
         unplayed and derived from overall doubles (initial_source
@@ -4378,7 +4422,8 @@ class RatingEngine:
 
         Raises InvalidSeedError when the rating format, the snapshot or a
         checked snapshot field, the existing rating, or the player's OPEN
-        matches do not allow the seed. Once the rating format and snapshot
+        matches (counted, or rejected for a reason a seed can change) do
+        not allow the seed. Once the rating format and snapshot
         fields pass their checks, it raises PlayerError when player_id is
         blank or not a str (a str subclass included). Once any existing
         rating and the player's OPEN matches also allow the seed, it
