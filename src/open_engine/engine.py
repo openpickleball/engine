@@ -3875,9 +3875,11 @@ def _report_from_predictions(
 
 
 def _check_search_bounds(low: float, high: float, tolerance: float) -> None:
-    """Raise EvaluationError unless low < high are finite and tolerance is finite and > 0."""
+    """Raise EvaluationError for a search range or tolerance the fits cannot use."""
     if not (math.isfinite(low) and math.isfinite(high)):
         raise EvaluationError("low and high must be finite")
+    if not math.isfinite(high - low):
+        raise EvaluationError("high - low must be finite")
     if not low < high:
         raise EvaluationError("low must be less than high")
     if not (math.isfinite(tolerance) and tolerance > 0):
@@ -3923,8 +3925,9 @@ def fit_scale(
 
     Coarse grid first, then golden-section search around the best grid point.
     Publish the returned ScaleFit alongside the config that adopts it.
-    Raises EvaluationError, before any prediction work, unless low and high
-    are finite with low < high and tolerance is finite and greater than 0.
+    Raises EvaluationError, before any prediction work, unless low, high,
+    and high - low are finite, low < high, and tolerance is finite and
+    greater than 0.
     """
     _check_search_bounds(low, high, tolerance)
     cfg = cfg or Config()
@@ -3958,12 +3961,15 @@ def fit_scale(
     ratio = (math.sqrt(5) - 1) / 2
     c, d = b - ratio * (b - a), a + ratio * (b - a)
     while b - a > tolerance:
+        width = b - a
         if run(c)[1] <= run(d)[1]:
             b, d = d, c
             c = b - ratio * (b - a)
         else:
             a, c = c, d
             d = a + ratio * (b - a)
+        if b - a >= width:
+            break  # the bracket hit float spacing above a tiny tolerance
     fitted_scale = round((a + b) / 2, 3)
 
     default_scale = cfg.scale_by_scoring[scoring]
@@ -4056,12 +4062,15 @@ def fit_win_calibration(
     ratio = (math.sqrt(5) - 1) / 2
     c, d = hi - ratio * (hi - lo), lo + ratio * (hi - lo)
     while hi - lo > tolerance:
+        width = hi - lo
         if brier(c) <= brier(d):
             hi, d = d, c
             c = hi - ratio * (hi - lo)
         else:
             lo, c = c, d
             d = lo + ratio * (hi - lo)
+        if hi - lo >= width:
+            break  # the bracket hit float spacing above a tiny tolerance
     fitted = round((lo + hi) / 2, 3)
 
     return WinCalibrationFit(
