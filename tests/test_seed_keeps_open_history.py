@@ -15,6 +15,7 @@ from datetime import date
 import pytest
 
 from open_engine import (
+    Config,
     ExternalRatingSnapshot,
     InvalidSeedError,
     Match,
@@ -250,3 +251,47 @@ def test_a_doubles_seed_is_replaceable_when_the_category_state_is_stored() -> No
         "syn-a", D, ExternalRatingSnapshot("ext", 2.5, EARLIER), replace_unplayed_seed=True
     )
     assert state.initial_source_date == EARLIER
+
+
+def test_a_doubles_seed_a_derived_category_state_was_rated_from_is_not_replaced() -> None:
+    # Nobody is frozen. syn-a's mixed state is derived from its doubles
+    # seed and moves in the mixed match; the doubles update is rejected by
+    # the partner gap, so no doubles state names syn-a. A new doubles
+    # rating would change syn-a's mixed starting rating on replay.
+    cfg = Config(max_doubles_partner_gap=1.0)
+    seed_eng = RatingEngine(cfg)
+    snap = ExternalRatingSnapshot("ext", 4.0, EARLIER)
+    seed_eng.seed_external_rating("syn-a", D, snap)
+    seed_eng.seed_external_rating("syn-b", D, ExternalRatingSnapshot("ext", 2.0, EARLIER))
+    for pid in ("syn-b", "syn-c", "syn-d"):
+        seed_eng.seed_external_rating(pid, MX, snap)
+    seeds = [clone_player(seed_eng.player(pid)) for pid in sorted(seed_eng.players)]
+    ledger = [_match("syn-m1", MX, date(2026, 2, 1))]
+    eng = RatingEngine(cfg)
+    for player in seeds:
+        eng.add_player(player)
+    result = eng.record(ledger[0])
+    assert result.counted and result.frozen == ()
+    assert result.parent is not None and not result.parent.counted
+    assert eng.state("syn-a", MX).initial_source == "open_parent:doubles"
+    _assert_refused(
+        eng,
+        D,
+        r"^Cannot replace a rating that a counted mixed_doubles match for this "
+        r"player was rated from$",
+    )
+    assert _ratings(eng) == _ratings(replay(ledger, seeds, cfg=cfg, as_of=AS_OF))
+
+
+def test_a_stored_derived_category_state_does_not_free_the_doubles_seed() -> None:
+    # syn-a is frozen in the mixed match through its derived state, which
+    # seed_provisional_rating then stores.
+    seeds = _all_seeded_in_doubles_but_syn_b_in_mixed()
+    eng = _live(seeds, [_match("syn-m1", MX, date(2026, 2, 1))])
+    eng.seed_provisional_rating("syn-a", MX)
+    _assert_refused(
+        eng,
+        D,
+        r"^Cannot replace a rating that a counted mixed_doubles match for this "
+        r"player was rated from$",
+    )

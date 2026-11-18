@@ -3852,10 +3852,10 @@ class RatingEngine:
         For overall doubles, that includes the doubles update of a category
         match. Under category_feeds_parent, it also refuses to replace an
         overall doubles rating when a counted category match included the
-        player and the player has no stored state in that category: that
-        match used a state derived from the doubles seed. Otherwise a new
-        seed date could change whether the player was frozen in a counted
-        match, so live ratings and a replay could disagree. A match that
+        player and the player's state in that category is missing or
+        derived from overall doubles: that match used a state derived from
+        the doubles seed. Otherwise a new seed rating or date could change
+        a counted match, so live ratings and a replay could disagree. A match that
         did not count leaves no record of its players, so this does not
         cover it. A category format with no stored state and no counted
         match can still be seeded, even when the player has an overall
@@ -3931,14 +3931,17 @@ class RatingEngine:
             raise InvalidSeedError(
                 "Cannot seed a rating format in which OPEN matches have counted for this player"
             )
-        # A category match with no stored category state for the player used
-        # a state derived from this one, with this seed's date, to decide
-        # whether the player was frozen. A new date would change that.
+        # A counted category match in which the player had no category state
+        # of their own was rated from a state derived from this one, with
+        # this seed's rating and date. A new seed would change that match.
         if self.cfg.category_feeds_parent and known is not None:
             for child in RatingFormat:
+                child_state = known.ratings.get(child)
                 if (
                     child.parent is rating_format
-                    and child not in known.ratings
+                    and (
+                        child_state is None or child_state.initial_source.startswith("open_parent:")
+                    )
                     and self._in_counted_match(player_id, child)
                 ):
                     raise InvalidSeedError(
