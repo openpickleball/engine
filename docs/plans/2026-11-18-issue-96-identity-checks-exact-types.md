@@ -45,7 +45,7 @@ Also found in Phase 1: `ExternalRatingSnapshot.evidence_reference` and a seed st
 
 ## Risks
 
-- Stricter `_is_id` reaches every id check, including Match and read lookups. That is intended (criterion 6) and listed under Also fixed; a caller passing a str subclass (for example an enum-backed str or a ORM proxy string) now gets an error. The Migration note covers it.
+- Stricter `_is_id` reaches every id check, including Match and read lookups. That is intended (criterion 6) and listed under Also fixed; a caller passing a str subclass (for example an enum-backed str or an ORM proxy string) now gets an error. The Migration note covers it.
 - Error messages: keep the existing messages ("must be a str", "is required", "must not be blank") so existing tests and callers' matches still hold; a subclass gets the type message where one exists.
 - Snapshot schema and `snapshot_version` do not change; no Config, RatingState, or Player fields change.
 - Not done: Config number subclasses (#107); `confirmed_by` element types; `_is_plain_date` stays as it is.
