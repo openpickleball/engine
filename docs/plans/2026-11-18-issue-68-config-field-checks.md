@@ -68,7 +68,7 @@ Definitions used below:
 | `min_rating`, `max_rating`, `default_rating` | number | each at most `_RATING_LIMIT` in magnitude; `min_rating < max_rating`; `min_rating <= default_rating <= max_rating` (existing) |
 | `scale_by_scoring` | mapping, a value for every `ScoringType` (existing) | values numbers > 0 (existing message) |
 | `win_calibration_by_scoring` | same | values numbers > 0 (existing) |
-| `k_min`, `k_max` | number | `0 <= k_min <= k_max` (existing), and `k_max * (max(match_weights) * max_information_multiplier)` finite |
+| `k_min`, `k_max` | number | `0 <= k_min <= k_max` (existing), and `(k_min + (k_max - k_min) * 1.0) * (max(match_weights) * max_information_multiplier)` finite in floats |
 | `rd_min`, `rd_max` | number | `0 < rd_min < rd_max <= _RATING_LIMIT` (`<` is new, was `<=`), and `rd_max - rd_min > 0` as computed |
 | `new_player_rd`, `external_seed_rd`, `category_seed_rd` | number | within `rd_min..rd_max` (existing) |
 | `rd_shrink_per_match` | number | `>= 0` (new) |
@@ -141,7 +141,22 @@ Review round (added after the first green commit):
 - Keys and format entries are stored as their own types: enum members for the enum-keyed
   mappings and for format scoring types, plain ints for game lengths and points. A config
   that builds on main keeps its fingerprint (tested against values measured on main), except
-  an int subclass whose `str` is not its digits.
+  a key or points value whose `str()` differs from its value (a str or int subclass with its
+  own `__str__`). Ratings do not change in those cases.
+
+Second review round:
+
+- The K product uses the largest K `player_k` returns, `k_min + (k_max - k_min) * 1.0`,
+  which can round one ulp above `k_max`. With `k_max` alone, a config at the edge still
+  overflowed the step and sent every player to `max_rating` on a 0.0 surprise.
+- Ints are converted with `int.__int__`, which gives the int's own value. `int()` follows an
+  overridden `__int__`, which changed the stored value, the fingerprint, and which matches
+  count versus main.
+- Two `game_length_weights` keys that convert to the same int raise "game_length_weights
+  repeats the game length N", as `from_dict` does. The enum-keyed mappings cannot repeat a
+  key after the set-equality check. Their `except ValueError` ("has an unknown key") stays:
+  it is reachable with a str subclass that equals the enum member but not its plain str
+  value, and a test covers it.
 - `_MAX_DAYS` is what `timedelta` holds. A window that reaches back before `date.min` from a
   match or reference date still raises `OverflowError`; issue #92 tracks it. The stress test
   uses 365-day windows for that reason.

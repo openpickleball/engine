@@ -736,7 +736,8 @@ class Config:
     finite numbers, and allowed_game_formats as a frozenset of (scoring
     type, whole number) pairs. Keys and pairs are stored as their own
     types: a ScoringType or MatchType key given as its str value becomes
-    the enum member, and an int subclass becomes a plain int. Changing
+    the enum member, and an int subclass becomes the plain int of its own
+    value (not what its __int__ returns). Changing
     the dict or set a config was built from does not change the config,
     and changing the config's own raises
     TypeError. Two configs are equal exactly when their fingerprint payloads
@@ -762,9 +763,12 @@ class Config:
       between them.
     - Mapping values are numbers greater than 0, with exactly one key for
       every scoring type or match type. game_length_weights keys are whole
-      numbers of at least 1, one for the points of every allowed format.
-    - 0 <= k_min <= k_max, and k_max times the largest match weight times
-      max_information_multiplier is finite.
+      numbers of at least 1, one for the points of every allowed format,
+      and no two keys name the same length.
+    - 0 <= k_min <= k_max, and the largest K, k_min + (k_max - k_min) *
+      1.0 as player_k computes it (it can round just above k_max), times
+      the largest match weight times max_information_multiplier is
+      finite in floats.
     - 0 < rd_min < rd_max <= 2**511, and rd_max - rd_min is greater
       than 0 as computed (an int and a float that are equal once
       converted are rejected). The three seed RDs lie within
@@ -973,7 +977,14 @@ class Config:
                 raise ConfigError(f"{name} values must be finite numbers")
         if not all(_is_config_whole(key) for key in self.game_length_weights):
             raise ConfigError("game_length_weights keys must be whole numbers")
-        lengths = {int(key): item for key, item in self.game_length_weights.items()}
+        # int.__int__ gives the int's own value, whatever a subclass's
+        # __int__ says.
+        lengths: dict[int, float] = {}
+        for key, item in self.game_length_weights.items():
+            points = int.__int__(key)
+            if points in lengths:
+                raise ConfigError(f"game_length_weights repeats the game length {points}")
+            lengths[points] = item
         object.__setattr__(self, "game_length_weights", _FrozenMapping(lengths))
         if any(key < 1 for key in self.game_length_weights):
             raise ConfigError("game_length_weights keys must be at least 1")
@@ -992,7 +1003,8 @@ class Config:
                     "allowed_game_formats entries must be (scoring type, whole number) pairs"
                 )
         formats = frozenset(
-            (ScoringType(scoring), int(points)) for scoring, points in self.allowed_game_formats
+            (ScoringType(scoring), int.__int__(points))
+            for scoring, points in self.allowed_game_formats
         )
         object.__setattr__(self, "allowed_game_formats", formats)
         for name, kind, label in (
@@ -1060,13 +1072,15 @@ class Config:
         if self.max_information_multiplier < 1.0:
             raise ConfigError("max_information_multiplier must be at least 1")
         # The largest step size a match can reach. When it overflows to inf,
-        # a surprise of exactly 0 gives a NaN change.
-        # In floats, as the engine computes it: an all-int product is exact,
-        # and math.isfinite raises on one too large for a float.
+        # a surprise of exactly 0 gives a NaN change. The largest K is what
+        # player_k returns at fraction 1.0, which can round above k_max. The
+        # product is in floats, as the engine computes it: an all-int product
+        # is exact, and math.isfinite raises on one too large for a float.
+        largest_k = float(self.k_min + (self.k_max - self.k_min) * 1.0)
         largest_weight = float(max(self.match_weights.values())) * float(
             self.max_information_multiplier
         )
-        if not math.isfinite(float(self.k_max) * largest_weight):
+        if not math.isfinite(largest_k * largest_weight):
             raise ConfigError(
                 "k_max times the largest match weight and max_information_multiplier must be finite"
             )
