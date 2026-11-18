@@ -314,16 +314,18 @@ def test_fit_scale_picks_lower_unrounded_mse_when_rounded_values_tie(monkeypatch
     assert not fit.at_bound
 
 
+BAD_TOLERANCE = "tolerance must be finite and greater than 0"
+
 SEARCH_ARGUMENT_CASES = [
     pytest.param({"low": 3.0, "high": 0.5}, "low must be less than high", id="low-above-high"),
     pytest.param({"low": 2.0, "high": 2.0}, "low must be less than high", id="low-equals-high"),
     pytest.param({"low": math.nan}, "low and high must be finite", id="low-nan"),
     pytest.param({"high": math.inf}, "low and high must be finite", id="high-inf"),
     pytest.param({"low": -math.inf}, "low and high must be finite", id="low-minus-inf"),
-    pytest.param({"tolerance": 0.0}, "tolerance must be finite and greater than 0", id="tol-zero"),
-    pytest.param({"tolerance": -1.0}, "tolerance must be finite and greater than 0", id="tol-neg"),
-    pytest.param({"tolerance": math.nan}, "tolerance must be finite and greater than 0", id="tol-nan"),
-    pytest.param({"tolerance": math.inf}, "tolerance must be finite and greater than 0", id="tol-inf"),
+    pytest.param({"tolerance": 0.0}, BAD_TOLERANCE, id="tol-zero"),
+    pytest.param({"tolerance": -1.0}, BAD_TOLERANCE, id="tol-neg"),
+    pytest.param({"tolerance": math.nan}, BAD_TOLERANCE, id="tol-nan"),
+    pytest.param({"tolerance": math.inf}, BAD_TOLERANCE, id="tol-inf"),
 ]
 
 

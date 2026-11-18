@@ -3874,6 +3874,16 @@ def _report_from_predictions(
     return report, mse
 
 
+def _check_search_bounds(low: float, high: float, tolerance: float) -> None:
+    """Raise EvaluationError unless low < high are finite and tolerance is finite and > 0."""
+    if not (math.isfinite(low) and math.isfinite(high)):
+        raise EvaluationError("low and high must be finite")
+    if not low < high:
+        raise EvaluationError("low must be less than high")
+    if not (math.isfinite(tolerance) and tolerance > 0):
+        raise EvaluationError("tolerance must be finite and greater than 0")
+
+
 @dataclass(frozen=True)
 class ScaleFit:
     """
@@ -3913,7 +3923,10 @@ def fit_scale(
 
     Coarse grid first, then golden-section search around the best grid point.
     Publish the returned ScaleFit alongside the config that adopts it.
+    Raises EvaluationError, before any prediction work, unless low and high
+    are finite with low < high and tolerance is finite and greater than 0.
     """
+    _check_search_bounds(low, high, tolerance)
     cfg = cfg or Config()
     ledger = list(matches)
     seeds = list(seed_players)
@@ -4003,8 +4016,10 @@ def fit_win_calibration(
     Uses the raw win probabilities computed with cfg's scale, so fit the scale
     first. Predictions without a modeled win probability (win_by not 1 or 2)
     are skipped. Same search as fit_scale: coarse grid, then golden section.
-    Raises EvaluationError when no prediction remains.
+    Raises EvaluationError when no prediction remains, and, before any
+    prediction work, for the same low, high, and tolerance as fit_scale.
     """
+    _check_search_bounds(low, high, tolerance)
     predictions = prequential_predictions(
         matches,
         seed_players,
