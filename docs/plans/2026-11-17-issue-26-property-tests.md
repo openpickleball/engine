@@ -26,9 +26,9 @@ applicable because this is a standard-library Python package with no web, UI, or
      `win_weight` values, and states near the rating floor and ceiling.
    - Replay order independence: for many generated ledgers (singles, doubles, a category,
      timed and untimed rows, self-reported rows, identical repeated rows, a not completed
-     row, content duplicates under other ids, imported seeds), every permutation tried gives
-     an identical `to_snapshot()`, under the default config and under
-     `reject_content_duplicates=True`.
+     row, content duplicates under other ids, imported seeds), every permutation tried of
+     the rows and of the seeds gives an identical `to_snapshot()`, under the default config
+     and under `reject_content_duplicates=True`.
 2. Singles: properties above run on singles as well as doubles, plus singles tests that the
    existing suite lacks (checked against `tests/` before writing).
 3. The issue's listed gaps that `main` does not yet cover get tests:
@@ -40,7 +40,11 @@ applicable because this is a standard-library Python package with no web, UI, or
      match (versus its inflated pre-match value) and never drops below `rd_min`; with no
      new matches, inflated RD never falls and reliability never rises as the date moves
      forward, and RD caps at `rd_max`; reliability does not fall across a weekly schedule of
-     varied matches under the default config.
+     matches with varied partners and opponents under the default config. Verified schedules
+     mix tournament, league, and recreational verified matches, game formats, and best of 1
+     and 3. A self-reported schedule keeps one weight (one game to 11): after a run of
+     heavier matches has brought RD near `rd_min`, one lighter match can shrink RD by less
+     than a week of inactivity grew it, so reliability can then fall by design.
    - Duplicate `match_id` (live): re-recording any processed match returns
      `DUPLICATE_MATCH_ID` and leaves `to_snapshot()` unchanged, over generated ledgers.
    - Late live matches: recording a generated ledger live in a shuffled order flags `late`
@@ -82,8 +86,10 @@ applicable because this is a standard-library Python package with no web, UI, or
 ## Risks
 
 - Floating point: symmetry was measured exact on main, but compare rating changes with an
-  absolute tolerance of 1e-12 and rounded fields with 1e-5, so a different Python cannot
-  flake it. Conservation compares within the rounding of `imbalance` (5e-6 plus 1e-12).
+  absolute tolerance of 1e-12 and rounded fields with 1e-5 plus 1e-12, so a different Python
+  cannot flake it. Two values rounded to 5 places on their own can differ by one unit in the
+  last place (a mirrored `surprise` of exactly half a unit rounds to 0.25937 one way and
+  0.25938 the other), and the float difference of such a pair is slightly above 1e-5. Conservation compares within the rounding of `imbalance` (5e-6 plus 1e-12).
 - A property that looks broken may be the test's model, not the engine. Before calling it a
   bug, reduce it to one match and check it against the module docstring. A real bug: small
   and in scope, fix it with a test that fails first; otherwise file an issue with a
