@@ -396,6 +396,12 @@ class MatchType(_StrEnum):
     SELF_REPORTED = "self_reported"
 
 
+# Match types an organizer, club, or verified record stands behind.
+# RatingState.verified_matches_played counts these, and
+# PlayerSummary.established needs Config.established_min_verified_matches of them.
+_VERIFIED_MATCH_TYPES = frozenset({MatchType.TOURNAMENT, MatchType.LEAGUE, MatchType.REC_VERIFIED})
+
+
 class ScoringType(_StrEnum):
     """Side-out scoring (only the serving side scores) or rally scoring."""
 
@@ -645,9 +651,14 @@ class Config:
     import_reliability_max_age_days: int = 365
 
     # Reliability label. PlayerSummary.established is True when OPEN-earned
-    # reliability, as displayed, is at least this value (0-100). A label
-    # only: it changes no rating, prediction, or evaluation.
+    # reliability, as displayed, is at least the threshold (0-100) and the
+    # state has at least established_min_verified_matches counted
+    # tournament, league, or recreational verified matches. Self-reported
+    # matches never count toward the minimum. A label only: it changes no
+    # rating, prediction, or evaluation. A minimum of 0 leaves the
+    # reliability rule alone.
     established_reliability_threshold: float = 60.0
+    established_min_verified_matches: int = 3
 
     # Category doubles matches also update overall doubles.
     category_feeds_parent: bool = True
@@ -719,6 +730,9 @@ class Config:
             raise ConfigError("import reliability limits must be nonnegative")
         if not 0.0 <= self.established_reliability_threshold <= 100.0:
             raise ConfigError("established_reliability_threshold must be between 0 and 100")
+        minimum = self.established_min_verified_matches
+        if not _is_whole_number(minimum) or minimum < 0:
+            raise ConfigError("established_min_verified_matches must be a nonnegative int")
         if not isinstance(self.reject_content_duplicates, bool):
             raise ConfigError("reject_content_duplicates must be a bool")
 
@@ -910,6 +924,11 @@ class RatingState:
     # derivation; 0 for a state not derived from its parent. A replay
     # gives 0, since no state has live updates during a replay.
     inherited_live_updates: int = 0
+
+    # Counted tournament, league, and recreational verified matches that
+    # moved this state: matches_played without the self-reported ones. A
+    # seed, and a category state derived from its parent, start at 0.
+    verified_matches_played: int = 0
 
 
 @dataclass
@@ -1538,7 +1557,12 @@ def _is_plain_date(value: object) -> bool:
 
 def _seed_type_broken(state: RatingState) -> str | None:
     """The first seed field with the wrong type, or None."""
-    for name in ("matches_played", "live_updates_since_replay", "inherited_live_updates"):
+    for name in (
+        "matches_played",
+        "verified_matches_played",
+        "live_updates_since_replay",
+        "inherited_live_updates",
+    ):
         value = getattr(state, name)
         if not isinstance(value, int) or isinstance(value, bool):
             return f"{name} must be an int"
@@ -1565,6 +1589,8 @@ def _seed_rule_broken(state: RatingState, cfg: Config) -> str | None:
         return wrong_type
     if state.matches_played != 0:
         return "matches_played must be 0"
+    if state.verified_matches_played != 0:
+        return "verified_matches_played must be 0"
     if state.last_played is not None:
         return "last_played must be None"
     if state.partners:
@@ -3255,6 +3281,8 @@ class RatingEngine:
                 # inactivity or drop a recent partner from the window.
                 state.rd_as_of = _latest(state.rd_as_of, match.played_on)
                 state.matches_played += 1
+                if match.match_type in _VERIFIED_MATCH_TYPES:
+                    state.verified_matches_played += 1
                 state.last_played = _latest(state.last_played, match.played_on)
                 _seen(
                     state.partners, (other for other in team_ids if other != pid), match.played_on
@@ -3366,7 +3394,10 @@ class RatingEngine:
             rating=round(state.rating, 3),
             reliability=earned,
             imported_reliability=imported,
-            established=earned >= cfg.established_reliability_threshold,
+            established=(
+                earned >= cfg.established_reliability_threshold
+                and state.verified_matches_played >= cfg.established_min_verified_matches
+            ),
             rd=round(inflated_rd(state, reference, cfg), 4),
             matches_played=state.matches_played,
             last_played=state.last_played,
