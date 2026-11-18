@@ -27,6 +27,7 @@ from open_engine import (
     MatchType,
     OpenEngineError,
     Player,
+    PlayerError,
     RatingEngine,
     RatingFormat,
     RatingState,
@@ -323,6 +324,21 @@ def test_resume_error_for_a_seed_in_a_rejected_row_is_unchanged() -> None:
         replay(
             ledger,
             [_seed("syn-u", S, 5.0)],
+            cfg=GAPS,
+            as_of=AS_OF,
+            from_snapshot=checkpoint.to_snapshot(),
+        )
+
+
+def test_resume_seed_for_a_checkpointed_player_already_in_the_snapshot_is_a_player_error() -> None:
+    ledger = [_match("syn-sg", ("syn-a",), ("syn-u",), S)]
+    checkpoint = replay(ledger, [_seed("syn-a", S, 5.0)], cfg=GAPS, as_of=LATE)
+    assert "syn-a" in checkpoint.players
+    assert "syn-a" in checkpoint._ledger_player_ids
+    with pytest.raises(PlayerError, match="Player already exists: syn-a"):
+        replay(
+            ledger,
+            [_seed("syn-a", S, 4.5)],
             cfg=GAPS,
             as_of=AS_OF,
             from_snapshot=checkpoint.to_snapshot(),
