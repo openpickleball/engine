@@ -148,6 +148,20 @@ Errors (every class is a `ValueError`):
 - `SnapshotError`: a snapshot cannot be loaded or resumed from. `RatingEngine.from_snapshot` raises it for a malformed snapshot, one taken under another `Config`, or one holding a state the engine cannot produce, and `RatingEngine.to_snapshot` for state that could not load back. `replay(from_snapshot=...)` raises it for a snapshot not from a replay, one with live updates or any other change since its replay, an `as_of` before the checkpoint date, a row on or before the checkpoint date that the checkpoint did not see, a seed for a player named in a row the checkpoint saw, or, with `whole_ledger=True`, a row the checkpoint saw that is missing from the ledger. It also raises it for `whole_ledger=True` without `from_snapshot`.
 <!-- public-api:end -->
 
+## Config values
+
+`Config` checks every field when it is built and raises `ConfigError` for any value it rejects. A number here is an `int` or a `float`, never a `bool`, that is finite as a float: not NaN or infinite, and not an int too large to convert. A whole number is an `int` that is also a number. So a built config always gives plain JSON, and its fingerprint, `==`, and `hash` never raise.
+
+- `version` is a str. `self_reported_requires_both_teams`, `reject_content_duplicates`, and `category_feeds_parent` are bools.
+- The day counts, `diversity_target`, `self_reported_max_repeats`, `import_reliability_carry_matches`, `established_min_verified_matches`, and the three connectivity counts are whole numbers. A float such as `7.0` is rejected. Every other scalar field is a number, except `connectivity_reliability_cap`, `max_singles_rating_gap`, and `max_doubles_partner_gap`, which are `None` or a number.
+- `min_rating`, `max_rating`, and `default_rating` are each at most `2**511` in magnitude (about 1.3e154), `min_rating` is less than `max_rating`, and `default_rating` lies between them. Within that range, team sums, rating gaps, and `imbalance` stay finite.
+- `scale_by_scoring`, `win_calibration_by_scoring`, and `match_weights` have a value for every scoring type or match type. Their values, and the values of `game_length_weights`, are numbers greater than 0. `game_length_weights` keys are whole numbers of at least 1, with one for the points of every allowed game format.
+- `0 <= k_min <= k_max`, and `k_max` times the largest match weight times `max_information_multiplier` is finite.
+- `0 < rd_min < rd_max <= 2**511`. `new_player_rd`, `external_seed_rd`, and `category_seed_rd` lie from `rd_min` to `rd_max`. `rd_shrink_per_match` is at least 0, and `rd_growth_per_day` is from 0 to `2**511`.
+- `win_weight` is from 0 to 1, `game_count_bonus` is at least 0, `max_information_multiplier` is at least 1, and `self_reported_repeat_factor` is greater than 0 and at most 1. `established_reliability_threshold` and `connectivity_reliability_cap` are from 0 to 100.
+- `replay_interval_days`, `diversity_window_days`, and `self_reported_repeat_window_days` are from 1 to 3,652,058, the number of days from `date.min` to `date.max`. `import_reliability_max_age_days` is from 0 to that. `diversity_target`, `self_reported_max_repeats`, and the three connectivity counts are at least 1. `import_reliability_carry_matches` and `established_min_verified_matches` are at least 0.
+- `max_singles_rating_gap` and `max_doubles_partner_gap` are `None` or at least 0.
+
 ## Ledger order
 
 `replay` and `prequential_predictions` sort the ledger the same way whatever order the rows arrive in.

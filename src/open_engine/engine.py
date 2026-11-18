@@ -732,14 +732,42 @@ class Config:
     can be a dict key or a set member. to_dict() and from_dict() store and
     load a config.
 
-    The mapping and format fields, established_min_verified_matches (a
-    nonnegative int, not a bool), reject_content_duplicates (a bool),
-    connectivity_reliability_cap (None or a number from 0 to 100), and the
-    three connectivity counts (positive ints, not bools) are type-checked;
-    other scalar fields are not yet. Such a scalar
-    field given a value JSON cannot hold (a Decimal, say) makes
-    fingerprint(), ==, and hash() raise TypeError, and a non-finite float
-    is written as NaN or Infinity, which strict JSON rejects.
+    Every field is checked when the config is built, and any failure
+    raises ConfigError. A number is an int or a float, never a bool, that
+    is finite as a float: not NaN or infinite, and not an int too large to
+    convert. A whole number is an int that is also a number. So a built
+    config always gives plain JSON, and fingerprint(), ==, and hash()
+    never raise. The rules:
+
+    - version is a str. The three flags are bools.
+    - Other scalar fields are numbers, except the day counts, the
+      repeat, carry, verified match, and connectivity counts, and
+      diversity_target, which are whole numbers.
+      connectivity_reliability_cap and the two gap filters are None or a
+      number.
+    - min_rating, max_rating, and default_rating are each at most 2**511
+      in magnitude, min_rating < max_rating, and default_rating lies
+      between them.
+    - Mapping values are numbers greater than 0, with a value for every
+      scoring type or match type. game_length_weights keys are whole
+      numbers of at least 1, one for the points of every allowed format.
+    - 0 <= k_min <= k_max, and k_max times the largest match weight times
+      max_information_multiplier is finite.
+    - 0 < rd_min < rd_max <= 2**511. The three seed RDs lie within
+      rd_min..rd_max. rd_shrink_per_match >= 0, and rd_growth_per_day is
+      from 0 to 2**511.
+    - win_weight is from 0 to 1, game_count_bonus >= 0,
+      max_information_multiplier >= 1, self_reported_repeat_factor is in
+      (0, 1], and established_reliability_threshold and
+      connectivity_reliability_cap are from 0 to 100.
+    - replay_interval_days, diversity_window_days, and
+      self_reported_repeat_window_days are from 1 to 3,652,058 (the days
+      from date.min to date.max), and import_reliability_max_age_days
+      from 0 to that. diversity_target, self_reported_max_repeats, and the
+      three connectivity counts are at least 1;
+      import_reliability_carry_matches and
+      established_min_verified_matches at least 0.
+    - The gap filters are None or at least 0.
     """
 
     version: str = __version__
