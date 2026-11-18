@@ -288,6 +288,22 @@ NON_STR_ROWS: list[tuple[str, Callable[[RatingEngine], object], str]] = [
         r"^player_id is required$",
     ),
     ("player_int_id", lambda e: e.player(5), r"^player_id is required$"),
+    ("state_int_id", lambda e: e.state(5, D), r"^player_id is required$"),
+    (
+        "summary_int_id",
+        lambda e: e.player_summary(5, D, as_of=AS_OF),
+        r"^player_id is required$",
+    ),
+    (
+        "seed_provisional_int_id",
+        lambda e: e.seed_provisional_rating(5, D),
+        r"^player_id is required$",
+    ),
+    (
+        "seed_external_int_id",
+        lambda e: e.seed_external_rating(5, D, ExternalRatingSnapshot("ext", 4.0, AS_OF)),
+        r"^player_id is required$",
+    ),
 ]
 
 
