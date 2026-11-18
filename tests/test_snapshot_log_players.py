@@ -1,10 +1,11 @@
 """A snapshot edited in a second field must not pass the verified-count check (#102).
 
-Two rules close the cases a second edit opened. In a resumable snapshot, a
-played state with an initial_source_date has last_played after it. And
-every player a self-reported log entry names either moved in that format
-on or after the entry's latest date, or was frozen there by a baseline
-dated on or after it. All ids are synthetic.
+These tests cover two of the rules that reject such edits. In a resumable
+snapshot, a played state with an initial_source_date has last_played after
+it. And every player a self-reported log entry names has a state in that
+format played on or after the entry's latest date, or a baseline dated on
+or after it. tests/test_snapshot_log_links.py covers the rest. All ids are
+synthetic.
 """
 
 from __future__ import annotations
@@ -141,8 +142,9 @@ def test_case_2_dated_after_every_logged_match_does_not_load(base: Snap, mixed_s
 
 
 def test_case_2_last_played_on_the_source_date_does_not_load(base: Snap) -> None:
-    # Dated on its first match: the second match moved it, so the counts
-    # agree with the log, but the first must have frozen it.
+    # Dated on its first match, with last_played moved back to it as well.
+    # The counts agree with the log, but a match on or before the date
+    # freezes the state, so none can have moved it.
     doubles = _state(base, "syn-a", "doubles")
     doubles.update(
         initial_source="ext", initial_source_date="2026-01-05", verified_matches_played=1
