@@ -1695,7 +1695,7 @@ def _validate_seed(player: Player, cfg: Config) -> None:
 # Snapshots
 # ---------------------------------------------------------------------------
 
-SNAPSHOT_VERSION = 5
+SNAPSHOT_VERSION = 6
 
 _TOP_KEYS = frozenset(
     {
@@ -1725,6 +1725,7 @@ _STATE_KEYS = frozenset(
         "rating",
         "rd",
         "matches_played",
+        "verified_matches_played",
         "last_played",
         "rd_as_of",
         "initial_rating",
@@ -1936,6 +1937,8 @@ def _check_state_invariants(state: RatingState, path: str, player_id: str, cfg: 
         raise SnapshotError(f"{path}: matches_played must be 0 exactly when last_played is null")
     if state.live_updates_since_replay > state.matches_played:
         raise SnapshotError(f"{path}.live_updates_since_replay must not exceed matches_played")
+    if state.verified_matches_played > state.matches_played:
+        raise SnapshotError(f"{path}.verified_matches_played must not exceed matches_played")
     if player_id in state.partners:
         raise SnapshotError(f"{path}.partners: a player cannot be their own partner")
     if player_id in state.opponents:
@@ -1980,6 +1983,9 @@ def _snap_state_fields(value: object, path: str, cfg: Config) -> RatingState:
         rating=rating,
         rd=rd,
         matches_played=_snap_count(raw["matches_played"], f"{path}.matches_played"),
+        verified_matches_played=_snap_count(
+            raw["verified_matches_played"], f"{path}.verified_matches_played"
+        ),
         last_played=_snap_opt_date(raw["last_played"], f"{path}.last_played"),
         rd_as_of=_snap_opt_date(raw["rd_as_of"], f"{path}.rd_as_of"),
         initial_rating=_snap_number(raw["initial_rating"], f"{path}.initial_rating"),

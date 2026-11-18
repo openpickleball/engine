@@ -207,7 +207,7 @@ def test_restored_engine_does_not_share_state_with_the_snapshot(
 
 
 def test_snapshot_top_level_values(engine: RatingEngine, snapshot: dict[str, object]) -> None:
-    assert snapshot["snapshot_version"] == 5
+    assert snapshot["snapshot_version"] == 6
     assert snapshot["engine_version"] == open_engine.__version__
     assert snapshot["config_version"] == engine.cfg.version
     assert snapshot["config_fingerprint"] == engine.cfg.fingerprint()
@@ -430,11 +430,12 @@ def _set_dup(key: object, value: object) -> Callable[[Snap], None]:
 MALFORMED: list[tuple[str, Callable[[Snap], None], str]] = [
     ("missing key", _delete("players"), r"snapshot: missing key 'players'"),
     ("unknown key", _set("extra", 1), r"snapshot: unknown key 'extra'"),
-    ("version", _set("snapshot_version", 1), r"snapshot_version must be 5"),
-    ("version 2", _set("snapshot_version", 2), r"snapshot_version must be 5"),
-    ("version 4", _set("snapshot_version", 4), r"snapshot_version must be 5"),
-    ("version bool", _set("snapshot_version", True), r"snapshot_version must be 5"),
-    ("version float", _set("snapshot_version", 5.0), r"snapshot_version must be 5"),
+    ("version", _set("snapshot_version", 1), r"snapshot_version must be 6"),
+    ("version 2", _set("snapshot_version", 2), r"snapshot_version must be 6"),
+    ("version 4", _set("snapshot_version", 4), r"snapshot_version must be 6"),
+    ("version 5", _set("snapshot_version", 5), r"snapshot_version must be 6"),
+    ("version bool", _set("snapshot_version", True), r"snapshot_version must be 6"),
+    ("version float", _set("snapshot_version", 6.0), r"snapshot_version must be 6"),
     ("engine version", _set("engine_version", 3), r"engine_version must be a str"),
     ("config version type", _set("config_version", None), r"config_version must be a str"),
     ("date form", _set("calculated_as_of", "2025-6-30"), r"calculated_as_of must be a date"),
