@@ -2915,8 +2915,9 @@ class RatingEngine:
         next replay). replay() passes a fixed as_of for authoritative rebuilds.
         `as_of` only labels the update as part of a replay and must not be
         earlier than the match date; the update itself does not depend on it.
-        An as_of that is not a plain date (a datetime is not one) raises
-        InvalidMatchError right after the match is validated.
+        An as_of that is not a plain date (a datetime is not one), or one
+        earlier than played_on, raises InvalidMatchError right after the
+        match is validated, before any check that rejects the match.
         Nothing is changed unless the match counts, except that a match
         rejected as a possible duplicate is recorded in possible_duplicates.
         A match whose status is not MatchStatus.COMPLETED is never counted:
@@ -2944,6 +2945,8 @@ class RatingEngine:
             raise InvalidMatchError(
                 f"as_of must be a plain date (not a datetime), not {type(as_of).__name__}"
             )
+        if as_of is not None and as_of < match.played_on:
+            raise InvalidMatchError("as_of cannot be earlier than the match date")
         if match.match_id in self.processed_match_ids:
             return MatchResult(False, match.rating_format, RejectionReason.DUPLICATE_MATCH_ID)
         if match.status is not MatchStatus.COMPLETED:
@@ -2956,9 +2959,6 @@ class RatingEngine:
             return MatchResult(False, match.rating_format, RejectionReason.GAME_FORMAT_NOT_ACCEPTED)
 
         live = as_of is None
-        as_of = as_of or match.played_on
-        if as_of < match.played_on:
-            raise InvalidMatchError("as_of cannot be earlier than the match date")
 
         content_key = _content_key(match)
         twin = self._content_keys.get(content_key)
