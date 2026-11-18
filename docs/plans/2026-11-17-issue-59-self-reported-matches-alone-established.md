@@ -70,6 +70,14 @@ Both:
 - `ReplayInfo` was hashable (frozen dataclass); the new field is a `_FrozenMapping`, which is hashable, so it stays hashable.
 - `test_properties.py` uses self-reported matches; it does not assert `established`, so it should pass unchanged.
 
+## Departures from the plan
+
+- The snapshot tests for the new fields went into two new files, `tests/test_snapshot_verified_matches.py` (#59) and `tests/test_snapshot_net_rating_created.py` (#42), instead of new cases in `tests/test_snapshot.py`. `tests/test_snapshot.py` changed only where it pinned version 5 (it also gains a version 5 rejection case).
+- `_compute` returns a third value, the update's `math.fsum` of applied changes, which `_record` collects per format. This is how decision 8's per-update value comes from `record`'s own computation.
+- Existing tests that changed: the snapshot version pins in `tests/test_snapshot.py`, `tests/test_match_status.py`, `tests/test_inherited_live_updates.py`, `tests/test_content_duplicates.py`, and `tests/test_reserved_match_ids.py` (5 to 6); the default fingerprint pins in `tests/test_config_immutable.py` and `tests/test_float_summation.py` (`Config()` now gives `d921695e186f6bc5`); `tests/test_established.py::test_threshold_zero_and_hundred` sets `established_min_verified_matches=0`, since an unplayed player has no verified matches; `tests/test_addendum_review_fixes.py::test_inherited_live_updates_is_the_last_field` becomes `..._comes_after_opponents`, since the new field is now last.
+- The `CHANGELOG.md` entry for issue #25 said `Config()` "still gives" `c5bb49f7c37a013a`. The new field changes the default fingerprint, so that line now says it gave that value after that change.
+- Interim commits: the commit that adds the Config and state fields leaves the snapshot round-trip tests red until the schema commit, and the commit that adds the replay total leaves the resume tests red until the snapshot commit. Each red stretch ends in the next implementation commit.
+
 ## Proof
 
 - Criterion 1: `tests/test_verified_established.py::test_self_reported_only_never_established` and `..._established_after_verified_matches`.

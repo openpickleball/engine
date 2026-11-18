@@ -37,8 +37,12 @@ Published behavior notes:
   again and again, or lose rating faster on purpose. `imbalance` is a
   per-match value in team-average units, so a match adds
   `team_size * imbalance` to the pool's total rating (twice the value in
-  doubles). The backend should total it per pool (and per replay) and
-  monitor it.
+  doubles). Each replay totals it per rating format in
+  `ReplayInfo.net_rating_created`, from the unrounded changes, a category
+  match adding to its own format and, through its parent update, to
+  doubles. The backend should store and monitor that total, and add
+  `team_size * imbalance` of each live MatchResult (and its parent)
+  between replays. The engine reports the total but does not limit it.
 - Match performance is team A's share of all points across the match's
   games, blended with the match result by Config.win_weight:
   `(1 - win_weight) * point_share + win_weight * (1 if A won else 0)`.
@@ -103,7 +107,16 @@ Published behavior notes:
   clock.
 - PlayerSummary.established is True when OPEN-earned reliability, as
   displayed (rounded to 1 place), is at least
-  Config.established_reliability_threshold (60 by default). Imported
+  Config.established_reliability_threshold (60 by default) and the state
+  has at least Config.established_min_verified_matches (3 by default)
+  counted tournament, league, or recreational verified matches
+  (RatingState.verified_matches_played). Self-reported matches never
+  count toward that minimum, and neither does a match in which the
+  player was frozen. So while the minimum is above 0, a player with
+  fewer counted verified matches in the format than the minimum is not
+  established at any reliability. A category state derived from overall
+  doubles starts its count at 0, as it starts matches_played at 0. With
+  a minimum of 0 the rule is reliability alone. Imported
   reliability never counts, and it is measured at the same reference date
   as reliability, so it lapses with inactivity. Under the defaults, a new
   player with no imported rating, playing one match a week with varied
@@ -111,9 +124,11 @@ Published behavior notes:
   tournament, league, or recreational verified matches (10 tournament, 11
   league, or 13 recreational verified matches of one game, fewer for best
   of 3), and after about twice as many against the same players.
-  Self-reported matches need about 20 to 25 with varied players and never
-  get there against the same players, because repeat matches are
-  discounted and then rejected. A player seeded from a recently captured
+  Self-reported matches raise reliability past the threshold after about
+  20 to 25 with varied players (never against the same players, because
+  repeat matches are discounted and then rejected), but such a player is
+  established only once they also have the minimum of counted verified
+  matches. A player seeded from a recently captured
   imported rating starts at a lower RD (Config.external_seed_rd) and is
   established after about 3 to 4 tournament, league, or recreational
   verified matches. RD grows from the capture date, so an older import
@@ -122,9 +137,9 @@ Published behavior notes:
   established is what external rating systems usually call provisional.
   That is different from OPEN's provisional live updates between replays
   and from the open_provisional initial source. The threshold is a label
-  only: it changes no rating, prediction, evaluate,
-  prequential_predictions, fit_scale, or fit_win_calibration output.
-  Evaluation has its own eligibility rule: it scores a match only when
+  only, and so is the minimum: neither changes any rating, prediction,
+  evaluate, prequential_predictions, fit_scale, or fit_win_calibration
+  output. Evaluation has its own eligibility rule: it scores a match only when
   every participant has an imported baseline or at least burn_in_matches
   OPEN matches. That rule is separate from PlayerSummary.established.
 - Ledger order: `replay` and `prequential_predictions` sort matches by
@@ -160,7 +175,7 @@ Published behavior notes:
   `player_summary` call with no date to measure at or with an as_of that
   is not a plain date.
 - Snapshots and checkpoints: `RatingEngine.to_snapshot()` gives the whole
-  engine state as JSON-safe data (schema version 5) with sorted keys and
+  engine state as JSON-safe data (schema version 6) with sorted keys and
   lists, and `RatingEngine.from_snapshot` loads it back after validating
   every key, type, and range and checking the config version and
   fingerprint. A replay's snapshot is a checkpoint:
@@ -287,7 +302,9 @@ Production notes:
   external rating. An external refresh can never overwrite an OPEN-earned
   rating once OPEN matches have been processed.
 - Store each replay's `ReplayInfo` (as_of date, config version, config
-  fingerprint) for auditability.
+  fingerprint, counts, net_rating_created) for auditability. Watch
+  net_rating_created for a pool that grows or shrinks: colluding accounts
+  with different K can create rating, and the engine does not cap it.
 - Reject a match whose `played_on` is after the date it was submitted.
   The engine never reads the clock, so it cannot tell. A future-dated
   live match, by typo or on purpose, holds last_played, rd_as_of, and
@@ -1318,7 +1335,10 @@ class PlayerSummary:
     reliability.
 
     established is True when reliability (as displayed, rounded to 1 place)
-    is at least Config.established_reliability_threshold. Imported
+    is at least Config.established_reliability_threshold and the state's
+    verified_matches_played (counted tournament, league, and recreational
+    verified matches) is at least Config.established_min_verified_matches.
+    Self-reported matches never count toward that minimum. Imported
     reliability never counts toward it, and it is measured at the same
     reference date as reliability, so it lapses with inactivity. A recently
     captured imported rating can reach the threshold in fewer OPEN matches
@@ -1342,7 +1362,7 @@ class PlayerSummary:
     rating: float  # rounded to 3 places
     reliability: float  # OPEN-earned reliability, 0-100
     imported_reliability: float | None  # carried imported reliability, 0-100
-    established: bool  # reliability >= Config.established_reliability_threshold
+    established: bool  # reliability over the threshold and enough verified matches
     rd: float  # inflated to the reference date, rounded to 4 places
     matches_played: int
     last_played: date | None
@@ -1371,8 +1391,8 @@ class ReplayInfo:
     every player in it, a frozen player adding 0.0. A category match adds
     its category update to its own format and its overall doubles update,
     when that counts, to doubles. Each player moves by their own K, so it
-    is nonzero when K differs between the teams, or a player is clamped
-    or frozen, and colluding accounts can grow it on purpose. It is
+    can be nonzero when K differs between the teams or a player is
+    clamped or frozen, and colluding accounts can grow it on purpose. It is
     stored as a read-only mapping with a key for every RatingFormat in
     definition order (0.0 where nothing counted). Updates are added in
     ledger order, and a resume continues from the checkpoint's total, so
@@ -2650,7 +2670,7 @@ class RatingEngine:
 
     def to_snapshot(self) -> dict[str, object]:
         """
-        The engine's whole state as JSON-safe data (schema version 5).
+        The engine's whole state as JSON-safe data (schema version 6).
 
         json.dumps(snapshot, allow_nan=False) works with no custom encoder,
         and RatingEngine.from_snapshot rebuilds the engine from it, or from
@@ -2658,10 +2678,11 @@ class RatingEngine:
         every list in a fixed order, so the same state always gives the same
         text. Numbers keep their type: an int stays an int.
 
-        Keys: snapshot_version (5), engine_version (informational),
+        Keys: snapshot_version (6), engine_version (informational),
         config_version and config_fingerprint (of this engine's Config),
         calculated_as_of (ISO date or null), replay_info (null, or its
-        fields with as_of as an ISO date), players (sorted by id: id,
+        fields with as_of as an ISO date and net_rating_created as format
+        value to float), players (sorted by id: id,
         account_user_id, external_ids, and ratings by format value, each
         state with every RatingState field, dates as ISO text, and partners
         and opponents as id to ISO date), processed_match_ids (sorted),
@@ -2738,13 +2759,16 @@ class RatingEngine:
         cfg must be the Config the snapshot was taken under (default
         Config()): its version and fingerprint must equal the snapshot's.
         The whole snapshot is validated before anything is built: exactly
-        the schema's keys at every level, snapshot_version 5, dates as
+        the schema's keys at every level, snapshot_version 6, dates as
         YYYY-MM-DD text, non-blank str ids with no repeated player or match
         id, RatingFormat values as format keys, ratings within min_rating
         and max_rating, RD within rd_min and rd_max, an imported
         reliability between 0 and 100, nonnegative int counts no larger
         than 2**63 - 1, replay_info present exactly when calculated_as_of
-        is and consistent with it, self-reported matchups of two disjoint
+        is and consistent with it (its net_rating_created a finite float
+        for every RatingFormat, 0.0 for every format when matches_counted
+        is 0 and for a format in which no player has a played state),
+        self-reported matchups of two disjoint
         teams of the format's size, content keys and ledger digests of 64
         lowercase hex characters, content keys that each name a different
         processed match id, possible duplicates that each name another
@@ -2760,7 +2784,8 @@ class RatingEngine:
         within the rating bounds; an unplayed state with RD new_player_rd,
         external_seed_rd, or at least category_seed_rd, and no partners,
         opponents, or live updates; matches_played 0 exactly when
-        last_played is null; live updates no more than matches played; no
+        last_played is null; live updates and verified matches no more
+        than matches played; no
         player their own partner or opponent; an imported reliability only
         with an initial_source_date; a nonzero inherited_live_updates only
         on a category state derived from its parent (category_feeds_parent
