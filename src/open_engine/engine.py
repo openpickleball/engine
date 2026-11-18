@@ -1522,8 +1522,9 @@ class Match:
 
     The match must be a Match itself, not a subclass: record, replay, and
     prequential_predictions (and so evaluate, fit_scale, and
-    fit_win_calibration) raise InvalidMatchError for a subclass before they
-    change any state or call its validate, and validate raises it too. A
+    fit_win_calibration) and ledger_order raise InvalidMatchError for a
+    subclass before they change any state or call its validate, and
+    Match.validate raises it for a subclass that does not override it. A
     subclass could return one value to validation and another to rating.
 
     match_id, the team player ids, and each member of confirmed_by must be a
@@ -1698,10 +1699,12 @@ def _validate_match(match: Match) -> None:
     """
     Check that match is a Match itself, then validate it; InvalidMatchError if not.
 
-    The type check comes first, so a subclass's own validate never runs.
+    The type check comes first, so a subclass's own validate never runs, and
+    Match.validate is called from the class, so a validate stored in the
+    instance's __dict__ never runs either.
     """
     _require_plain_match(match)
-    match.validate()
+    Match.validate(match)
 
 
 def _is_plain_str(value: object) -> TypeGuard[str]:
@@ -1739,8 +1742,10 @@ def ledger_order(match: Match) -> tuple[date, int, datetime, int, str]:
     Matches sort by played_on. Within one day, untimed matches come first,
     by sequence then match_id. Timed matches follow, by the UTC instant of
     played_at, then sequence, then match_id. played_at must be
-    timezone-aware; a naive value raises InvalidMatchError.
+    timezone-aware; a naive value raises InvalidMatchError, and so does a
+    match that is not exactly a Match (a subclass included).
     """
+    _require_plain_match(match)
     if match.played_at is None:
         return (match.played_on, 0, _UTC_MIN, match.sequence, match.match_id)
     return (match.played_on, 1, _utc_instant(match.played_at), match.sequence, match.match_id)
@@ -1783,7 +1788,7 @@ def _canonical(match: Match) -> tuple[object, ...]:
     with distinct zone objects inside a fold as unequal.
     """
     others = tuple(
-        (f.name, _strict(getattr(match, f.name))) for f in fields(match) if f.name != "played_at"
+        (f.name, _strict(getattr(match, f.name))) for f in fields(Match) if f.name != "played_at"
     )
     if match.played_at is None:
         return (others, None, None)
@@ -1801,7 +1806,7 @@ def _strict(value: object) -> object:
     if is_dataclass(value) and not isinstance(value, type):
         return (
             type(value),
-            tuple((f.name, _strict(getattr(value, f.name))) for f in fields(value)),
+            tuple((f.name, _strict(getattr(value, f.name))) for f in fields(type(value))),
         )
     if isinstance(value, (tuple, list)):
         return (type(value), tuple(_strict(item) for item in value))
@@ -1820,7 +1825,7 @@ def _match_digest(match: Match) -> str:
     whether a row it is given is the row the checkpoint saw.
     """
     others = [
-        [f.name, _json_form(getattr(match, f.name))] for f in fields(match) if f.name != "played_at"
+        [f.name, _json_form(getattr(match, f.name))] for f in fields(Match) if f.name != "played_at"
     ]
     timing: list[object] | None = None
     if match.played_at is not None:
@@ -1847,7 +1852,7 @@ def _json_form(value: object) -> object:
     """
     tag = f"{type(value).__module__}.{type(value).__qualname__}"
     if is_dataclass(value) and not isinstance(value, type):
-        return [tag, [[f.name, _json_form(getattr(value, f.name))] for f in fields(value)]]
+        return [tag, [[f.name, _json_form(getattr(value, f.name))] for f in fields(type(value))]]
     if isinstance(value, (tuple, list)):
         return [tag, [_json_form(item) for item in value]]
     if isinstance(value, (frozenset, set)):
