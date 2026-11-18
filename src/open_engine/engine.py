@@ -1356,15 +1356,43 @@ class PlayerSummary:
     account_linked: bool
 
 
+def _zero_by_format() -> dict[RatingFormat, float]:
+    return dict.fromkeys(RatingFormat, 0.0)
+
+
 @dataclass(frozen=True)
 class ReplayInfo:
-    """Provenance of one replay: as_of date, config version and fingerprint, counts."""
+    """
+    Provenance of one replay: as_of date, config version and fingerprint, counts.
+
+    net_rating_created is, per rating format, the rating the replay's
+    counted updates added to that pool (negative when they removed it):
+    the sum over every counted update of the unrounded rating changes of
+    every player in it, a frozen player adding 0.0. A category match adds
+    its category update to its own format and its overall doubles update,
+    when that counts, to doubles. Each player moves by their own K, so it
+    is nonzero when K differs between the teams, or a player is clamped
+    or frozen, and colluding accounts can grow it on purpose. It is
+    stored as a read-only mapping with a key for every RatingFormat in
+    definition order (0.0 where nothing counted). Updates are added in
+    ledger order, and a resume continues from the checkpoint's total, so
+    a resume gives the same floats as a full replay. Live updates after
+    the replay do not change it; the backend adds team_size * imbalance
+    of each live MatchResult (and its parent) to follow them.
+    """
 
     as_of: date
     config_version: str
     config_fingerprint: str
     matches_considered: int
     matches_counted: int
+    net_rating_created: Mapping[RatingFormat, float] = field(default_factory=_zero_by_format)
+
+    def __post_init__(self) -> None:
+        given = self.net_rating_created
+        ordered = {fmt: given[fmt] for fmt in RatingFormat if fmt in given}
+        ordered.update((key, value) for key, value in given.items() if key not in ordered)
+        object.__setattr__(self, "net_rating_created", _FrozenMapping(ordered))
 
 
 # ---------------------------------------------------------------------------
@@ -2620,7 +2648,11 @@ class RatingEngine:
         info = self.replay_info
         replay_info: object = None
         if info is not None:
-            replay_info = _sorted_dict((f.name, _iso(getattr(info, f.name))) for f in fields(info))
+            replay_info = _sorted_dict(
+                (f.name, _iso(getattr(info, f.name)))
+                for f in fields(info)
+                if f.name in _REPLAY_INFO_KEYS
+            )
         snapshot: dict[str, object] = {
             "calculated_as_of": _iso(self.calculated_as_of),
             "config_fingerprint": self.cfg.fingerprint(),
@@ -3114,6 +3146,20 @@ class RatingEngine:
         match_id and game format checks and before the self-reported
         checks, so a rejected duplicate never enters the self-reported log.
         """
+        return self._record(match, as_of=as_of)[0]
+
+    def _record(
+        self, match: Match, *, as_of: date | None = None
+    ) -> tuple[MatchResult, dict[RatingFormat, float]]:
+        """
+        record, also returning the net rating each counted update added, by format.
+
+        The net of one update is math.fsum of the unrounded rating changes
+        it applied, a frozen player adding 0.0. A format appears only when
+        its update counted. replay totals these into
+        ReplayInfo.net_rating_created.
+        """
+        net: dict[RatingFormat, float] = {}
         match.validate()
         if as_of is not None and not _is_plain_date(as_of):
             raise InvalidMatchError(
@@ -3123,19 +3169,28 @@ class RatingEngine:
             raise InvalidMatchError("as_of cannot be earlier than the match date")
         match_id = match.match_id
         if match_id in self.processed_match_ids or match_id in self._reserved_match_ids:
-            return MatchResult(False, match.rating_format, RejectionReason.DUPLICATE_MATCH_ID)
+            return (
+                MatchResult(False, match.rating_format, RejectionReason.DUPLICATE_MATCH_ID),
+                net,
+            )
         if match.status is not MatchStatus.COMPLETED:
             # Reserve the id, so a later record with it that does not raise
             # is a duplicate, as in replay. No rating, count, or content key
             # changes.
             self._changed()
             self._reserved_match_ids.add(match_id)
-            return MatchResult(False, match.rating_format, RejectionReason.MATCH_NOT_COMPLETED)
+            return (
+                MatchResult(False, match.rating_format, RejectionReason.MATCH_NOT_COMPLETED),
+                net,
+            )
 
         cfg = self.cfg
         format_key = (match.game_format.scoring, match.game_format.points_to)
         if format_key not in cfg.allowed_game_formats:
-            return MatchResult(False, match.rating_format, RejectionReason.GAME_FORMAT_NOT_ACCEPTED)
+            return (
+                MatchResult(False, match.rating_format, RejectionReason.GAME_FORMAT_NOT_ACCEPTED),
+                net,
+            )
 
         live = as_of is None
 
@@ -3144,12 +3199,13 @@ class RatingEngine:
         if twin is not None and cfg.reject_content_duplicates:
             self._changed()
             self.possible_duplicates[match.match_id] = twin
-            return MatchResult(
+            rejected = MatchResult(
                 False,
                 match.rating_format,
                 RejectionReason.POSSIBLE_DUPLICATE,
                 possible_duplicate_of=twin,
             )
+            return rejected, net
 
         repeat_factor = 1.0
         matchup = None
@@ -3157,30 +3213,39 @@ class RatingEngine:
             if cfg.self_reported_requires_both_teams:
                 confirmed = set(match.confirmed_by)
                 if not (confirmed & set(match.team_a) and confirmed & set(match.team_b)):
-                    return MatchResult(
+                    unconfirmed = MatchResult(
                         False, match.rating_format, RejectionReason.SELF_REPORTED_UNCONFIRMED
                     )
+                    return unconfirmed, net
             matchup = _matchup_key(match)
             cutoff = match.played_on - timedelta(days=cfg.self_reported_repeat_window_days)
             prior = sum(
                 1 for d in self.self_reported_log.get(matchup, []) if cutoff <= d <= match.played_on
             )
             if prior >= cfg.self_reported_max_repeats:
-                return MatchResult(
+                limited = MatchResult(
                     False, match.rating_format, RejectionReason.SELF_REPORTED_REPEAT_LIMIT
                 )
+                return limited, net
             repeat_factor = cfg.self_reported_repeat_factor**prior
 
-        primary, primary_updates = self._compute(match, match.rating_format, repeat_factor)
+        primary, primary_updates, primary_net = self._compute(
+            match, match.rating_format, repeat_factor
+        )
         if not primary.counted or primary_updates is None:
-            return primary
+            return primary, net
         primary.possible_duplicate_of = twin
+        net[match.rating_format] = primary_net
 
         parent_updates = None
         parent_format = match.rating_format.parent if cfg.category_feeds_parent else None
         if parent_format is not None:
             # A parent rejection (baseline or filter) never blocks the category.
-            primary.parent, parent_updates = self._compute(match, parent_format, repeat_factor)
+            primary.parent, parent_updates, parent_net = self._compute(
+                match, parent_format, repeat_factor
+            )
+            if parent_updates is not None:
+                net[parent_format] = parent_net
 
         self._commit(match.rating_format, primary_updates, live)
         if parent_updates and parent_format is not None:
@@ -3194,7 +3259,7 @@ class RatingEngine:
         else:
             self.possible_duplicates[match.match_id] = twin
         self.processed_match_ids.add(match.match_id)
-        return primary
+        return primary, net
 
     def _commit(
         self, rating_format: RatingFormat, updates: dict[str, RatingState], live: bool
@@ -3206,8 +3271,15 @@ class RatingEngine:
 
     def _compute(
         self, match: Match, rating_format: RatingFormat, repeat_factor: float
-    ) -> tuple[MatchResult, dict[str, RatingState] | None]:
-        """Compute one format's update on working copies. Mutates nothing."""
+    ) -> tuple[MatchResult, dict[str, RatingState] | None, float]:
+        """
+        Compute one format's update on working copies. Mutates nothing.
+
+        Returns the result, the new states of the players who moved (None
+        when the update does not count), and the net rating the update adds:
+        math.fsum of the unrounded applied changes (0.0 when it does not
+        count).
+        """
         cfg = self.cfg
         self._validate_teams(match.team_a, match.team_b, rating_format)
         ids = match.team_a + match.team_b
@@ -3222,7 +3294,11 @@ class RatingEngine:
             and match.played_on <= baseline_date
         }
         if len(frozen) == len(ids):
-            return MatchResult(False, rating_format, RejectionReason.BEFORE_IMPORTED_BASELINE), None
+            return (
+                MatchResult(False, rating_format, RejectionReason.BEFORE_IMPORTED_BASELINE),
+                None,
+                0.0,
+            )
 
         # Live results apply in arrival order. A match dated before any
         # player's last match here, or before the date a copied category
@@ -3239,13 +3315,15 @@ class RatingEngine:
             and cfg.max_singles_rating_gap is not None
             and abs(rating_a - rating_b) > cfg.max_singles_rating_gap
         ):
-            return MatchResult(False, rating_format, RejectionReason.SINGLES_RATING_GAP), None
+            return MatchResult(False, rating_format, RejectionReason.SINGLES_RATING_GAP), None, 0.0
         if cfg.max_doubles_partner_gap is not None and rating_format.team_size == 2:
             for team_states in (states_a, states_b):
                 if abs(team_states[0].rating - team_states[1].rating) > cfg.max_doubles_partner_gap:
-                    return MatchResult(
-                        False, rating_format, RejectionReason.DOUBLES_PARTNER_GAP
-                    ), None
+                    return (
+                        MatchResult(False, rating_format, RejectionReason.DOUBLES_PARTNER_GAP),
+                        None,
+                        0.0,
+                    )
 
         for pid in ids:
             if pid not in frozen:
@@ -3321,7 +3399,8 @@ class RatingEngine:
             imbalance=imbalance,
             late=late,
         )
-        return result, {pid: work[pid] for pid in ids if pid not in frozen}
+        moved = {pid: work[pid] for pid in ids if pid not in frozen}
+        return result, moved, math.fsum(applied.values()) + 0.0
 
     # -- reporting -------------------------------------------------------------
 
@@ -3580,6 +3659,7 @@ def _replay(
 
     rows = _ledger(matches)
     considered = counted = 0
+    created = _zero_by_format()
     checkpoint: date | None = None
     if start is not None:
         checkpoint = start.calculated_as_of
@@ -3589,6 +3669,7 @@ def _replay(
         _check_resume_rows(rows, checkpoint, start._ledger_digests, whole_ledger)
         considered = info.matches_considered
         counted = info.matches_counted
+        created.update(info.net_rating_created)
 
     for match in rows:
         if match.played_on > as_of:
@@ -3599,8 +3680,12 @@ def _replay(
         if track:
             engine._ledger_digests[match.match_id] = _match_digest(match)
             engine._ledger_player_ids.update(match.team_a + match.team_b)
-        if engine.record(match, as_of=as_of).counted:
+        result, net = engine._record(match, as_of=as_of)
+        if result.counted:
             counted += 1
+        # Added in ledger order, so a resume continues from the same float.
+        for fmt, value in net.items():
+            created[fmt] += value
 
     engine.calculated_as_of = as_of
     engine._resumable = track
@@ -3610,6 +3695,7 @@ def _replay(
         config_fingerprint=engine.cfg.fingerprint(),
         matches_considered=considered,
         matches_counted=counted,
+        net_rating_created=created,
     )
     return engine
 
