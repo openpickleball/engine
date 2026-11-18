@@ -238,22 +238,6 @@ LINK_ROWS: list[tuple[str, Callable[[RatingEngine], object], str]] = [
         lambda e: e.attach_external_id("syn-c", "src", "\n"),
         r"^source and external_player_id are required$",
     ),
-    (
-        "seed_external_space_external_id",
-        lambda e: e.seed_external_rating(
-            "syn-c",
-            D,
-            ExternalRatingSnapshot("ext", 4.0, date(2026, 10, 1), external_player_id=" "),
-        ),
-        r"^source and external_player_id are required$",
-    ),
-    (
-        "seed_external_space_source",
-        lambda e: e.seed_external_rating(
-            "syn-c", D, ExternalRatingSnapshot(" ", 4.0, date(2026, 10, 1), external_player_id="X")
-        ),
-        r"^source and external_player_id are required$",
-    ),
 ]
 
 
@@ -266,6 +250,36 @@ def test_identity_methods_reject_whitespace(
     eng = RatingEngine(CFG)
     with pytest.raises(PlayerError, match=message):
         call(eng)
+    assert eng.players == {}
+
+
+# Issue #74: a blank source or external id in seed_external_rating is a bad
+# seed field, checked with the other snapshot fields.
+SEED_EXTERNAL_BLANK_ROWS: list[tuple[str, ExternalRatingSnapshot, str]] = [
+    (
+        "seed_external_space_external_id",
+        ExternalRatingSnapshot("ext", 4.0, date(2026, 10, 1), external_player_id=" "),
+        r"^External snapshot external_player_id must not be blank$",
+    ),
+    (
+        "seed_external_space_source",
+        ExternalRatingSnapshot(" ", 4.0, date(2026, 10, 1), external_player_id="X"),
+        r"^External snapshot source must not be blank$",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("snap", "message"),
+    [row[1:] for row in SEED_EXTERNAL_BLANK_ROWS],
+    ids=[row[0] for row in SEED_EXTERNAL_BLANK_ROWS],
+)
+def test_seed_external_rating_rejects_whitespace(
+    snap: ExternalRatingSnapshot, message: str
+) -> None:
+    eng = RatingEngine(CFG)
+    with pytest.raises(InvalidSeedError, match=message):
+        eng.seed_external_rating("syn-c", D, snap)
     assert eng.players == {}
 
 

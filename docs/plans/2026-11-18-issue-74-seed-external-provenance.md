@@ -36,6 +36,8 @@ Check the seed's own `external_ids`. A rating state with `initial_external_playe
 
 1. Write `tests/test_seed_provenance.py`. Run it on this branch with no engine change and confirm every new test fails for the expected reason (the call is accepted, or raises `PlayerError` where `InvalidSeedError` is expected). Commit it alone, red: `Add failing tests for seed external provenance (#74)`.
 2. Engine changes above, then docstrings. Run the new tests green, then the full suite, and update any existing test whose expectation the decision changes (none expected: the existing derived-state provenance messages in `tests/test_addendum_review_fixes.py` keep precedence because the new snapshot check runs after `_check_inherited_live_updates`). If an existing test must change, note it here in the same commit.
+
+   Done: five existing cases encoded the old `PlayerError` for a blank source or external id in `seed_external_rating`, which criterion 1 changes to `InvalidSeedError`. In `tests/test_failed_calls_create_nothing.py`, the two "seed with an identity and no source" cases now expect `InvalidSeedError("External snapshot source must not be blank")`, and "blank: seed_external_rating with no source" (blank player id and blank source) does too, because the snapshot field checks run before the player id check, as they already did for the other snapshot fields. In `tests/test_seed_identity_values.py`, the two `seed_external_rating` rows moved out of the `PlayerError` whitespace table into a new `InvalidSeedError` table with the new messages. Each still checks that nothing changes.
 3. README and CHANGELOG.
 4. Full gate.
 

@@ -236,12 +236,17 @@ Published behavior notes:
   values, `InvalidMatchError` covers matches, teams, scores and
   `played_at`, `InvalidSeedError` covers external and replay seeds (a
   seed state that breaks the seed rules in `RatingEngine.add_player`,
-  including a field of the wrong type, a blank id, or a rating or
-  initial rating outside the bounds, raised by `add_player`, `replay`,
+  including a field of the wrong type, a blank id, a blank
+  `initial_source` or `initial_external_player_id`, an external player id
+  the seed's own `external_ids` does not link under its `initial_source`,
+  or a rating or initial rating outside the bounds, raised by
+  `add_player`, `replay`,
   and `prequential_predictions`, and so
   by `evaluate`, `fit_scale`, and `fit_win_calibration`; `replay` also
   rejects a seed dated after `as_of`, and `prequential_predictions` one
-  dated after its last completed ledger match),
+  dated after its last completed ledger match, and
+  `RatingEngine.seed_external_rating` rejects a blank or whitespace-only
+  source or external id),
   `PlayerError` covers player identities, including a seed whose
   account or external identity another player holds (its subclass
   `UnknownPlayerError` covers a read of a player id with no player
@@ -2291,6 +2296,11 @@ def _seed_type_broken(state: RatingState) -> str | None:
         value = getattr(state, name)
         if value is not None and not _is_plain_date(value):
             return f"{name} must be a date"
+    if not isinstance(state.initial_source, str):
+        return "initial_source must be a str"
+    external_id = state.initial_external_player_id
+    if external_id is not None and not isinstance(external_id, str):
+        return "initial_external_player_id must be a str or None"
     return None
 
 
@@ -2299,6 +2309,11 @@ def _seed_rule_broken(state: RatingState, cfg: Config) -> str | None:
     wrong_type = _seed_type_broken(state)
     if wrong_type is not None:
         return wrong_type
+    if not _is_id(state.initial_source):
+        return "initial_source must not be blank"
+    external_id = state.initial_external_player_id
+    if external_id is not None and not _is_id(external_id):
+        return "initial_external_player_id must not be blank"
     if state.matches_played != 0:
         return "matches_played must be 0"
     if state.verified_matches_played != 0:
@@ -2334,6 +2349,12 @@ def _seed_rule_broken(state: RatingState, cfg: Config) -> str | None:
     if imported is not None and not 0 <= imported <= 100:
         return "initial_source_reliability must be between 0 and 100"
     return None
+
+
+def _provenance_linked(state: RatingState, external_ids: Mapping[str, str]) -> bool:
+    """True when the state names no external id, or external_ids links it under its source."""
+    external_id = state.initial_external_player_id
+    return external_id is None or external_ids.get(state.initial_source) == external_id
 
 
 def _check_seed_date(player: Player, latest: date, limit: str) -> None:
@@ -2401,6 +2422,13 @@ def _validate_seed(player: Player, cfg: Config) -> None:
         rule = _seed_rule_broken(state, cfg)
         if rule is not None:
             raise InvalidSeedError(f"Seed for {player.id} in {fmt}: {rule}")
+        # The seed's own external_ids must hold its provenance pair, so the
+        # identity uniqueness check in _add_seed covers it.
+        if not _provenance_linked(state, player.external_ids):
+            raise InvalidSeedError(
+                f"Seed for {player.id} in {fmt}: initial_external_player_id must be linked "
+                "in external_ids under initial_source"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -2764,12 +2792,41 @@ def _snap_player(value: object, path: str, cfg: Config) -> Player:
         fmt = _snap_format(key, f"{path}.ratings key")
         states[fmt] = _snap_state(state, f"{path}.ratings.{fmt.value}", player_id, cfg)
     _check_inherited_live_updates(states, path, cfg)
+    _check_provenance(states, external_ids, path)
     return Player(
         id=player_id,
         ratings=states,
         external_ids=external_ids,
         account_user_id=account_user_id,
     )
+
+
+def _check_provenance(
+    states: Mapping[RatingFormat, RatingState], external_ids: Mapping[str, str], path: str
+) -> None:
+    """
+    Raise SnapshotError for a state's provenance the engine cannot produce.
+
+    Every initial_source the engine writes is non-blank, and a state that
+    names an external id was seeded by seed_external_rating, which links
+    that (source, id) pair to the same player. The engine never unlinks an
+    id, so the pair stays in the player's external_ids.
+    """
+    for fmt in sorted(states, key=lambda f: f.value):
+        state = states[fmt]
+        state_path = f"{path}.ratings.{fmt.value}"
+        if not _is_id(state.initial_source):
+            raise SnapshotError(f"{state_path}.initial_source must not be blank")
+        external_id = state.initial_external_player_id
+        if external_id is not None and not _is_id(external_id):
+            raise SnapshotError(
+                f"{state_path}.initial_external_player_id must be null or not blank"
+            )
+        if not _provenance_linked(state, external_ids):
+            raise SnapshotError(
+                f"{state_path}.initial_external_player_id must be linked in "
+                f"{path}.external_ids under initial_source"
+            )
 
 
 def _check_inherited_live_updates(
@@ -3573,13 +3630,15 @@ class RatingEngine:
         follow the seed and link rules: account_user_id is null or a
         non-blank str, every external_ids source and id is a non-blank str,
         and no two players hold the same account or the same (source,
-        external id) pair. A resumable snapshot also holds no date after
-        calculated_as_of, no nonzero live_updates_since_replay or
-        inherited_live_updates, no processed match id without a ledger
-        digest, and no player with a played state missing from
-        ledger_player_ids, and its replay_info counts equal the number of
-        ledger digests and processed match ids. These checks
-        cover shape and invariants, not authenticity. Raises SnapshotError
+        external id) pair. Every state's initial_source is a non-blank str,
+        and its initial_external_player_id is null or a non-blank str that
+        the same player's external_ids links under initial_source. A
+        resumable snapshot also holds no date after calculated_as_of, no
+        nonzero live_updates_since_replay or inherited_live_updates, no
+        processed match id without a ledger digest, and no player with a
+        played state missing from ledger_player_ids, and its replay_info
+        counts equal the number of ledger digests and processed match ids.
+        These checks cover shape and invariants, not authenticity. Raises SnapshotError
         naming the first bad value. The engine shares no state with the
         snapshot.
         """
@@ -3637,7 +3696,14 @@ class RatingEngine:
           or whitespace only.
         - rating, rd, initial_rating, and an imported reliability are ints
           or finite floats (not bool), the counts are ints, partners and
-          opponents are dicts, and dates are dates.
+          opponents are dicts, dates are dates, initial_source is a str,
+          and initial_external_player_id is a str or None.
+        - initial_source is not blank or whitespace only, and neither is
+          an initial_external_player_id that is set.
+        - An initial_external_player_id that is set is linked in the seed's
+          own external_ids under initial_source, so the uniqueness check
+          below covers it. A seed cannot carry another player's external
+          identity as its provenance.
         - No matches, last_played, partners, opponents, or live updates:
           matches_played, verified_matches_played,
           live_updates_since_replay, and inherited_live_updates are 0.
@@ -3781,11 +3847,14 @@ class RatingEngine:
 
         rating_format must be a RatingFormat (a str is not converted), and
         the snapshot is checked before anything changes: captured_on is a
-        date (not a datetime), source is a str, external_player_id is a str
-        or None, rating is an int or finite float (not bool) within the
-        rating bounds, and reliability is None or an int or finite float
-        (not bool) between 0 and 100. So every state seeded here passes the
-        seed rules in add_player.
+        date (not a datetime), source is a str that is not blank or
+        whitespace only, external_player_id is None or a str that is not
+        blank or whitespace only, rating is an int or finite float (not
+        bool) within the rating bounds, and reliability is None or an int or finite float
+        (not bool) between 0 and 100. An external_player_id links the
+        (source, external_player_id) pair to the player, and None links
+        nothing. So every state seeded here passes the seed rules in
+        add_player.
 
         Raises InvalidSeedError when the rating format, a checked snapshot
         field, or the existing rating does not allow the seed, and PlayerError
@@ -3806,6 +3875,10 @@ class RatingEngine:
             snapshot.external_player_id, str
         ):
             raise InvalidSeedError("External snapshot external_player_id must be a str or None")
+        if not _is_id(snapshot.source):
+            raise InvalidSeedError("External snapshot source must not be blank")
+        if snapshot.external_player_id is not None and not _is_id(snapshot.external_player_id):
+            raise InvalidSeedError("External snapshot external_player_id must not be blank")
         if not _is_finite_number(snapshot.rating):
             raise InvalidSeedError("External rating must be a finite number")
         if snapshot.reliability is not None and not _is_finite_number(snapshot.reliability):
@@ -3828,12 +3901,12 @@ class RatingEngine:
                     "A rating already exists; explicitly allow replacing an unplayed seed"
                 )
 
-        if snapshot.external_player_id:
+        if snapshot.external_player_id is not None:
             self._check_external_id(player_id, snapshot.source, snapshot.external_player_id)
 
         # Every check has passed: create the player and link the identity.
         player = self._player_or_new(player_id)
-        if snapshot.external_player_id:
+        if snapshot.external_player_id is not None:
             self.attach_external_id(player_id, snapshot.source, snapshot.external_player_id)
 
         state = RatingState(
