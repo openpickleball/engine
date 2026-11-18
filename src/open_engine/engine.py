@@ -329,18 +329,17 @@ Published behavior notes:
   That matches replay, where a match_id names one row: a second,
   different row with it is a LedgerConflictError, and an identical one
   collapses into the first. So a corrected resubmission needs a new
-  match_id, live and in the ledger. That is safe only after a rejection
-  that comes from the row itself (GAME_FORMAT_NOT_ACCEPTED,
-  SELF_REPORTED_UNCONFIRMED, MATCH_NOT_COMPLETED), since replay never
-  counts such a row, in any order: for example a self-reported match
-  resubmitted after confirmation, or a match corrected to an accepted
-  game format. SELF_REPORTED_REPEAT_LIMIT, BEFORE_IMPORTED_BASELINE,
-  SINGLES_RATING_GAP, and DOUBLES_PARTNER_GAP depend on the engine's
-  state when the row arrives, so a row rejected live can count in
-  replay's ledger order. Do not resubmit such a row under a new
-  match_id: replay could count the match twice. Do not resubmit a
-  POSSIBLE_DUPLICATE either: a match with its content already counted,
-  so a copy with the same content is rejected again. A live reservation
+  match_id, live and in the ledger. Resubmit only after a rejection that
+  comes from the row itself (GAME_FORMAT_NOT_ACCEPTED,
+  SELF_REPORTED_UNCONFIRMED, MATCH_NOT_COMPLETED): for example a
+  self-reported match resubmitted after confirmation, or a match
+  corrected to an accepted game format. Under the same Config, replay
+  never counts a row rejected for one of those, in any order. The other
+  rejections depend on engine state, seeds, or other rows, so a row
+  rejected live can count in a replay, and a copy of it under a new
+  match_id could then count too. Do not resubmit those. For
+  POSSIBLE_DUPLICATE, the ledger already holds a row with the same
+  content. A live reservation
   clears the snapshot's resumable mark. A match with
   the same content as an earlier counted match under another match_id is
   flagged or, by config, rejected (see the note on likely duplicates).
@@ -402,12 +401,12 @@ Production notes:
   counted live, and a different ledger row with it conflicts in replay.
   Keep the rejected row in the ledger as it was. Resubmit only after a
   rejection that comes from the row itself (GAME_FORMAT_NOT_ACCEPTED,
-  SELF_REPORTED_UNCONFIRMED, MATCH_NOT_COMPLETED). Do not resubmit a row
-  rejected for engine state (SELF_REPORTED_REPEAT_LIMIT,
-  BEFORE_IMPORTED_BASELINE, SINGLES_RATING_GAP, DOUBLES_PARTNER_GAP):
-  replay can count that row in ledger order, and a copy under a new
-  match_id could then count too. A POSSIBLE_DUPLICATE has nothing to
-  resubmit: a match with its content already counted.
+  SELF_REPORTED_UNCONFIRMED, MATCH_NOT_COMPLETED). Do not resubmit after
+  any other rejection: a replay can count the original row, and a copy
+  under a new match_id could then count too. A replay under a different
+  Config (a new allowed_game_formats or self_reported_requires_both_teams)
+  can count rows rejected for game format or confirmation, so after such
+  a change, review resubmitted rows before the replay.
 - Require verified identity and authorized evidence before importing an
   external rating. An external refresh can never overwrite an OPEN-earned
   rating once OPEN matches have been processed.
