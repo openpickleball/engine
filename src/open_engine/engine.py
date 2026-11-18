@@ -228,7 +228,9 @@ Published behavior notes:
 - `record` validates every match first. A valid match whose `match_id` was
   already processed, or reserved by a match that was not completed,
   returns a result that is not counted, with
-  `RejectionReason.DUPLICATE_MATCH_ID`, instead of raising. A match with
+  `RejectionReason.DUPLICATE_MATCH_ID`, instead of raising, unless its
+  as_of is invalid (not a plain date, or earlier than played_on), which
+  raises InvalidMatchError first. A match with
   the same content as an earlier counted match under another match_id is
   flagged or, by config, rejected (see the note on likely duplicates).
 - Match status: `Match.status` is a MatchStatus, and `games` is a tuple
@@ -276,6 +278,11 @@ Production notes:
   a loss as a forfeit, retirement, or unfinished match to avoid it. The
   engine cannot tell; the backend must. The engine does not record which
   team forfeited or retired, so the backend stores that.
+- Assign match_ids in the backend. A party that can choose a match_id
+  can submit a non-completed match under it first, and then the real
+  match with that id never counts live (replay raises
+  LedgerConflictError for the pair). DUPLICATE_MATCH_ID does not say
+  whether the id was counted or reserved.
 - Require verified identity and authorized evidence before importing an
   external rating. An external refresh can never overwrite an OPEN-earned
   rating once OPEN matches have been processed.
@@ -935,7 +942,8 @@ class Match:
     partial game is not recorded. record never counts a match that is not
     completed: after the match_id check (a processed or reserved match_id
     gets DUPLICATE_MATCH_ID), it returns RejectionReason.MATCH_NOT_COMPLETED
-    and reserves the match_id, so a later match with it is a duplicate.
+    and reserves the match_id: a later record call for a match with it
+    that does not raise returns DUPLICATE_MATCH_ID.
     """
 
     match_id: str
@@ -2478,7 +2486,8 @@ class RatingEngine:
         state with every RatingState field, dates as ISO text, and partners
         and opponents as id to ISO date), processed_match_ids (sorted),
         reserved_match_ids (sorted ids of matches record rejected as not
-        completed, which a later match cannot reuse),
+        completed; a later record call for a match with one of these ids
+        that does not raise returns DUPLICATE_MATCH_ID),
         self_reported_log (sorted by format then teams: rating_format,
         teams as two sorted id lists, and dates in stored order),
         content_keys (the content key digest of each counted match, see
@@ -2979,7 +2988,8 @@ class RatingEngine:
         match is validated, before any check that rejects the match.
         Nothing is changed unless the match counts, except that a match
         rejected as a possible duplicate is recorded in possible_duplicates,
-        and a match that is not completed reserves its match_id.
+        and a match that is not completed reserves its match_id. Both
+        exceptions clear the snapshot's resumable mark.
         A match_id already processed or reserved returns
         RejectionReason.DUPLICATE_MATCH_ID. A match whose status is not
         MatchStatus.COMPLETED is never counted: after the match_id check, it
@@ -2987,7 +2997,7 @@ class RatingEngine:
         match_id. It is not marked processed and moves no rating, but every
         later call for a match with that id that does not raise returns
         DUPLICATE_MATCH_ID, as replay never counts a second row with one
-        id. Reserving clears the snapshot's resumable mark.
+        id.
         Live results apply in
         arrival order: MatchResult.late (and parent.late, for a category
         match) flags a match dated before a player's last match in that
@@ -3014,8 +3024,9 @@ class RatingEngine:
         if match_id in self.processed_match_ids or match_id in self._reserved_match_ids:
             return MatchResult(False, match.rating_format, RejectionReason.DUPLICATE_MATCH_ID)
         if match.status is not MatchStatus.COMPLETED:
-            # Reserve the id, so a later match with it is a duplicate, as in
-            # replay. No rating, count, or content key changes.
+            # Reserve the id, so a later record with it that does not raise
+            # is a duplicate, as in replay. No rating, count, or content key
+            # changes.
             self._changed()
             self._reserved_match_ids.add(match_id)
             return MatchResult(False, match.rating_format, RejectionReason.MATCH_NOT_COMPLETED)
@@ -3650,8 +3661,8 @@ def prequential_predictions(
         raise EvaluationError(f"mode must be 'live' or 'scheduled', not {mode!r}")
     cfg = cfg or Config()
     ordered = _ledger(matches)
-    # Non-completed rows are inert: they stay in the replays and windows, but
-    # never set the seed date limit or the default anchor.
+    # Non-completed rows move no rating: they stay in the replays and
+    # windows, but never set the seed date limit or the default anchor.
     completed = [m for m in ordered if m.status is MatchStatus.COMPLETED]
     seeds = list(seed_players)
     # add_player on a scratch engine applies every seed check, against the
