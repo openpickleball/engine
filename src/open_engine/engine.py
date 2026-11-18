@@ -3851,12 +3851,12 @@ class RatingEngine:
         player was frozen, with or without a stored state in that format.
         For overall doubles, that includes the doubles update of a category
         match. Under category_feeds_parent, it also refuses to seed overall
-        doubles when a counted category match included the player and the
-        player's state in that category is not an import of its own
-        (missing, with no initial_source_date, or derived from overall
-        doubles): a replay would start that state from the doubles seed.
-        Otherwise a new seed rating or date could change a counted match,
-        so live ratings and a replay could disagree. A match that
+        doubles when a counted category match included the player, whatever
+        the player's state in that category is: a new doubles seed could
+        change whether that match's doubles update counts, or the state a
+        replay starts the category from. Otherwise a new seed rating or
+        date could change a counted match, so live ratings and a replay
+        could disagree. A match that
         did not count leaves no record of its players, so this does not
         cover it. A category format with no stored state and no counted
         match can still be seeded, even when the player has an overall
@@ -3932,22 +3932,14 @@ class RatingEngine:
             raise InvalidSeedError(
                 "Cannot seed a rating format in which OPEN matches have counted for this player"
             )
-        # A category state that is not the player's own import (missing,
-        # provisional, or derived) comes from this format's state when the
-        # player first plays that category: from this seed in a replay. A
-        # new seed would change a counted category match that used it.
+        # A counted category match sends a doubles update for its players,
+        # and may start the player's category state from this format. A new
+        # seed rating or date could change either, so refuse whenever a
+        # counted category match included the player, whatever that
+        # category state is.
         if self.cfg.category_feeds_parent and known is not None:
             for child in RatingFormat:
-                child_state = known.ratings.get(child)
-                if (
-                    child.parent is rating_format
-                    and (
-                        child_state is None
-                        or child_state.initial_source_date is None
-                        or child_state.initial_source.startswith("open_parent:")
-                    )
-                    and self._in_counted_match(player_id, child)
-                ):
+                if child.parent is rating_format and self._in_counted_match(player_id, child):
                     raise InvalidSeedError(
                         f"Cannot seed a rating that a counted {child.value} match for this "
                         "player depends on"

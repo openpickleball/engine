@@ -240,17 +240,36 @@ def test_a_doubles_seed_a_counted_category_match_was_rated_from_is_not_replaced(
     assert _ratings(eng) == _ratings(replay(ledger, seeds, as_of=AS_OF))
 
 
-def test_a_doubles_seed_is_replaceable_when_the_category_state_is_stored() -> None:
-    # Same match, but syn-a has a stored mixed state, so the doubles seed
-    # date no longer decides anything for that match.
-    seeds = _all_seeded_in_doubles_but_syn_b_in_mixed()
+def test_a_doubles_seed_is_refused_even_with_the_players_own_category_import() -> None:
+    # syn-a has its own mixed import, but the match's doubles update was
+    # rejected as before every imported doubles baseline. An earlier
+    # doubles date for syn-a would make that update count on replay.
+    seed_eng = RatingEngine()
+    for player in _all_seeded_in_doubles_but_syn_b_in_mixed():
+        seed_eng.add_player(player)
+    seed_eng.seed_external_rating("syn-a", MX, ExternalRatingSnapshot("ext", 4.0, CAPTURED))
+    seeds = [clone_player(seed_eng.player(pid)) for pid in sorted(seed_eng.players)]
+    ledger = [_match("syn-m1", MX, date(2026, 2, 1))]
     eng = _live(seeds, [])
-    eng.seed_external_rating("syn-a", MX, ExternalRatingSnapshot("ext", 4.0, CAPTURED))
-    assert eng.record(_match("syn-m1", MX, date(2026, 2, 1))).counted
-    state = eng.seed_external_rating(
-        "syn-a", D, ExternalRatingSnapshot("ext", 2.5, EARLIER), replace_unplayed_seed=True
+    result = eng.record(ledger[0])
+    assert result.counted
+    assert result.parent is not None and not result.parent.counted
+    _assert_refused(
+        eng,
+        D,
+        r"^Cannot seed a rating that a counted mixed_doubles match for this "
+        r"player depends on$",
     )
-    assert state.initial_source_date == EARLIER
+    assert _ratings(eng) == _ratings(replay(ledger, seeds, as_of=AS_OF))
+
+
+def test_a_fresh_player_can_be_seeded_in_every_format() -> None:
+    for fmt in RatingFormat:
+        eng = _live([], [_match(f"syn-m{i}", D, date(2026, 1, 5 + i)) for i in range(3)])
+        state = eng.seed_external_rating(
+            "syn-new", fmt, ExternalRatingSnapshot("ext", 3.0, EARLIER)
+        )
+        assert state.initial_source == "ext"
 
 
 def test_a_doubles_seed_a_derived_category_state_was_rated_from_is_not_replaced() -> None:
