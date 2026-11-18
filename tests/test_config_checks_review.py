@@ -125,6 +125,9 @@ def _extremes(number: type, k_variant: str) -> Config:
         "weights": (one, big, one),
         "multiplier": (one, one, big),
     }[k_variant]
+    # An int shrink times an int step weight near FMAX does not convert to a
+    # float, so a self-reported match would raise OverflowError (issue #93).
+    shrink = one if number is int and k_variant != "k" else big
     return Config(
         min_rating=-n(LIMIT),
         max_rating=n(LIMIT),
@@ -138,7 +141,7 @@ def _extremes(number: type, k_variant: str) -> Config:
         new_player_rd=n(LIMIT),
         external_seed_rd=n(LIMIT),
         category_seed_rd=n(LIMIT),
-        rd_shrink_per_match=big,
+        rd_shrink_per_match=shrink,
         rd_growth_per_day=growth,
         win_weight=one,
         match_weights=dict.fromkeys(MatchType, weight),
