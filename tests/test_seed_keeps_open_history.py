@@ -196,3 +196,57 @@ def test_the_refusal_survives_a_snapshot_round_trip() -> None:
     eng = _live(_seeds(S), [_match("syn-m1", S, date(2026, 2, 1))])
     loaded = RatingEngine.from_snapshot(json.loads(json.dumps(eng.to_snapshot())))
     _assert_refused(loaded, S, COUNTED)
+
+
+def test_a_frozen_doubles_update_of_a_category_match_blocks_a_doubles_reseed() -> None:
+    # The mixed match counts, and so does its doubles update, in which
+    # syn-a is frozen.
+    seeds = _seeds(D)
+    ledger = [_match("syn-m1", MX, date(2026, 2, 1))]
+    eng = _live(seeds, ledger)
+    assert eng.record(ledger[0]).reason is not None  # a repeat: nothing changes
+    _assert_refused(eng, D, COUNTED)
+    assert _ratings(eng) == _ratings(replay(ledger, seeds, as_of=AS_OF))
+
+
+def _all_seeded_in_doubles_but_syn_b_in_mixed() -> list[Player]:
+    eng = RatingEngine()
+    eng.seed_external_rating("syn-b", MX, ExternalRatingSnapshot("ext", 4.0, EARLIER))
+    for pid in ("syn-a", "syn-b", "syn-c", "syn-d"):
+        eng.seed_external_rating(pid, D, ExternalRatingSnapshot("ext", 4.0, CAPTURED))
+    return [clone_player(eng.player(pid)) for pid in sorted(eng.players)]
+
+
+def test_a_doubles_seed_a_counted_category_match_was_rated_from_is_not_replaced() -> None:
+    # Every doubles player is frozen, so the doubles update is rejected and
+    # no doubles state names syn-a. The mixed match counts (syn-b moves),
+    # and syn-a, with no mixed state, was frozen through the state derived
+    # from the doubles seed. An earlier doubles date would unfreeze syn-a
+    # in that match on replay.
+    seeds = _all_seeded_in_doubles_but_syn_b_in_mixed()
+    ledger = [_match("syn-m1", MX, date(2026, 2, 1))]
+    eng = _live(seeds, [])
+    result = eng.record(ledger[0])
+    assert result.counted
+    assert result.frozen == ("syn-a", "syn-c", "syn-d")
+    assert result.parent is not None and not result.parent.counted
+    _assert_refused(
+        eng,
+        D,
+        r"^Cannot replace a rating that a counted mixed_doubles match for this "
+        r"player was rated from$",
+    )
+    assert _ratings(eng) == _ratings(replay(ledger, seeds, as_of=AS_OF))
+
+
+def test_a_doubles_seed_is_replaceable_when_the_category_state_is_stored() -> None:
+    # Same match, but syn-a has a stored mixed state, so the doubles seed
+    # date no longer decides anything for that match.
+    seeds = _all_seeded_in_doubles_but_syn_b_in_mixed()
+    eng = _live(seeds, [])
+    eng.seed_external_rating("syn-a", MX, ExternalRatingSnapshot("ext", 4.0, CAPTURED))
+    assert eng.record(_match("syn-m1", MX, date(2026, 2, 1))).counted
+    state = eng.seed_external_rating(
+        "syn-a", D, ExternalRatingSnapshot("ext", 2.5, EARLIER), replace_unplayed_seed=True
+    )
+    assert state.initial_source_date == EARLIER

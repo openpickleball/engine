@@ -30,9 +30,13 @@ One case follows from the decision's rationale and is called out in the PR: a ca
 
 - `tests/test_seed_keeps_open_history.py` (new): every test for the criteria above.
 - `tests/test_snapshot_verified_log.py`: `test_reseeded_live_import_with_frozen_logged_matches_loads` reseeds after a frozen counted match, which this change refuses. It becomes a test that the reseed is refused and the snapshot still loads.
-- `src/open_engine/engine.py`: in `seed_external_rating`, an `isinstance(snapshot, ExternalRatingSnapshot)` check first among the snapshot checks; after `_check_player_id`, refuse when the existing state's `initial_source` starts with `open_parent:`, and refuse (with or without a stored state) when `_has_counted_match(player_id, rating_format)` is true. Order: existing `matches_played > 0` message stays; the new refusals come before the `replace_unplayed_seed` check, so the message names the real reason. A new private helper `_has_counted_match` scans other players' states in that format. Docstring update.
+- `src/open_engine/engine.py`: in `seed_external_rating`, an `isinstance(snapshot, ExternalRatingSnapshot)` check first among the snapshot checks; after `_check_player_id`, refuse when the existing state's `initial_source` starts with `open_parent:`, and refuse (with or without a stored state) when `_has_counted_match(player_id, rating_format)` is true. Order: existing `matches_played > 0` message stays; the new refusals come before the `replace_unplayed_seed` check, so the message names the real reason. A new private helper `_in_counted_match` scans other players' states in that format. Docstring update.
 - `README.md`: the `InvalidSeedError` bullet.
 - `CHANGELOG.md`: a `**Breaking:**` entry under `### Security`, with "Migration:".
+
+## Revision after review
+
+Review found a gap: under `category_feeds_parent`, a counted category match in which the player has no stored category state is rated from a state derived from the overall doubles seed, with its date. If that match's doubles update was rejected (every doubles player frozen), no doubles state names the player, so a doubles reseed with an earlier date passed and changed whether the player was frozen in the category match. `seed_external_rating` now also refuses to replace an overall doubles rating in that case (new message naming the category), with tests for the refusal and for the stored-category-state case that stays allowed. Review also found that a match that did not count at all leaves no record of its players, so a reseed after it can still make live and replay disagree. That needs new engine state and is filed as #99; the docstring, README, and CHANGELOG say so. The `_check_verified_against_log` docstring is narrowed to the reseeds still possible.
 
 ## Order of work
 

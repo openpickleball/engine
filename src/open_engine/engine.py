@@ -3256,9 +3256,11 @@ def _check_verified_against_log(
     a replay, whose seeds precede every row, so a logged match dated
     after a state's initial_source_date moved that state: the same exact
     rule then holds counting only those dates. A live import can be
-    reseeded while unplayed, so a logged match in which it was frozen
-    under an earlier capture date cannot be told apart, and only the
-    upper bound applies to it.
+    reseeded while unplayed when no counted update in its format included
+    the player (for doubles, a category match whose doubles update was
+    rejected), so a logged match in which it was frozen under an earlier
+    capture date cannot be told apart, and only the upper bound applies
+    to it.
     """
     logged: dict[tuple[str, RatingFormat], list[date]] = {}
     for (fmt, teams), dates in log.items():
@@ -3845,12 +3847,19 @@ class RatingEngine:
         That holds in every rating format: it refuses to replace a category
         state derived from overall doubles (initial_source "open_parent:"
         plus the parent's value), and it refuses to seed a format in which
-        the player was in a counted OPEN match, including one in which the
+        a counted OPEN update included the player, even one in which the
         player was frozen, with or without a stored state in that format.
-        A new seed date could otherwise change which past matches count,
-        so live ratings and a replay could disagree. A category format with
-        no stored state and no counted match can still be seeded, even
-        when the player has an overall doubles rating.
+        For overall doubles, that includes the doubles update of a category
+        match. Under category_feeds_parent, it also refuses to replace an
+        overall doubles rating when a counted category match included the
+        player and the player has no stored state in that category: that
+        match used a state derived from the doubles seed. Otherwise a new
+        seed date could change whether the player was frozen in a counted
+        match, so live ratings and a replay could disagree. A match that
+        did not count leaves no record of its players, so this does not
+        cover it. A category format with no stored state and no counted
+        match can still be seeded, even when the player has an overall
+        doubles rating.
         The seed's RD is always Config.external_seed_rd: an external
         reliability is kept for display (imported_reliability), never turned
         into OPEN RD. There is no reference date here, so a snapshot captured
@@ -3862,19 +3871,19 @@ class RatingEngine:
         checked before anything changes: captured_on is a date (not a
         datetime), source is a str that is not blank or whitespace only,
         external_player_id is None or a str that is not blank or
-        whitespace only, rating is an int or finite float (not
-        bool) within the rating bounds, and reliability is None or an int
-        or finite float (not bool) between 0 and 100. An external_player_id
+        whitespace only, rating is an int or finite float (not bool)
+        within the rating bounds, and reliability is None or an int or
+        finite float (not bool) between 0 and 100. An external_player_id
         links the (source, external_player_id) pair to the player, and None
         links nothing. So every state seeded here passes the seed rules in
         add_player.
 
         Raises InvalidSeedError when the rating format, the snapshot or a
         checked snapshot field, the existing rating, or the player's OPEN
-        matches in that format do not allow the seed. Once the rating
+        matches do not allow the seed. Once the rating
         format and snapshot fields pass their checks, it raises PlayerError
         when player_id is blank. Once any existing rating and the player's
-        OPEN matches in that format also allow the seed, it raises PlayerError when the
+        OPEN matches also allow the seed, it raises PlayerError when the
         snapshot's external identity is already linked to another player,
         or when the player already has a different id from that source.
         Every check runs before anything changes, so a failed call creates
@@ -3922,6 +3931,20 @@ class RatingEngine:
             raise InvalidSeedError(
                 "Cannot seed a rating format in which OPEN matches have counted for this player"
             )
+        # A category match with no stored category state for the player used
+        # a state derived from this one, with this seed's date, to decide
+        # whether the player was frozen. A new date would change that.
+        if self.cfg.category_feeds_parent and known is not None:
+            for child in RatingFormat:
+                if (
+                    child.parent is rating_format
+                    and child not in known.ratings
+                    and self._in_counted_match(player_id, child)
+                ):
+                    raise InvalidSeedError(
+                        f"Cannot replace a rating that a counted {child.value} match for this "
+                        "player was rated from"
+                    )
         if existing is not None:
             if not replace_unplayed_seed:
                 raise InvalidSeedError(
