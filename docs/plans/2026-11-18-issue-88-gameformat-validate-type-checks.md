@@ -33,8 +33,11 @@ Reading of "a bad GameFormat": the existing range rules (`points_to` and `win_by
 
 ## Files that change
 
-- `src/open_engine/engine.py`: `GameFormat` gains a private `_problem(self) -> str | None` holding every rule (types first, then ranges) and returning the first broken rule's message. `GameFormat.validate()` raises `ConfigError` with it. `Match.validate` raises `InvalidMatchError` with it where it calls `self.game_format.validate()` today. (Changed from a `_check(error: type[OpenEngineError])` that raised the class it was given: `tests/test_api.py::test_every_raise_uses_an_engine_error` resolves each raised name statically and rejects `raise error(...)`.) `RatingEngine.predict_win_probability` calls `game_format.validate()` first: it reads `scoring` (in `predict_point_share` and the calibration lookup) before `match_win_probability` validates the format, so `scoring=None` raised `KeyError` there and criterion 3 could not hold without this call (found while implementing). Docstrings above.
+- `src/open_engine/engine.py`: `GameFormat.validate()` holds every rule (types first, then ranges) and raises `ConfigError`. `Match.validate` still calls `self.game_format.validate()`, catches a `ConfigError` from it, and raises `InvalidMatchError(str(err)) from None` with the same message. So the override of a `GameFormat` subclass still runs on a match, as on main. (Two earlier designs were dropped. A `_check(error: type[OpenEngineError])` that raised the class it was given fails `tests/test_api.py::test_every_raise_uses_an_engine_error`, which resolves each raised name statically. A private `_problem() -> str | None` that `Match.validate` called directly skipped a subclass's `validate` override, a regression found in review and pinned by `tests/test_game_format_override.py`.) `RatingEngine.predict_win_probability` calls `game_format.validate()` first: it reads `scoring` (in `predict_point_share` and the calibration lookup) before `match_win_probability` validates the format, so `scoring=None` raised `KeyError` there and criterion 3 could not hold without this call (found while implementing). Docstrings above.
 - `tests/test_game_format_checks.py` (new): criteria 1 to 4.
+- `tests/test_game_format_override.py` (new): a synthetic `GameFormat` subclass whose `validate` raises `ConfigError("syn rule")` makes `Match.validate` and `record` raise `InvalidMatchError` matching `^syn rule$`, and `record` leaves the engine unchanged.
+- `tests/test_game_format_coverage.py` (new): an int subclass `points_to`, `win_by`, or `cap` gives the same rating deltas and the same `predict_win_probability` as the plain int, and `prequential_predictions` raises for a bad row first in the ledger as well as last.
+- `src/open_engine/_errors.py`: the `ConfigError` and `InvalidMatchError` docstrings follow the new split.
 - `tests/test_engine.py`: `LOOSE_PAIRS` and `INVALID_LOOSE_PAIRS` (criterion 5).
 - `README.md`, `CHANGELOG.md`: criterion 7. The README also says a ledger row with a bad game format raises `InvalidMatchError` (the replay notes said `ConfigError`), and its `InvalidMatchError` line names the `GameFormat`.
 
@@ -43,7 +46,8 @@ Reading of "a bad GameFormat": the existing range rules (`points_to` and `win_by
 ## Order of work
 
 1. Red tests, committed alone: `tests/test_game_format_checks.py` and the `tests/test_engine.py` pair change. They fail on main (TypeError, accepted, or ConfigError where InvalidMatchError is now expected).
-2. Implement `_problem` and route `Match.validate` and `predict_win_probability` through it.
+2. Add the type rules to `GameFormat.validate`, convert its `ConfigError` to `InvalidMatchError` in `Match.validate`, and validate first in `predict_win_probability`.
+2a. After review: a red test for the subclass override (committed alone), then the fix above, then the coverage tests.
 3. Docs and changelog.
 4. Gate: `ruff check .`, `ruff format --check .`, `mypy src`, `pytest`.
 

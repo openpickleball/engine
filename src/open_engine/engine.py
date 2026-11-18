@@ -577,29 +577,23 @@ class GameFormat:
         is rejected). points_to and win_by must be ints, and cap an int or
         None. A bool or a float is not accepted as an int; an int subclass
         is. The types are checked before the ranges: points_to and win_by
-        positive, cap greater than points_to. Match.validate applies the
-        same rules and raises InvalidMatchError instead.
+        positive, cap greater than points_to. Match.validate calls this
+        method and raises a ConfigError from it as InvalidMatchError with
+        the same message.
         """
-        problem = self._problem()
-        if problem is not None:
-            raise ConfigError(problem)
-
-    def _problem(self) -> str | None:
-        """The first rule the format breaks, types before ranges; None when valid."""
         if not isinstance(self.scoring, ScoringType):
-            return f"scoring must be a ScoringType, not {type(self.scoring).__name__}"
+            raise ConfigError(f"scoring must be a ScoringType, not {type(self.scoring).__name__}")
         for name, number in (("points_to", self.points_to), ("win_by", self.win_by)):
             if not isinstance(number, int) or isinstance(number, bool):
-                return f"{name} must be an int, not {type(number).__name__}"
+                raise ConfigError(f"{name} must be an int, not {type(number).__name__}")
         if self.cap is not None and (not isinstance(self.cap, int) or isinstance(self.cap, bool)):
-            return f"cap must be an int or None, not {type(self.cap).__name__}"
+            raise ConfigError(f"cap must be an int or None, not {type(self.cap).__name__}")
         if self.points_to < 1:
-            return "points_to must be positive"
+            raise ConfigError("points_to must be positive")
         if self.win_by < 1:
-            return "win_by must be positive"
+            raise ConfigError("win_by must be positive")
         if self.cap is not None and self.cap <= self.points_to:
-            return "cap must be greater than points_to"
-        return None
+            raise ConfigError("cap must be greater than points_to")
 
     def validate_game(self, score_a: int, score_b: int) -> None:
         """Raise InvalidMatchError when a game score cannot end a game in this format."""
@@ -1435,9 +1429,9 @@ class Match:
     tuple; when confirmed_by is not a set or frozenset; when game_format is
     not a GameFormat; when played_at is not a datetime or None; or when
     sequence or best_of is not an int (a bool or float is rejected). games may
-    be a tuple or list. It also checks the fields inside game_format with the
-    rules of GameFormat.validate, and raises InvalidMatchError where that
-    method raises ConfigError.
+    be a tuple or list. It also calls game_format.validate, which checks the
+    fields inside the format, and raises InvalidMatchError with the same
+    message for a ConfigError that call raises.
     """
 
     match_id: str
@@ -1512,9 +1506,10 @@ class Match:
             raise InvalidMatchError("best_of must be a positive odd number")
         if len(self.games) > self.best_of:
             raise InvalidMatchError("Games played cannot exceed best_of")
-        format_problem = self.game_format._problem()
-        if format_problem is not None:
-            raise InvalidMatchError(format_problem)
+        try:
+            self.game_format.validate()
+        except ConfigError as err:
+            raise InvalidMatchError(str(err)) from None
         for score_a, score_b in self.games:
             if not all(
                 isinstance(score, int) and not isinstance(score, bool)
