@@ -115,6 +115,12 @@ until #74 decides the entry-point rule. Leave #74 open.
   resumable snapshot first, so its match changes to the
   `live_updates_since_replay must be 0 in a resumable snapshot` message.
   The behavior it pins (resume refuses) is the same.
+- `tests/test_snapshot_engine_made.py` (added during the work): proof
+  tests that a replay with rejected rows (a forfeit, an unconfirmed
+  self-reported match, and a content duplicate copy, under both
+  `reject_content_duplicates` values) round trips and resumes, and that an
+  engine seeded by `seed_external_rating` with no external id round trips.
+  They live in a new file because the two red-test files are frozen.
 - Check order (added during the work): the live update check runs after
   the date and inherited checks in `_check_resumable`, so a snapshot with
   both a parent live count and an inherited count still reports
