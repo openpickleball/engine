@@ -149,6 +149,9 @@ def _processed_without_digest(snap: Snap) -> None:
     digests = snap["ledger_digests"]
     assert isinstance(digests, dict)
     digests["syn-y"] = "0" * 64
+    reserved = snap["reserved_match_ids"]
+    assert isinstance(reserved, list)
+    reserved.append("syn-y")
     _set_info(matches_considered=len(digests), matches_counted=len(processed))(snap)
 
 

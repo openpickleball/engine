@@ -157,26 +157,29 @@ def test_a_forfeit_reusing_a_rejected_copy_id_is_a_duplicate() -> None:
     assert eng.record(forfeit).reason is RejectionReason.DUPLICATE_MATCH_ID
 
 
-def test_resumable_considered_row_must_be_processed_or_reserved() -> None:
-    snap = _resumable()
+def _live_after_replay() -> Snap:
+    eng = replay([_m("syn-m1"), _m("syn-x1", (), MatchStatus.FORFEIT)], as_of=AS_OF)
+    eng.record(_m("syn-m3"))
+    snap = _json(eng.to_snapshot())
+    assert snap["resumable"] is False
+    return snap
+
+
+@pytest.mark.parametrize("source", [_live_after_replay, _resumable], ids=["live", "resumable"])
+def test_considered_row_must_be_processed_or_reserved(source: Callable[[], Snap]) -> None:
+    # A replay counts or reserves every row it digests, and live recording
+    # never frees an id, so a live snapshot is held to this too.
+    snap = source()
     assert snap["reserved_match_ids"] == ["syn-x1"]
     snap["reserved_match_ids"] = []
     with pytest.raises(
         SnapshotError,
         match=r"ledger_digests names 'syn-x1', which is in neither processed_match_ids "
-        r"nor reserved_match_ids in a resumable snapshot",
+        r"nor reserved_match_ids",
     ):
         RatingEngine.from_snapshot(snap)
-
-
-def test_live_considered_row_need_not_be_processed_or_reserved() -> None:
-    # A live snapshot is never resumed, so the rule is not applied to it.
-    eng = replay([_m("syn-m1"), _m("syn-x1", (), MatchStatus.FORFEIT)], as_of=AS_OF)
-    eng.record(_m("syn-m3"))
-    snap = _json(eng.to_snapshot())
-    assert snap["resumable"] is False
-    snap["reserved_match_ids"] = []
-    assert RatingEngine.from_snapshot(snap).to_snapshot() == snap
+    loaded = RatingEngine.from_snapshot(source())
+    assert loaded.record(_m("syn-x1")).reason is RejectionReason.DUPLICATE_MATCH_ID
 
 
 def test_version_6_snapshot_is_refused() -> None:

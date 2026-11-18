@@ -328,11 +328,18 @@ Published behavior notes:
   not raise returns DUPLICATE_MATCH_ID, with the same content or not.
   That matches replay, where a match_id names one row: a second,
   different row with it is a LedgerConflictError, and an identical one
-  collapses into the first. So a resubmission needs a new match_id, live
-  and in the ledger: a self-reported match resubmitted after
-  confirmation, a match corrected to an accepted game format, or any
-  other row sent again after a rejection. A live reservation clears the
-  snapshot's resumable mark. A match with
+  collapses into the first. So a corrected resubmission needs a new
+  match_id, live and in the ledger. That is safe only after a rejection
+  that comes from the row itself (GAME_FORMAT_NOT_ACCEPTED,
+  SELF_REPORTED_UNCONFIRMED, MATCH_NOT_COMPLETED), which replay repeats
+  in any order: for example a self-reported match resubmitted after
+  confirmation, or a match corrected to an accepted game format. The
+  other rejections (SELF_REPORTED_REPEAT_LIMIT, BEFORE_IMPORTED_BASELINE,
+  SINGLES_RATING_GAP, DOUBLES_PARTNER_GAP, POSSIBLE_DUPLICATE) depend on
+  the engine's state when the row arrives, so a row rejected live can
+  count in replay's ledger order. Do not resubmit such a row under a new
+  match_id: replay could count the match twice. A live reservation
+  clears the snapshot's resumable mark. A match with
   the same content as an earlier counted match under another match_id is
   flagged or, by config, rejected (see the note on likely duplicates).
 - Match status: `Match.status` is a MatchStatus, and `games` is a tuple
@@ -388,11 +395,16 @@ Production notes:
   that id never counts live (replay raises LedgerConflictError for the
   pair). DUPLICATE_MATCH_ID does not say whether the id was counted or
   reserved.
-- Give every resubmission a new match_id. Once `record` has considered
-  a match_id, counted or not, a later match with it is never counted
-  live, and a different ledger row with it conflicts in replay. Keep the
-  rejected row in the ledger as it was, so live recording and replay
-  agree.
+- Give a corrected resubmission a new match_id. Once `record` has
+  considered a match_id, counted or not, a later match with it is never
+  counted live, and a different ledger row with it conflicts in replay.
+  Keep the rejected row in the ledger as it was. Resubmit only after a
+  rejection that comes from the row itself (GAME_FORMAT_NOT_ACCEPTED,
+  SELF_REPORTED_UNCONFIRMED, MATCH_NOT_COMPLETED). Do not resubmit a row
+  rejected for engine state (SELF_REPORTED_REPEAT_LIMIT,
+  BEFORE_IMPORTED_BASELINE, SINGLES_RATING_GAP, DOUBLES_PARTNER_GAP,
+  POSSIBLE_DUPLICATE): replay can count that row in ledger order, and a
+  copy under a new match_id could then count too.
 - Require verified identity and authorized evidence before importing an
   external rating. An external refresh can never overwrite an OPEN-earned
   rating once OPEN matches have been processed.
@@ -2836,8 +2848,7 @@ def _check_resumable(snap: _Snapshot, paths: Mapping[str, str]) -> None:
     Raise SnapshotError unless a resumable snapshot is consistent with its replay.
 
     A replay never records anything dated after its as_of, and it considers
-    and counts exactly the rows behind its digests and processed ids,
-    reserving the id of every row it considers and does not count. A
+    and counts exactly the rows behind its digests and processed ids. A
     live engine can hold later dates, so only resumable snapshots are held
     to this.
     """
@@ -2894,14 +2905,6 @@ def _check_resumable(snap: _Snapshot, paths: Mapping[str, str]) -> None:
         raise SnapshotError(
             f"snapshot.processed_match_ids names {undigested[0]!r}, which is not in "
             "ledger_digests in a resumable snapshot"
-        )
-    # A replay counts or reserves every row it considers.
-    held = snap.processed_match_ids | snap.reserved_match_ids
-    unheld = sorted(snap.ledger_digests.keys() - held)
-    if unheld:
-        raise SnapshotError(
-            f"snapshot.ledger_digests names {unheld[0]!r}, which is in neither "
-            "processed_match_ids nor reserved_match_ids in a resumable snapshot"
         )
 
 
@@ -3080,6 +3083,7 @@ def _check_reserved(
     processed: set[str],
     duplicates: Mapping[str, str],
     reject: bool,
+    digests: Mapping[str, str],
     considered: Mapping[str, str] | None,
 ) -> None:
     """
@@ -3088,8 +3092,10 @@ def _check_reserved(
     record checks both sets before it adds an id to either, so no reserved
     id is processed. record reserves the id of every match it considers and
     does not count, so under reject_content_duplicates, which never counts a
-    possible duplicate, every possible_duplicates key is reserved. considered
-    is the ledger digests of a resumable snapshot, else None: a replay
+    possible duplicate, every possible_duplicates key is reserved. digests
+    is the snapshot's ledger digests: a replay counts or reserves every row
+    it digests, so each digest id is processed or reserved in any snapshot.
+    considered is the ledger digests of a resumable snapshot, else None: a replay
     reserves only a row it considered, so there each reserved id is a
     ledger_digests id.
     """
@@ -3107,6 +3113,14 @@ def _check_reserved(
                     "reserved_match_ids; under reject_content_duplicates a rejected "
                     "possible duplicate reserves its match_id"
                 )
+    # A replay counts or reserves every row it digests, and no id ever
+    # leaves either set, live or not.
+    for match_id in sorted(digests):
+        if match_id not in processed and match_id not in reserved:
+            raise SnapshotError(
+                f"snapshot.ledger_digests names {match_id!r}, which is in neither "
+                "processed_match_ids nor reserved_match_ids"
+            )
 
 
 def _snap_match_ids(value: object, path: str) -> set[str]:
@@ -3323,6 +3337,7 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
         processed,
         possible_duplicates,
         cfg.reject_content_duplicates,
+        digests,
         digests if resumable else None,
     )
 
@@ -3528,9 +3543,8 @@ class RatingEngine:
         ids with no repeats and none in processed_match_ids (and, in a
         resumable snapshot, each a ledger_digests id), every
         possible_duplicates key a reserved id under
-        reject_content_duplicates, in a resumable snapshot every
-        ledger_digests id processed or reserved, and a bool resumable that
-        is false without a replay.
+        reject_content_duplicates, every ledger_digests id processed or
+        reserved, and a bool resumable that is false without a replay.
         Every state must be one the engine can produce: initial_rating
         within the rating bounds; an unplayed state with RD new_player_rd,
         external_seed_rd, or at least category_seed_rd, and no partners,
