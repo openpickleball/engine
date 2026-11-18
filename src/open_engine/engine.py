@@ -3874,14 +3874,19 @@ def _report_from_predictions(
     return report, mse
 
 
+_SEARCH_STEPS = 14  # coarse grid intervals in fit_scale and fit_win_calibration
+
+
 def _check_search_bounds(low: float, high: float, tolerance: float) -> None:
     """Raise EvaluationError for a search range or tolerance the fits cannot use."""
     if not (math.isfinite(low) and math.isfinite(high)):
         raise EvaluationError("low and high must be finite")
-    # The search takes differences and sums of points in the range. Each is
-    # at most twice the larger bound in size, so finite doubles keep them finite.
+    # The search adds two points of the range (midpoints) and multiplies the
+    # width by the grid step count before dividing. Both must stay finite.
     if not (math.isfinite(2 * low) and math.isfinite(2 * high)):
         raise EvaluationError("2 * low and 2 * high must be finite")
+    if not math.isfinite((high - low) * _SEARCH_STEPS):
+        raise EvaluationError(f"(high - low) * {_SEARCH_STEPS} must be finite")
     if not low < high:
         raise EvaluationError("low must be less than high")
     if not (math.isfinite(tolerance) and tolerance > 0):
@@ -3927,9 +3932,9 @@ def fit_scale(
 
     Coarse grid first, then golden-section search around the best grid point.
     Publish the returned ScaleFit alongside the config that adopts it.
-    Raises EvaluationError, before any prediction work, unless 2 * low and
-    2 * high are finite, low < high, and tolerance is finite and greater
-    than 0.
+    Raises EvaluationError, before any prediction work, unless low < high,
+    tolerance is finite and greater than 0, and 2 * low, 2 * high, and
+    (high - low) * 14 are finite.
     """
     _check_search_bounds(low, high, tolerance)
     cfg = cfg or Config()
@@ -3954,7 +3959,7 @@ def fit_scale(
             cache[key] = _report_from_predictions(predictions, trial, scoring)
         return cache[key]
 
-    steps = 14
+    steps = _SEARCH_STEPS
     grid = [low + (high - low) * i / steps for i in range(steps + 1)]
     best = min(grid, key=lambda s: run(s)[1])
     step = (high - low) / steps
@@ -4055,7 +4060,7 @@ def fit_win_calibration(
             ) / len(data)
         return cache[key]
 
-    steps = 14
+    steps = _SEARCH_STEPS
     grid = [low + (high - low) * i / steps for i in range(steps + 1)]
     best = min(grid, key=brier)
     step = (high - low) / steps
