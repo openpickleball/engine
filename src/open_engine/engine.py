@@ -3842,28 +3842,39 @@ class RatingEngine:
 
         The external rating is an initial condition, not a live dependency.
         Once OPEN matches exist, external refreshes cannot overwrite the rating.
+        That holds in every rating format: it refuses to replace a category
+        state derived from overall doubles (initial_source "open_parent:"
+        plus the parent's value), and it refuses to seed a format in which
+        the player was in a counted OPEN match, including one in which the
+        player was frozen, with or without a stored state in that format.
+        A new seed date could otherwise change which past matches count,
+        so live ratings and a replay could disagree. A category format with
+        no stored state and no counted match can still be seeded, even
+        when the player has an overall doubles rating.
         The seed's RD is always Config.external_seed_rd: an external
         reliability is kept for display (imported_reliability), never turned
         into OPEN RD. There is no reference date here, so a snapshot captured
         in the future is accepted; the next replay with an earlier as_of
         rejects the seed.
 
-        rating_format must be a RatingFormat (a str is not converted), and
-        the snapshot is checked before anything changes: captured_on is a
-        date (not a datetime), source is a str that is not blank or
-        whitespace only, external_player_id is None or a str that is not
-        blank or whitespace only, rating is an int or finite float (not
+        rating_format must be a RatingFormat (a str is not converted),
+        snapshot must be an ExternalRatingSnapshot, and the snapshot is
+        checked before anything changes: captured_on is a date (not a
+        datetime), source is a str that is not blank or whitespace only,
+        external_player_id is None or a str that is not blank or
+        whitespace only, rating is an int or finite float (not
         bool) within the rating bounds, and reliability is None or an int
         or finite float (not bool) between 0 and 100. An external_player_id
         links the (source, external_player_id) pair to the player, and None
         links nothing. So every state seeded here passes the seed rules in
         add_player.
 
-        Raises InvalidSeedError when the rating format, a checked snapshot
-        field, or the existing rating does not allow the seed. Once the
-        rating format and snapshot fields pass their checks, it raises
-        PlayerError when player_id is blank. Once any existing rating in
-        that format also allows the seed, it raises PlayerError when the
+        Raises InvalidSeedError when the rating format, the snapshot or a
+        checked snapshot field, the existing rating, or the player's OPEN
+        matches in that format do not allow the seed. Once the rating
+        format and snapshot fields pass their checks, it raises PlayerError
+        when player_id is blank. Once any existing rating and the player's
+        OPEN matches in that format also allow the seed, it raises PlayerError when the
         snapshot's external identity is already linked to another player,
         or when the player already has a different id from that source.
         Every check runs before anything changes, so a failed call creates
@@ -3874,6 +3885,8 @@ class RatingEngine:
         # here is one add_player and replay accept.
         if not isinstance(rating_format, RatingFormat):
             raise InvalidSeedError("rating_format must be a RatingFormat")
+        if not isinstance(snapshot, ExternalRatingSnapshot):
+            raise InvalidSeedError("snapshot must be an ExternalRatingSnapshot")
         if not _is_plain_date(snapshot.captured_on):
             raise InvalidSeedError("External snapshot captured_on must be a date")
         if not isinstance(snapshot.source, str):
@@ -3903,6 +3916,13 @@ class RatingEngine:
                 raise InvalidSeedError(
                     "Cannot replace an OPEN rating after OPEN matches have been processed"
                 )
+            if existing.initial_source.startswith("open_parent:"):
+                raise InvalidSeedError("Cannot replace a rating derived from OPEN overall doubles")
+        if self._in_counted_match(player_id, rating_format):
+            raise InvalidSeedError(
+                "Cannot seed a rating format in which OPEN matches have counted for this player"
+            )
+        if existing is not None:
             if not replace_unplayed_seed:
                 raise InvalidSeedError(
                     "A rating already exists; explicitly allow replacing an unplayed seed"
@@ -3929,6 +3949,26 @@ class RatingEngine:
         )
         self._put_state(player, rating_format, state)
         return state
+
+    def _in_counted_match(self, player_id: str, rating_format: RatingFormat) -> bool:
+        """
+        True when player_id was in a counted match in rating_format, frozen or not.
+
+        A frozen player's own state is not written, but a match counts only
+        when some player in it moves, and each moved player records every
+        other player in the match in partners or opponents. Those maps are
+        never pruned, so another state naming player_id finds the match.
+        """
+        for other_id, other in self.players.items():
+            state = other.ratings.get(rating_format)
+            if state is None:
+                continue
+            if other_id == player_id:
+                if state.matches_played > 0:
+                    return True
+            elif player_id in state.partners or player_id in state.opponents:
+                return True
+        return False
 
     def seed_provisional_rating(self, player_id: str, rating_format: RatingFormat) -> RatingState:
         """The player's state in a format. Creates a new unplayed state if it is missing."""

@@ -9,6 +9,7 @@ replay of the same ledger and seeds. All ids are synthetic.
 
 from __future__ import annotations
 
+import json
 from datetime import date
 
 import pytest
@@ -187,3 +188,11 @@ def test_a_snapshot_of_the_wrong_type_raises_an_engine_error() -> None:
         eng.seed_external_rating("syn-a", S, {"source": "ext", "rating": 4.0})  # type: ignore[arg-type]
     assert isinstance(info.value, OpenEngineError)
     assert eng.players == {}
+
+
+def test_the_refusal_survives_a_snapshot_round_trip() -> None:
+    # The frozen match leaves no trace on syn-a's own state; the check
+    # reads the stored partners and opponents, which the snapshot keeps.
+    eng = _live(_seeds(S), [_match("syn-m1", S, date(2026, 2, 1))])
+    loaded = RatingEngine.from_snapshot(json.loads(json.dumps(eng.to_snapshot())))
+    _assert_refused(loaded, S, COUNTED)
