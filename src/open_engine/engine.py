@@ -3862,10 +3862,12 @@ class RatingEngine:
         Raises InvalidSeedError when the rating format, a checked snapshot
         field, or the existing rating does not allow the seed. Once the
         rating format and snapshot fields pass their checks, it raises
-        PlayerError when player_id is blank, when the snapshot's external
-        identity is already linked to another player, or when the player
-        already has a different id from that source. Every check runs
-        before anything changes, so a failed call creates no player.
+        PlayerError when player_id is blank. Once any existing rating in
+        that format also allows the seed, it raises PlayerError when the
+        snapshot's external identity is already linked to another player,
+        or when the player already has a different id from that source.
+        Every check runs before anything changes, so a failed call creates
+        no player.
         """
         cfg = self.cfg
         # The same type rules the seed check applies, so every state seeded
