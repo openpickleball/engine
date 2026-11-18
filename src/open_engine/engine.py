@@ -1102,11 +1102,15 @@ class Match:
     and reserves the match_id: a later record call for a match with it
     that does not raise returns DUPLICATE_MATCH_ID.
 
-    Each field must have its annotated type. validate raises
-    InvalidMatchError for an enum field given as a str (even one equal to a
-    member's value), a team given as a list, a confirmed_by that is not a set
-    or frozenset, a sequence or best_of that is not an int (a bool or float is
-    rejected), and a played_at that is not a datetime or None.
+    validate checks the type of status, rating_format, match_type, team_a,
+    team_b, confirmed_by, game_format, played_at, sequence, and best_of. It
+    raises InvalidMatchError when status is not a MatchStatus, rating_format
+    is not a RatingFormat, or match_type is not a MatchType (a str is
+    rejected, even one equal to a member's value); when a team is not a
+    tuple; when confirmed_by is not a set or frozenset; when game_format is
+    not a GameFormat; when played_at is not a datetime or None; or when
+    sequence or best_of is not an int (a bool or float is rejected). games may
+    be a tuple or list. The fields inside game_format are not type-checked.
     """
 
     match_id: str

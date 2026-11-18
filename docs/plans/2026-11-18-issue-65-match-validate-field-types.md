@@ -24,6 +24,7 @@ Measured on `origin/main` (ce911f2), base `Match("m1", ("b", "c"), ("d", "e"), (
 | `match_type` | `"tournament"` | accepted, counted |
 | `match_type` | `"bogus"` | `KeyError` |
 | `team_a` | `["b", "c"]` | `TypeError` |
+| `team_a`, `team_b` | both lists | accepted, counted |
 | `confirmed_by` | `"b"`, `["b"]` | accepted, counted |
 | `game_format` | `"x"` | `AttributeError` (also fixed) |
 | `played_at` | `"2026-01-05"` | `AttributeError` (also fixed) |
@@ -49,7 +50,7 @@ No other code changes. `record`'s equality comparison of `match_type` (from #59)
 2. `RatingEngine.record` raises `InvalidMatchError` for each case and leaves the engine unchanged (`to_snapshot()` equal before and after, no player created).
 3. `replay` raises `InvalidMatchError` for such a row wherever it sits: first, middle, last, and after `as_of`. `prequential_predictions` raises it too.
 4. A str equal to a member's value (`match_type="self_reported"`, `"tournament"`, `rating_format="doubles"`) is rejected.
-5. Valid rows are unchanged: enum members, tuple teams, set or frozenset `confirmed_by`, int (and int subclass) `sequence` and `best_of`, `played_at` `None` or an aware datetime all validate as before. The full suite stays green apart from the tests listed under "Tests that change".
+5. Valid rows are unchanged: enum members, tuple teams, set or frozenset `confirmed_by`, int (and int subclass) `sequence` and `best_of`, `played_at` `None` or an aware datetime all validate as before. The full suite stays green apart from the tests listed under "Files that change".
 6. Every new raise is `InvalidMatchError`, an `OpenEngineError`; tests assert the exact type with `pytest.raises(InvalidMatchError, match=...)`.
 7. CHANGELOG has a `**Breaking:**` entry under `### Changed` for #65 and #83, with a migration note (pass enum members, tuples, a set or frozenset, and ints). The #59 Fixed entry that says `Match.validate` accepts a str `match_type` is updated so it no longer contradicts the code. README states the new rule near the `Match.status` paragraph.
 
