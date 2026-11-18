@@ -15,6 +15,7 @@ import pytest
 from open_engine import (
     Config,
     ExternalRatingSnapshot,
+    InvalidSeedError,
     Match,
     MatchType,
     Player,
@@ -307,17 +308,19 @@ def test_engines_the_code_produces_load(cfg: Config, seed: int) -> None:
     RatingEngine.from_snapshot(_json(live), cfg)
 
 
-def test_reseeded_live_import_with_frozen_logged_matches_loads() -> None:
+def test_live_import_with_frozen_logged_matches_loads_and_is_not_reseeded() -> None:
     engine = RatingEngine()
     engine.seed_external_rating("syn-a", S, ExternalRatingSnapshot("ext", 4.0, START))
     # Frozen for syn-a: on its capture date. Logged, since syn-b moved.
     frozen = _singles("syn-a", "syn-b", 1, SR)
     assert engine.record(frozen[0]).frozen == ("syn-a",)
-    # Reseed while unplayed, with an earlier capture date.
-    engine.seed_external_rating(
-        "syn-a",
-        S,
-        ExternalRatingSnapshot("ext", 4.0, START - timedelta(days=10)),
-        replace_unplayed_seed=True,
-    )
+    # A reseed with an earlier capture date is refused (issue #79): the
+    # counted match would then move syn-a in a replay.
+    with pytest.raises(InvalidSeedError, match="OPEN matches have counted"):
+        engine.seed_external_rating(
+            "syn-a",
+            S,
+            ExternalRatingSnapshot("ext", 4.0, START - timedelta(days=10)),
+            replace_unplayed_seed=True,
+        )
     RatingEngine.from_snapshot(_json(engine))
