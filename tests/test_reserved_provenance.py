@@ -208,6 +208,26 @@ SEED_ROWS: list[tuple[str, Player, str]] = [
         r"^Seed for syn-b in doubles: initial_source 'open_x' " + RESERVED_MESSAGE,
     ),
     (
+        "derived_undated",
+        Player("syn-b", {MX: _provisional(initial_source="open_parent:doubles")}),
+        r"^Seed for syn-b in mixed_doubles: initial_source 'open_parent:doubles' "
+        + RESERVED_MESSAGE,
+    ),
+    (
+        "derived_dated",
+        Player(
+            "syn-b",
+            {
+                MX: _imported(
+                    initial_source="open_parent:doubles",
+                    rd=max(CFG.external_seed_rd, CFG.category_seed_rd),
+                )
+            },
+        ),
+        r"^Seed for syn-b in mixed_doubles: initial_source 'open_parent:doubles' "
+        + RESERVED_MESSAGE,
+    ),
+    (
         "blank_evidence",
         Player("syn-b", {D: _imported(initial_evidence_reference="  ")}),
         r"^Seed for syn-b in doubles: initial_evidence_reference must not be blank$",
@@ -254,8 +274,6 @@ def _derived(dated: bool) -> RatingState:
 
 ACCEPT_ROWS: list[tuple[str, Player]] = [
     ("provisional", Player("syn-b", {D: _provisional()})),
-    ("derived_undated", Player("syn-b", {MX: _derived(dated=False)})),
-    ("derived_dated", Player("syn-b", {MX: _derived(dated=True)})),
     ("derived_dated_with_parent", Player("syn-b", {D: _imported(), MX: _derived(dated=True)})),
     ("non_reserved_case", Player("syn-b", {D: _imported()}, external_ids={"OPEN_x": "syn-w"})),
     ("evidence_set", Player("syn-b", {D: _imported(initial_evidence_reference="ref-1")})),
