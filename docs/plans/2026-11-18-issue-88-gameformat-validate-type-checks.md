@@ -33,17 +33,17 @@ Reading of "a bad GameFormat": the existing range rules (`points_to` and `win_by
 
 ## Files that change
 
-- `src/open_engine/engine.py`: `GameFormat` gains a private `_check(self, error: type[OpenEngineError]) -> None` holding every rule (types first, then ranges). `GameFormat.validate()` calls `self._check(ConfigError)`. `Match.validate` calls `self.game_format._check(InvalidMatchError)` where it calls `self.game_format.validate()` today. Docstrings above.
+- `src/open_engine/engine.py`: `GameFormat` gains a private `_problem(self) -> str | None` holding every rule (types first, then ranges) and returning the first broken rule's message. `GameFormat.validate()` raises `ConfigError` with it. `Match.validate` raises `InvalidMatchError` with it where it calls `self.game_format.validate()` today. (Changed from a `_check(error: type[OpenEngineError])` that raised the class it was given: `tests/test_api.py::test_every_raise_uses_an_engine_error` resolves each raised name statically and rejects `raise error(...)`.) `RatingEngine.predict_win_probability` calls `game_format.validate()` first: it reads `scoring` (in `predict_point_share` and the calibration lookup) before `match_win_probability` validates the format, so `scoring=None` raised `KeyError` there and criterion 3 could not hold without this call (found while implementing). Docstrings above.
 - `tests/test_game_format_checks.py` (new): criteria 1 to 4.
 - `tests/test_engine.py`: `LOOSE_PAIRS` and `INVALID_LOOSE_PAIRS` (criterion 5).
-- `README.md`, `CHANGELOG.md`: criterion 7.
+- `README.md`, `CHANGELOG.md`: criterion 7. The README also says a ledger row with a bad game format raises `InvalidMatchError` (the replay notes said `ConfigError`), and its `InvalidMatchError` line names the `GameFormat`.
 
 `winprob.py` keeps calling `game_format.validate()`, so it keeps `ConfigError`. No change there.
 
 ## Order of work
 
 1. Red tests, committed alone: `tests/test_game_format_checks.py` and the `tests/test_engine.py` pair change. They fail on main (TypeError, accepted, or ConfigError where InvalidMatchError is now expected).
-2. Implement `_check` and route `Match.validate` through it.
+2. Implement `_problem` and route `Match.validate` and `predict_win_probability` through it.
 3. Docs and changelog.
 4. Gate: `ruff check .`, `ruff format --check .`, `mypy src`, `pytest`.
 
@@ -51,7 +51,6 @@ Reading of "a bad GameFormat": the existing range rules (`points_to` and `win_by
 
 - Changing the range errors through `Match.validate` from `ConfigError` to `InvalidMatchError` could break a caller catching `ConfigError` on `record`. Both are `OpenEngineError` and `ValueError`. Called out in the changelog Migration note.
 - Type checks must run before any comparison, or a str still raises `TypeError`.
-- `type[OpenEngineError]` must accept both subclasses under mypy strict.
 
 ## Proof
 
