@@ -201,3 +201,14 @@ def test_record_rejects_a_str_match_type_on_a_non_completed_row(kind: str):
     with pytest.raises(InvalidMatchError, match="^match_type must be a MatchType, not str$"):
         engine.record(forfeit)
     assert engine.to_snapshot() == before
+
+
+def test_both_teams_as_lists_are_rejected():
+    engine = RatingEngine()
+    before = engine.to_snapshot()
+    row = dataclasses.replace(BASE, team_a=["syn-b", "syn-c"], team_b=["syn-d", "syn-e"])
+    with pytest.raises(InvalidMatchError, match="^team_a must be a tuple, not list$"):
+        row.validate()
+    with pytest.raises(InvalidMatchError, match="^team_a must be a tuple, not list$"):
+        engine.record(row)
+    assert engine.to_snapshot() == before
