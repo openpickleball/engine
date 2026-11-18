@@ -1376,6 +1376,9 @@ class PlayerSummary:
     account_linked: bool
 
 
+_FORMAT_VALUES = frozenset(fmt.value for fmt in RatingFormat)
+
+
 def _zero_by_format() -> dict[RatingFormat, float]:
     return dict.fromkeys(RatingFormat, 0.0)
 
@@ -1394,7 +1397,11 @@ class ReplayInfo:
     can be nonzero when K differs between the teams or a player is
     clamped or frozen, and colluding accounts can grow it on purpose. It is
     stored as a read-only mapping with a key for every RatingFormat in
-    definition order (0.0 where nothing counted). Updates are added in
+    definition order (0.0 where nothing counted). Building a ReplayInfo
+    copies the mapping given: a key may be a RatingFormat or its str
+    value, a missing format gets 0.0, and a value that is not a mapping,
+    an unknown key, or a format given twice raises SnapshotError (a
+    ReplayInfo is built only by replay and by snapshot loading). Updates are added in
     ledger order, and a resume continues from the checkpoint's total, so
     a resume gives the same floats as a full replay. Live updates after
     the replay do not change it; the backend adds team_size * imbalance
@@ -1410,8 +1417,21 @@ class ReplayInfo:
 
     def __post_init__(self) -> None:
         given = self.net_rating_created
-        ordered = {fmt: given[fmt] for fmt in RatingFormat if fmt in given}
-        ordered.update((key, value) for key, value in given.items() if key not in ordered)
+        name = "ReplayInfo.net_rating_created"
+        if not isinstance(given, Mapping):
+            raise SnapshotError(f"{name} must be a mapping")
+        values: dict[RatingFormat, float] = {}
+        for key, value in given.items():
+            if isinstance(key, RatingFormat):
+                fmt = key
+            elif isinstance(key, str) and key in _FORMAT_VALUES:
+                fmt = RatingFormat(key)
+            else:
+                raise SnapshotError(f"{name} has an unknown key: {key!r}")
+            if fmt in values:
+                raise SnapshotError(f"{name} repeats the format {fmt.value!r}")
+            values[fmt] = value
+        ordered = {fmt: values.get(fmt, 0.0) for fmt in RatingFormat}
         object.__setattr__(self, "net_rating_created", _FrozenMapping(ordered))
 
 
@@ -1774,7 +1794,6 @@ _REPLAY_INFO_KEYS = frozenset(
         "net_rating_created",
     }
 )
-_FORMAT_KEYS = frozenset(fmt.value for fmt in RatingFormat)
 _PLAYER_KEYS = frozenset({"id", "account_user_id", "external_ids", "ratings"})
 _STATE_KEYS = frozenset(
     {
@@ -2298,7 +2317,7 @@ def _snap_replay_info(
     if counted > considered:
         raise SnapshotError(f"{path}.matches_counted must not exceed matches_considered")
     created_path = f"{path}.net_rating_created"
-    created_raw = _snap_object(raw["net_rating_created"], created_path, _FORMAT_KEYS)
+    created_raw = _snap_object(raw["net_rating_created"], created_path, _FORMAT_VALUES)
     created: dict[RatingFormat, float] = {}
     for fmt in RatingFormat:
         value = created_raw[fmt.value]
