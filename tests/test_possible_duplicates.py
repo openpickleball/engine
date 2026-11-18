@@ -11,7 +11,7 @@ from datetime import date
 
 import pytest
 
-from open_engine import Config, Match, RatingEngine, RatingFormat, replay
+from open_engine import Config, Match, RatingEngine, RatingFormat, RejectionReason, replay
 
 D = RatingFormat.DOUBLES
 ON = date(2026, 3, 1)
@@ -95,11 +95,13 @@ def test_resume_equals_a_full_replay_with_the_map(
     assert resumed.to_snapshot() == full.to_snapshot()
 
 
-def test_a_rejected_id_that_later_counts_on_its_own_leaves_the_map() -> None:
+def test_a_rejected_copy_keeps_its_id_and_its_entry() -> None:
+    # Issue #76: a rejected copy reserves its match_id, so the entry never clears.
     eng = RatingEngine(_reject())
     eng.record(DUP)
     eng.record(DUP2)
     assert eng.possible_duplicates == {"dup2": "dup"}
     result = eng.record(Match("dup2", ("a", "b"), ("c", "d"), ((11, 5),), LATER, D))
-    assert result.counted is True
-    assert eng.possible_duplicates == {}
+    assert result.counted is False
+    assert result.reason is RejectionReason.DUPLICATE_MATCH_ID
+    assert eng.possible_duplicates == {"dup2": "dup"}
