@@ -696,12 +696,7 @@ def test_inactivity_never_lowers_rd_or_raises_reliability() -> None:
                     summary = engine.player_summary(pid, fmt, as_of=on)
                     rds.append(inflated_rd(state, on, engine.cfg))
                     earned.append(reliability(state, engine.cfg, on))
-                    # The summary shows the earned value, capped while the
-                    # pool is not connected to the main network (issue #58).
-                    cap = engine.cfg.connectivity_reliability_cap
-                    assert cap is not None
-                    shown = earned[-1] if summary.connectivity.connected else min(earned[-1], cap)
-                    assert summary.reliability == shown
+                    assert summary.reliability == earned[-1]
                 assert rds == sorted(rds)
                 assert earned == sorted(earned, reverse=True)
                 assert max(rds) <= engine.cfg.rd_max

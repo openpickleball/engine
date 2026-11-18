@@ -10,7 +10,7 @@ Domain skills: none apply. This is a standard-library Python package with no fra
 
 ## Scope decision
 
-Reliability and `established` are labels. `reliability` is read only by `player_summary`; no rating, RD, K, prediction, `evaluate`, `prequential_predictions`, `fit_scale`, or `fit_win_calibration` path reads it. So the change is a label change, not a change to how ratings move, and the prediction-accuracy rule does not apply (the issue says so too). The term is on by default, as the issue asks, and `connectivity_reliability_cap=None` turns it off. Default ratings must stay byte-identical, proved under Proof.
+Reliability and `established` are labels. `reliability` is read only by `player_summary`; no rating, RD, K, prediction, `evaluate`, `prequential_predictions`, `fit_scale`, or `fit_win_calibration` path reads it. So the change is a label change, not a change to how ratings move, and the prediction-accuracy rule does not apply (the issue says so too). The measure is always reported. The cap is off by default (`connectivity_reliability_cap=None`); see the scope revision below. Default ratings must stay byte-identical, proved under Proof.
 
 No snapshot change. The term is derived at summary time from state the engine already stores and snapshots: each rating state's `partners` and `opponents` (player id to last date). So resume equals a full replay for it whenever the states are equal, which existing tests already prove, and `snapshot_version` stays 6.
 
@@ -35,10 +35,10 @@ Limits to document (claims must hold): a pool that is the whole ledger, or more 
 
 ## Acceptance criteria
 
-1. A synthetic closed pool (14 players, separate from a wider network) has every member's reliability capped at or below the cap (below `established_reliability_threshold`) and not established, and a matched pool of the same size and schedule whose players also play the wider network reaches established.
+1. With the cap set to 50.0, a synthetic closed pool (14 players, separate from a wider network) has every member's reliability capped at or below the cap (below `established_reliability_threshold`) and not established, and a matched pool of the same size and schedule whose players also play the wider network reaches established.
 2. One cross-pool match (or one day of matches) between the pool and the wider network does not lift the pool's cap.
 3. Replay and resume give the same `NetworkConnectivity` and summaries for the same ledger, config, and date, in any input order (shuffled ledger, and resume from a checkpoint, also after a JSON round trip).
-4. `connectivity_reliability_cap=None` gives the same `reliability` and `established` as main for every player.
+4. The default config (`connectivity_reliability_cap=None`) gives the same `reliability` and `established` as main for every player.
 5. Config validation table with `pytest.raises(ConfigError, match=...)`, defaults, fingerprint, and `to_dict`/`from_dict` round trip.
 6. Ratings are unchanged: a synthetic ledger replays to byte-identical snapshots (every rating state field) on main and on this branch, and `tests/test_properties.py` passes.
 7. Module docstring, README (reliability text and Public API), `Config`, `PlayerSummary`, and `CHANGELOG.md` describe the term and its parameters; `NetworkConnectivity` is in `__all__` and the README Public API with a docstring.
@@ -72,3 +72,7 @@ Limits to document (claims must hold): a pool that is the whole ledger, or more 
 - Criterion 4: cap None compared with a summary computed on the same states by the unchanged `reliability()` rule.
 - Criterion 6: a script in the scratch directory writes `json.dumps(replay(...).to_snapshot(), sort_keys=True)` on main and on the branch for the same synthetic ledger and compares the bytes; recorded in the PR body.
 - Measured on main: `repro.py` (closed club of 14 plus a wider network of 120): club00 97.2 established, club01 100.0 established.
+
+## Scope revision after review round 2
+
+Two review rounds found that every size-based rule this measure can build from the stored contacts (one last date per contact pair, any match type) can be gamed near its threshold: drop-in accounts or one match between two closed groups can make a closed group a main network or the majority of its group, and a straggler next to a densely playing club can count its members as outside players. The same rules can wrongly cap real players: one match between two real networks can make the smaller one no longer a main network. Since the cap is a label in a security-sensitive area (hard rule 7) and its accuracy cannot be checked on real ledgers in this repository, the cap is off by default (`connectivity_reliability_cap=None`), the measure is always reported, and the acceptance tests run with the cap set to 50.0. A follow-up issue covers a robust measure (per-contact history: match counts, dates, and match types, so repeated contact and self-reported contacts can be told apart) and the out-of-sample review needed before the cap is on by default. The cache now drops only its oldest entry when full.

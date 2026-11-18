@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import random
 from datetime import date, timedelta
+from typing import Any
 
 import pytest
 
@@ -28,6 +29,8 @@ END = START + timedelta(weeks=WEEKS - 1)
 CLUB = [f"club{i:02d}" for i in range(14)]
 WIDE = [f"wide{i:03d}" for i in range(120)]
 SCORES = [(11, 9), (9, 11), (11, 7), (7, 11)]
+# The cap is off by default; these tests turn it on at 50.0.
+CAPPED = Config(connectivity_reliability_cap=50.0)
 
 
 def doubles(match_id: str, players: list[str], on: date, rng: random.Random) -> Match:
@@ -72,6 +75,11 @@ def bridge_rows(count: int, *, weekly: bool) -> list[Match]:
     return rows
 
 
+def capped_replay(rows: list[Match], **kwargs: Any) -> RatingEngine:
+    """replay under CAPPED."""
+    return replay(rows, cfg=CAPPED, **kwargs)
+
+
 def summaries(engine: RatingEngine, ids: list[str]) -> dict[str, PlayerSummary]:
     return {pid: engine.player_summary(pid, DOUBLES) for pid in ids}
 
@@ -80,8 +88,8 @@ def summaries(engine: RatingEngine, ids: list[str]) -> dict[str, PlayerSummary]:
 
 
 def test_closed_pool_is_capped_below_established() -> None:
-    cfg = Config()
-    engine = replay(club_rows() + wide_rows(), as_of=END)
+    cfg = CAPPED
+    engine = capped_replay(club_rows() + wide_rows(), as_of=END)
     for pid, summary in summaries(engine, CLUB).items():
         connectivity = summary.connectivity
         assert connectivity.connected is False, pid
@@ -102,7 +110,7 @@ def test_closed_pool_is_capped_below_established() -> None:
 
 
 def test_matched_pool_that_plays_the_wider_network_is_established() -> None:
-    engine = replay(club_rows() + wide_rows() + bridge_rows(WEEKS, weekly=True), as_of=END)
+    engine = capped_replay(club_rows() + wide_rows() + bridge_rows(WEEKS, weekly=True), as_of=END)
     for pid, summary in summaries(engine, CLUB).items():
         assert summary.connectivity.connected is True, pid
         assert summary.connectivity.in_main_network is True, pid
@@ -114,8 +122,8 @@ def test_matched_pool_that_plays_the_wider_network_is_established() -> None:
 
 @pytest.mark.parametrize("count", [1, 4])
 def test_one_day_of_cross_pool_matches_does_not_lift_the_cap(count: int) -> None:
-    cfg = Config()
-    engine = replay(club_rows() + wide_rows() + bridge_rows(count, weekly=False), as_of=END)
+    cfg = CAPPED
+    engine = capped_replay(club_rows() + wide_rows() + bridge_rows(count, weekly=False), as_of=END)
     for pid, summary in summaries(engine, CLUB).items():
         connectivity = summary.connectivity
         assert connectivity.in_main_network is True, pid
@@ -136,27 +144,27 @@ def test_shuffled_ledger_gives_the_same_connectivity() -> None:
     rows = club_rows() + wide_rows() + bridge_rows(1, weekly=False)
     shuffled = list(rows)
     random.Random(9).shuffle(shuffled)
-    first = summaries(replay(rows, as_of=END), CLUB + WIDE)
-    second = summaries(replay(shuffled, as_of=END), CLUB + WIDE)
+    first = summaries(capped_replay(rows, as_of=END), CLUB + WIDE)
+    second = summaries(capped_replay(shuffled, as_of=END), CLUB + WIDE)
     assert first == second
 
 
 def test_resume_gives_the_same_connectivity_as_a_full_replay() -> None:
     rows = club_rows() + wide_rows() + bridge_rows(3, weekly=True)
     checkpoint = START + timedelta(weeks=12)
-    first = replay(rows, as_of=checkpoint)
+    first = capped_replay(rows, as_of=checkpoint)
     snapshot = json.loads(json.dumps(first.to_snapshot()))
-    resumed = replay(rows, as_of=END, from_snapshot=snapshot, whole_ledger=True)
-    full = replay(rows, as_of=END)
+    resumed = capped_replay(rows, as_of=END, from_snapshot=snapshot, whole_ledger=True)
+    full = capped_replay(rows, as_of=END)
     assert summaries(resumed, CLUB + WIDE) == summaries(full, CLUB + WIDE)
 
 
 def test_live_recording_matches_replay_connectivity() -> None:
     rows = club_rows() + wide_rows() + bridge_rows(1, weekly=False)
-    live = RatingEngine()
+    live = RatingEngine(CAPPED)
     for match in sorted(rows, key=lambda m: (m.played_on, m.match_id)):
         live.record(match)
-    full = replay(rows, as_of=END)
+    full = capped_replay(rows, as_of=END)
     for pid in CLUB + WIDE[:5]:
         assert (
             live.player_summary(pid, DOUBLES, as_of=END).connectivity
@@ -165,7 +173,7 @@ def test_live_recording_matches_replay_connectivity() -> None:
 
 
 def test_summary_after_a_new_match_is_measured_again() -> None:
-    engine = replay(club_rows() + wide_rows(), as_of=END)
+    engine = capped_replay(club_rows() + wide_rows(), as_of=END)
     before = engine.player_summary("club00", DOUBLES, as_of=END).connectivity
     assert before.in_main_network is False
     rng = random.Random(4)
@@ -178,8 +186,8 @@ def test_summary_after_a_new_match_is_measured_again() -> None:
 # Criterion 4: the cap set to None leaves reliability and established as before.
 
 
-def test_cap_none_keeps_the_earned_reliability() -> None:
-    cfg = Config(connectivity_reliability_cap=None)
+def test_the_default_keeps_the_earned_reliability() -> None:
+    cfg = Config()
     engine = replay(club_rows() + wide_rows(), cfg=cfg, as_of=END)
     for pid in CLUB + WIDE:
         summary = engine.player_summary(pid, DOUBLES)
@@ -195,8 +203,8 @@ def test_cap_none_keeps_the_earned_reliability() -> None:
 
 def test_the_cap_changes_no_rating() -> None:
     rows = club_rows() + wide_rows() + bridge_rows(2, weekly=False)
-    capped = replay(rows, as_of=END)
-    uncapped = replay(rows, cfg=Config(connectivity_reliability_cap=None), as_of=END)
+    capped = capped_replay(rows, as_of=END)
+    uncapped = replay(rows, as_of=END)
     for pid in CLUB + WIDE:
         assert capped.state(pid, DOUBLES) == uncapped.state(pid, DOUBLES)
 
@@ -208,7 +216,7 @@ def test_one_match_on_its_own_is_its_own_network() -> None:
     # Each player's contacts play no one else, so they are the pool's
     # fringe, and the pool with its fringe is the whole group.
     rng = random.Random(5)
-    engine = replay([doubles("m1", ["a", "b", "c", "d"], START, rng)], as_of=START)
+    engine = capped_replay([doubles("m1", ["a", "b", "c", "d"], START, rng)], as_of=START)
     assert engine.player_summary("a", DOUBLES).connectivity == NetworkConnectivity(
         pool_size=1,
         fringe_players=3,
@@ -228,13 +236,13 @@ def test_a_hub_of_new_players_is_connected() -> None:
         doubles(f"h{i}", ["hub", f"q{i}", f"r{i}", f"s{i}"], START + timedelta(weeks=i), rng)
         for i in range(12)
     ]
-    summary = replay(rows, as_of=START + timedelta(weeks=11)).player_summary("hub", DOUBLES)
+    summary = capped_replay(rows, as_of=START + timedelta(weeks=11)).player_summary("hub", DOUBLES)
     assert summary.connectivity.connected is True
     assert summary.established is True
 
 
 def test_a_pool_that_is_the_whole_ledger_is_connected() -> None:
-    engine = replay(club_rows(), as_of=END)
+    engine = capped_replay(club_rows(), as_of=END)
     for summary in summaries(engine, CLUB).values():
         assert summary.connectivity.pool_size == 14
         assert summary.connectivity.group_size == 14
@@ -244,7 +252,7 @@ def test_a_pool_that_is_the_whole_ledger_is_connected() -> None:
 
 def test_two_equal_separate_networks_are_each_their_own_scale() -> None:
     other = [f"other{i:02d}" for i in range(14)]
-    engine = replay(club_rows() + pool_rows("o", other, 4, 1), as_of=END)
+    engine = capped_replay(club_rows() + pool_rows("o", other, 4, 1), as_of=END)
     for summary in summaries(engine, CLUB + other).values():
         assert summary.connectivity.group_size == 14
         assert summary.connectivity.in_main_network is True
@@ -257,14 +265,14 @@ def test_a_few_new_accounts_do_not_change_which_networks_are_main() -> None:
     other = [f"town{i:03d}" for i in range(120)]
     rng = random.Random(10)
     extra = [doubles("x", ["town000", "town001", "new0", "new1"], END, rng)]
-    engine = replay(wide_rows() + pool_rows("t", other, 15, 5) + extra, as_of=END)
+    engine = capped_replay(wide_rows() + pool_rows("t", other, 15, 5) + extra, as_of=END)
     for pid in WIDE[:5] + other[:5]:
         assert engine.player_summary(pid, DOUBLES).connectivity.connected is True, pid
 
 
 def test_a_group_under_half_the_largest_is_not_a_main_network() -> None:
     # The closed club of 14 next to 120 players: 14 is under half of 120.
-    engine = replay(club_rows() + wide_rows(), as_of=END)
+    engine = capped_replay(club_rows() + wide_rows(), as_of=END)
     connectivity = engine.player_summary("club00", DOUBLES).connectivity
     assert connectivity.in_main_network is False
 
@@ -284,7 +292,7 @@ def singles(match_id: str, a: str, b: str, on: date) -> Match:
 def test_a_player_with_no_state_is_measured_as_if_the_state_were_stored() -> None:
     # A summary for a missing format reports the state a seed would store,
     # so the connectivity is what storing that unplayed state would give.
-    engine = replay(wide_rows() + [singles("s", "solo", "wide000", END)], as_of=END)
+    engine = capped_replay(wide_rows() + [singles("s", "solo", "wide000", END)], as_of=END)
     summary = engine.player_summary("solo", DOUBLES)
     assert summary.connectivity == NetworkConnectivity(
         pool_size=1,
@@ -300,7 +308,7 @@ def test_a_player_with_no_state_is_measured_as_if_the_state_were_stored() -> Non
 
 
 def test_a_lone_state_in_an_empty_format_has_no_contact() -> None:
-    engine = replay(club_rows(), as_of=END)
+    engine = capped_replay(club_rows(), as_of=END)
     summary = engine.player_summary("club00", RatingFormat.SINGLES)
     assert summary.connectivity == NetworkConnectivity(
         pool_size=1,
@@ -316,7 +324,7 @@ def test_a_lone_state_in_an_empty_format_has_no_contact() -> None:
 
 
 def test_contacts_outside_the_window_do_not_count() -> None:
-    engine = replay(club_rows() + wide_rows(), as_of=END)
+    engine = capped_replay(club_rows() + wide_rows(), as_of=END)
     later = END + timedelta(days=Config().diversity_window_days + 1)
     connectivity = engine.player_summary("club00", DOUBLES, as_of=later).connectivity
     assert connectivity.pool_size == 1
@@ -338,7 +346,7 @@ def test_a_small_closed_group_is_not_lifted_by_one_bridge(size: int) -> None:
     group = [f"s{i}" for i in range(size)]
     rng = random.Random(11)
     bridge = [doubles("sb", ["s0", "s1", "wide000", "wide001"], START + timedelta(weeks=10), rng)]
-    engine = replay(closed_group_rows(group, 7) + wide_rows() + bridge, as_of=END)
+    engine = capped_replay(closed_group_rows(group, 7) + wide_rows() + bridge, as_of=END)
     for pid in group:
         summary = engine.player_summary(pid, DOUBLES)
         assert summary.connectivity.connected is False, pid
@@ -355,7 +363,9 @@ def test_a_same_day_round_robin_does_not_dissolve_the_pool_cap() -> None:
         (a, b), (c, d) = pairs[n], pairs[(n + 1) % len(pairs)]
         if len({a, b, c, d}) == 4:
             rows.append(doubles(f"rr{n}", [a, b, c, d], END, rng))
-    engine = replay(club_rows() + wide_rows() + bridge_rows(1, weekly=False) + rows, as_of=END)
+    engine = capped_replay(
+        club_rows() + wide_rows() + bridge_rows(1, weekly=False) + rows, as_of=END
+    )
     for pid, summary in summaries(engine, CLUB).items():
         assert summary.connectivity.connected is False, pid
         assert summary.established is False, pid
@@ -371,7 +381,9 @@ def test_drop_in_accounts_do_not_count_as_outside_contact() -> None:
         )
         for i in range(8)
     ]
-    engine = replay(club_rows() + wide_rows() + bridge_rows(1, weekly=False) + drops, as_of=END)
+    engine = capped_replay(
+        club_rows() + wide_rows() + bridge_rows(1, weekly=False) + drops, as_of=END
+    )
     for pid, summary in summaries(engine, CLUB).items():
         assert summary.connectivity.fringe_players >= 8, pid
         assert summary.connectivity.connected is False, pid
@@ -386,7 +398,9 @@ def test_a_straggler_who_plays_only_the_club_is_capped() -> None:
         doubles(f"st{i}", ["strag", *rng.sample(CLUB, 3)], START + timedelta(weeks=i % 2), rng)
         for i in range(12)
     ]
-    engine = replay(club_rows() + wide_rows() + bridge_rows(1, weekly=False) + strag, as_of=END)
+    engine = capped_replay(
+        club_rows() + wide_rows() + bridge_rows(1, weekly=False) + strag, as_of=END
+    )
     summary = engine.player_summary("strag", DOUBLES)
     assert summary.connectivity.connected is False
     assert summary.established is False
@@ -404,7 +418,7 @@ def test_reliability_never_exceeds_a_cap_with_more_places(cap: float) -> None:
 
 
 def test_the_cache_stays_bounded() -> None:
-    engine = replay(club_rows(), as_of=END)
+    engine = capped_replay(club_rows(), as_of=END)
     for day in range(100):
         engine.player_summary("club00", DOUBLES, as_of=END + timedelta(days=day))
     assert len(engine._connectivity) <= 16
@@ -415,7 +429,7 @@ def test_the_cache_stays_bounded() -> None:
 
 def test_defaults() -> None:
     cfg = Config()
-    assert cfg.connectivity_reliability_cap == 50.0
+    assert cfg.connectivity_reliability_cap is None
     assert cfg.connectivity_min_shared_contacts == 4
     assert cfg.connectivity_min_contact_days == 3
     assert cfg.connectivity_min_outside_players == 8
@@ -424,7 +438,7 @@ def test_defaults() -> None:
 @pytest.mark.parametrize(
     ("name", "value"),
     [
-        ("connectivity_reliability_cap", None),
+        ("connectivity_reliability_cap", 50.0),
         ("connectivity_reliability_cap", 0.0),
         ("connectivity_reliability_cap", 59.9),
         ("connectivity_min_shared_contacts", 2),
@@ -467,7 +481,7 @@ def test_a_visitor_for_one_day_does_not_tie_into_the_pool() -> None:
     rng = random.Random(6)
     day = START + timedelta(weeks=12)
     visits = [doubles(f"v{i}", ["wide000", *rng.sample(CLUB, 3)], day, rng) for i in range(4)]
-    engine = replay(club_rows() + wide_rows() + visits, as_of=END)
+    engine = capped_replay(club_rows() + wide_rows() + visits, as_of=END)
     for pid, summary in summaries(engine, CLUB).items():
         assert summary.connectivity.pool_size == 14, pid
         assert summary.connectivity.outside_players == 1, pid
@@ -479,7 +493,7 @@ def test_a_full_cache_drops_only_its_oldest_entry() -> None:
     # Summaries at more reference dates than the cache holds keep the most
     # recent ones, so a pass over players with many distinct default dates
     # does not rebuild every date again.
-    engine = replay(club_rows(), as_of=END)
+    engine = capped_replay(club_rows(), as_of=END)
     days = [END + timedelta(days=day) for day in range(20)]
     for day in days:
         engine.player_summary("club00", DOUBLES, as_of=day)
