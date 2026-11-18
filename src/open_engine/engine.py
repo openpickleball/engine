@@ -99,8 +99,9 @@ Published behavior notes:
 - player_summary measures inactivity, RD, and reliability at a reference
   date. With no as_of, it is the later of the last replay date
   (calculated_as_of) and the player's last match. So a stale player is
-  measured at the replay date and loses reliability as replays move
-  forward, and a player with live matches since is measured at their last
+  measured at the replay date and loses reliability from RD and variety
+  as replays move forward (with the connectivity cap set, connectivity
+  can still change; see its note), and a player with live matches since is measured at their last
   match. Players in one engine can be measured at different dates. With no
   as_of on an engine that was never replayed, it raises
   ReferenceDateError, as it does for an as_of that is not a plain date.
@@ -122,7 +123,9 @@ Published behavior notes:
   a minimum of 0 the rule is reliability alone. Imported
   reliability never counts toward established, and established is
   measured at the same reference date as reliability, so it lapses with
-  inactivity. Under the defaults, a new
+  inactivity unless the connectivity cap is set and connectivity changes
+  (see its note). Under
+  the defaults, a new
   player with no imported rating, playing one match a week with varied
   partners and opponents, becomes established after about 10 to 13
   tournament, league, or recreational verified matches (10 tournament, 11
@@ -146,6 +149,76 @@ Published behavior notes:
   output. Evaluation has its own eligibility rule: it scores a match only when
   every participant has an imported baseline or at least burn_in_matches
   OPEN matches. That rule is separate from PlayerSummary.established.
+  With Config.connectivity_reliability_cap set, the counts above are for
+  a player whose network connectivity is connected (see the next note).
+- Network connectivity (PlayerSummary.connectivity, a NetworkConnectivity):
+  RD and variety cannot see whether a player's partners and opponents
+  ever play anyone outside their own group, so a closed pool that plays
+  only itself could reach full variety, low RD, and established on its
+  own private scale. player_summary measures it per rating format, at
+  the reference date, over Config.diversity_window_days, from the
+  partners and opponents stored in each rating state (no other data, so
+  a snapshot or a resume carries it and it needs no snapshot field). Two
+  players with a state in the format are in contact when either one's
+  state lists the other with a date in the window. A group is a set of
+  players linked by contact, and it is a main network when it has at
+  least half as many players as the largest group, so two separate
+  networks of similar size are each a main network. The label depends
+  on group sizes alone. Two players in contact are
+  tied when they share at least Config.connectivity_min_shared_contacts
+  (4) contacts and each of them is in contact with those shared players
+  on at least Config.connectivity_min_contact_days (3) distinct dates.
+  A pool is a set of players linked by ties; a player with no tie is a
+  pool of one. The pool's fringe is every player outside it in contact
+  with it whose own contacts are all in the pool or in contact with it,
+  such as a drop-in who met only the pool. Its outside players are the
+  other players in contact with it. A player is connected when they
+  have a contact in the window, their group is a main network, and
+  either the pool with its fringe holds more than half the group, or
+  the pool has at least Config.connectivity_min_outside_players (8)
+  outside players on at least connectivity_min_contact_days distinct
+  contact dates with them. connectivity is always reported. When
+  Config.connectivity_reliability_cap is set (it is None, off, by
+  default), a player who is not connected has PlayerSummary.reliability
+  at most the cap, shown rounded down to 1 place, so with a cap below
+  the established threshold they are not established. The cap is off by
+  default because the rule can be gamed through group sizes (the limits
+  below) and can cap players in a real but smaller network; it waits
+  for out-of-sample review of real ledgers. The cap changes the displayed
+  reliability only: `reliability()` gives the value from RD and
+  variety, and no rating, RD, K, prediction, evaluate,
+  prequential_predictions, fit_scale, or fit_win_calibration output
+  reads either. connectivity is built for every summary, with the cap
+  on or off. Limits: a pool in a main network that with its fringe
+  holds more than half its group is that group's own scale, which no
+  ledger can place on another, so a club in a main network that
+  outnumbers the players it met is not capped and can leave them
+  capped; pools that play each other but not
+  the rest of their group count each other's players as outside
+  players; accounts the backend has not verified can pose as outside
+  players if they also play players the pool never met, and a cluster
+  of accounts more than twice the size of a real network makes that
+  network no longer a main network; drop-in accounts, or one match
+  between two closed groups, can make a closed group large enough to be
+  a main network or to hold more than half its group; a player whose
+  only contacts are a closed group can count its members as outside
+  players when they have not tied with that player (for example when
+  the group plays so densely that every contact keeps one last date); a
+  single match between two real networks can make the smaller one no
+  longer a main network; a state keeps only the last date
+  per contact, so repeated contact with the same player counts one
+  date; contacts leave the window as the reference date moves on, so
+  connectivity can change with no new match, and a player can become
+  connected (with the cap set, reliability then rises up to the value
+  from RD and variety) when the groups that outnumbered theirs drop out of the
+  window; and, as for variety, an as_of earlier than the stored state
+  does not rebuild past contacts. A summary for a format the player has
+  no state in is measured as if the unplayed state a seed would store
+  were stored: a player with no contacts, so not connected. The result
+  for one format and reference date is rebuilt after each state change
+  (the engine keeps the 16 most recent),
+  which costs about the sum over players of their contacts times their
+  contacts' contacts.
 - Ledger order: `replay` and `prequential_predictions` sort matches by
   `played_on` first. Within one `played_on` date, untimed matches come
   first (by `sequence`, then `match_id`), then timed matches (by the UTC
@@ -564,8 +637,10 @@ class Config:
     load a config.
 
     The mapping and format fields, established_min_verified_matches (a
-    nonnegative int, not a bool), and reject_content_duplicates (a bool)
-    are type-checked; other scalar fields are not yet. Such a scalar
+    nonnegative int, not a bool), reject_content_duplicates (a bool),
+    connectivity_reliability_cap (None or a number from 0 to 100), and the
+    three connectivity counts (positive ints, not bools) are type-checked;
+    other scalar fields are not yet. Such a scalar
     field given a value JSON cannot hold (a Decimal, say) makes
     fingerprint(), ==, and hash() raise TypeError, and a non-finite float
     is written as NaN or Infinity, which strict JSON rejects.
@@ -689,6 +764,29 @@ class Config:
     established_reliability_threshold: float = 60.0
     established_min_verified_matches: int = 3
 
+    # Network connectivity, a reliability label (issue #58). Measured per
+    # rating format over the diversity window at the summary's reference
+    # date. Two players in contact are tied when they share at least
+    # connectivity_min_shared_contacts partners or opponents and each of
+    # them reached those players on at least connectivity_min_contact_days
+    # distinct dates; a pool is a set of players linked by ties. A player
+    # is connected when their group of players linked by contact has at
+    # least half as many players as the largest group and either the pool
+    # with its fringe (drop-ins who met only the pool) holds more than half
+    # the group or the pool has at least connectivity_min_outside_players
+    # other outside players on at least connectivity_min_contact_days
+    # dates. PlayerSummary.reliability of a player who is not connected is
+    # at most connectivity_reliability_cap; None, the default, turns the
+    # cap off. The rule can be gamed through group sizes and can cap
+    # players in a real but smaller network, so the cap stays off until
+    # out-of-sample review of real ledgers supports a default (issue #58). A label only: it
+    # changes no rating, prediction, or evaluation. The defaults are
+    # declared choices, not calibrated ones.
+    connectivity_reliability_cap: float | None = None
+    connectivity_min_shared_contacts: int = 4
+    connectivity_min_contact_days: int = 3
+    connectivity_min_outside_players: int = 8
+
     # Category doubles matches also update overall doubles.
     category_feeds_parent: bool = True
 
@@ -764,6 +862,17 @@ class Config:
             raise ConfigError("established_min_verified_matches must be a nonnegative int")
         if not isinstance(self.reject_content_duplicates, bool):
             raise ConfigError("reject_content_duplicates must be a bool")
+        cap = self.connectivity_reliability_cap
+        if cap is not None and not (_is_finite_number(cap) and 0.0 <= cap <= 100.0):
+            raise ConfigError("connectivity_reliability_cap must be None or a number from 0 to 100")
+        for name in (
+            "connectivity_min_shared_contacts",
+            "connectivity_min_contact_days",
+            "connectivity_min_outside_players",
+        ):
+            count = getattr(self, name)
+            if not _is_whole_number(count) or count < 1:
+                raise ConfigError(f"{name} must be a positive int")
 
     def _payload(self) -> dict[str, object]:
         """Every parameter as fresh JSON-safe data: the input to fingerprint()."""
@@ -1333,6 +1442,184 @@ class MatchResult:
 
 
 @dataclass(frozen=True)
+class NetworkConnectivity:
+    """
+    Whether a player's pool connects to the wider network, in one format.
+
+    Measured over Config.diversity_window_days at the summary's reference
+    date, from the partners and opponents stored in each rating state.
+    Two players with a state in the format are in contact when either
+    one's state lists the other with a date in the window. A group is a
+    set of players linked by contact. A group is a main network when it
+    has at least half as many players as the largest group, so two
+    separate networks of similar size are each a main network.
+
+    Two players in contact are tied when they share at least
+    Config.connectivity_min_shared_contacts contacts and each of them is
+    in contact with those shared players on at least
+    Config.connectivity_min_contact_days distinct dates. A pool is a set
+    of players linked by ties; a player with no tie is a pool of one. The
+    pool's fringe is every player outside the pool who is in contact with
+    it and whose own contacts are all in the pool or in contact with it:
+    a drop-in who met only the pool and its other contacts. The pool's
+    outside players are the other players outside it in contact with it,
+    and outside_days counts the distinct contact dates between the pool
+    and them.
+
+    connected is True when the player has a contact in the window, their
+    group is a main network, and either the pool with its fringe holds
+    more than half the group's players, or the pool has at least
+    Config.connectivity_min_outside_players outside players on at least
+    Config.connectivity_min_contact_days outside days. When it is False
+    and Config.connectivity_reliability_cap is set (it is None by
+    default), PlayerSummary.reliability is at most that cap. It is a
+    label only and changes no rating. The rule can be gamed through
+    group sizes; see the network connectivity note in the module
+    docstring for its limits.
+    """
+
+    pool_size: int  # players in the pool, this player included
+    fringe_players: int  # drop-ins who met only the pool and its other contacts
+    outside_players: int  # other players outside the pool in contact with it
+    outside_days: int  # distinct contact dates between the pool and its outside players
+    group_size: int  # players linked to this player by contact, this player included
+    in_main_network: bool  # the group has at least half as many players as the largest
+    connected: bool
+
+
+# Connectivity results kept per engine, by (format, reference date).
+_CONNECTIVITY_CACHE_SIZE = 16
+
+
+class _UnionFind:
+    """Groups of ids. Each group's root is its smallest id, so the result is order-free."""
+
+    def __init__(self, ids: Iterable[str]) -> None:
+        self.parent = {pid: pid for pid in ids}
+
+    def find(self, pid: str) -> str:
+        root = pid
+        while self.parent[root] != root:
+            root = self.parent[root]
+        while self.parent[pid] != root:
+            self.parent[pid], pid = root, self.parent[pid]
+        return root
+
+    def union(self, a: str, b: str) -> None:
+        root_a, root_b = self.find(a), self.find(b)
+        if root_a != root_b:
+            low, high = sorted((root_a, root_b))
+            self.parent[high] = low
+
+    def sizes(self) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for pid in sorted(self.parent):
+            root = self.find(pid)
+            out[root] = out.get(root, 0) + 1
+        return out
+
+
+def _contact_graph(
+    players: Mapping[str, Player], rating_format: RatingFormat, cutoff: date
+) -> dict[str, dict[str, date]]:
+    """
+    Each player with a state in the format, to their contacts dated on or after cutoff.
+
+    Only players with a state in the format are nodes, and a contact's
+    date is the later of the two states' dates for each other.
+    """
+    graph: dict[str, dict[str, date]] = {}
+    for pid in sorted(players):
+        if rating_format in players[pid].ratings:
+            graph[pid] = {}
+    for pid in sorted(graph):
+        state = players[pid].ratings[rating_format]
+        for contacts in (state.partners, state.opponents):
+            for other in sorted(contacts):
+                on = contacts[other]
+                if other == pid or other not in graph or on < cutoff:
+                    continue
+                for a, b in ((pid, other), (other, pid)):
+                    graph[a][b] = _latest(graph[a].get(b), on)
+    return graph
+
+
+def _network_connectivity(
+    players: Mapping[str, Player], rating_format: RatingFormat, reference: date, cfg: Config
+) -> tuple[dict[str, NetworkConnectivity], int]:
+    """
+    NetworkConnectivity of every player with a state in the format, and the largest group size.
+
+    Every loop runs over sorted ids, every group is a union-find with its
+    smallest id as root, and sets are read only for their sizes, so the
+    result depends only on the stored states, the config, and the
+    reference date.
+    """
+    cutoff = reference - timedelta(days=cfg.diversity_window_days)
+    graph = _contact_graph(players, rating_format, cutoff)
+    ids = sorted(graph)
+    network = _UnionFind(ids)
+    pools = _UnionFind(ids)
+    minimum_days = cfg.connectivity_min_contact_days
+    for u in ids:
+        row = graph[u]
+        for v in sorted(row):
+            if v <= u:
+                continue
+            network.union(u, v)
+            other = graph[v]
+            shared = row.keys() & other.keys()
+            if len(shared) < cfg.connectivity_min_shared_contacts:
+                continue
+            # Each of them reached the shared contacts on enough dates, so,
+            # with a minimum of 2 or more, a visitor for one day (all of
+            # their dates equal) never ties.
+            if len({row[w] for w in shared}) >= minimum_days and (
+                len({other[w] for w in shared}) >= minimum_days
+            ):
+                pools.union(u, v)
+
+    group_sizes = network.sizes()
+    largest = max(group_sizes.values(), default=0)
+    members: dict[str, list[str]] = {}
+    for pid in ids:
+        members.setdefault(pools.find(pid), []).append(pid)
+    out: dict[str, NetworkConnectivity] = {}
+    for root in sorted(members):
+        pool = members[root]
+        in_pool = set(pool)
+        boundary = {w for u in pool for w in graph[u] if w not in in_pool}
+        near = in_pool | boundary
+        fringe = {w for w in boundary if all(x in near for x in graph[w])}
+        outside = boundary - fringe
+        outside_days = {graph[u][w] for u in pool for w in graph[u] if w in outside}
+        group_size = group_sizes[network.find(root)]
+        in_main = 2 * group_size >= largest
+        connected = (
+            (len(pool) > 1 or bool(boundary))
+            and in_main
+            and (
+                2 * (len(pool) + len(fringe)) > group_size
+                or (
+                    len(outside) >= cfg.connectivity_min_outside_players
+                    and len(outside_days) >= minimum_days
+                )
+            )
+        )
+        for pid in pool:
+            out[pid] = NetworkConnectivity(
+                pool_size=len(pool),
+                fringe_players=len(fringe),
+                outside_players=len(outside),
+                outside_days=len(outside_days),
+                group_size=group_size,
+                in_main_network=in_main,
+                connected=connected,
+            )
+    return out, largest
+
+
+@dataclass(frozen=True)
 class PlayerSummary:
     """
     A player's published rating in one format, with reliability and provenance.
@@ -1346,6 +1633,11 @@ class PlayerSummary:
     value. It is shown separately and never replaces or converts into
     reliability.
 
+    When Config.connectivity_reliability_cap is set (None, off, by
+    default), reliability is at most the cap while connectivity.connected
+    is False (see NetworkConnectivity). connectivity, the last field, is
+    always reported.
+
     established is True when reliability (as displayed, rounded to 1 place)
     is at least Config.established_reliability_threshold and the state's
     verified_matches_played (counted tournament, league, and recreational
@@ -1353,7 +1645,8 @@ class PlayerSummary:
     Self-reported matches never count toward that minimum. Imported
     reliability never counts toward established, and established is
     measured at the same reference date as reliability, so it lapses with
-    inactivity. A recently
+    inactivity unless the connectivity cap is set and connectivity
+    changes. A recently
     captured imported rating can reach the threshold in fewer OPEN matches
     because of its lower starting RD; see the module docstring for counts.
     It is a label only and changes no rating. A rating that is not
@@ -1387,6 +1680,7 @@ class PlayerSummary:
     live_updates_since_recalculation: int
     config_version: str
     account_linked: bool
+    connectivity: NetworkConnectivity  # whether the pool connects to the main network
 
 
 _FORMAT_VALUES = frozenset(fmt.value for fmt in RatingFormat)
@@ -2751,6 +3045,12 @@ class RatingEngine:
         # True only while the state is exactly what replay produced, so a
         # snapshot of it can be resumed from. Replay sets it at the end.
         self._resumable = False
+        # NetworkConnectivity by (format, reference date), with the main
+        # network size: derived from the rating states, never engine state,
+        # so it is not in the snapshot. _changed clears it.
+        self._connectivity: dict[
+            tuple[RatingFormat, date], tuple[dict[str, NetworkConnectivity], int]
+        ] = {}
 
     # -- state changes ---------------------------------------------------------
     #
@@ -2763,6 +3063,7 @@ class RatingEngine:
     def _changed(self) -> None:
         """Mark the engine as no longer exactly what a replay produced."""
         self._resumable = False
+        self._connectivity.clear()
 
     def _put_player(self, player: Player) -> None:
         """Store a new player record."""
@@ -3614,6 +3915,14 @@ class RatingEngine:
         An as_of earlier than the player's last match does not rebuild past
         state: RD and partner variety stay as of the stored state.
 
+        connectivity is measured at the same reference date over every
+        player's stored state in the format (see NetworkConnectivity), and
+        when Config.connectivity_reliability_cap is set, reliability is at
+        most the cap when it is not connected. The result for one format
+        and date is cached until the next state change through the
+        engine's own methods, for the 16 most recent dates; changing
+        objects the engine returns directly is not tracked.
+
         imported_reliability is not carried when the import's capture date is
         after the reference date. So an unplayed import captured after the
         last replay is not shown by default until the next replay or an
@@ -3624,7 +3933,8 @@ class RatingEngine:
         for a category state derived from overall doubles, the parent's live
         updates already in the rating it copied (see PlayerSummary).
 
-        It never changes engine state. For a known player with no state in
+        It never changes engine state; it only fills a private cache of
+        connectivity results, derived from the stored states. For a known player with no state in
         the format, it reports the starting state the player's first match in
         that format would use if played now (see state), without storing it.
 
@@ -3648,7 +3958,15 @@ class RatingEngine:
         state = self.state(player_id, rating_format)
         if as_of is None and state.last_played is not None:
             reference = max(reference, state.last_played)
+        connectivity = self._connectivity_of(player_id, rating_format, reference)
         earned = reliability(state, cfg, reference)
+        cap = cfg.connectivity_reliability_cap
+        if cap is not None and not connectivity.connected:
+            # The cap as displayed, 1 place, never above the cap itself.
+            shown = round(float(cap), 1)
+            if shown > cap:
+                shown = round(shown - 0.1, 1)
+            earned = min(earned, shown)
 
         # Imported reliability is shown, separately, only while it is fresh,
         # higher than what OPEN has earned, and within the carry match limit.
@@ -3689,6 +4007,35 @@ class RatingEngine:
             ),
             config_version=cfg.version,
             account_linked=player.account_user_id is not None,
+            connectivity=connectivity,
+        )
+
+    def _connectivity_of(
+        self, player_id: str, rating_format: RatingFormat, reference: date
+    ) -> NetworkConnectivity:
+        """The player's NetworkConnectivity, from the cache or a new build of the format."""
+        key = (rating_format, reference)
+        if key not in self._connectivity:
+            if len(self._connectivity) >= _CONNECTIVITY_CACHE_SIZE:
+                # Drop the oldest entry. Insertion order is fixed by the calls
+                # made, and a cache entry never changes a result.
+                del self._connectivity[next(iter(self._connectivity))]
+            self._connectivity[key] = _network_connectivity(
+                self.players, rating_format, reference, self.cfg
+            )
+        found, largest = self._connectivity[key]
+        if player_id in found:
+            return found[player_id]
+        # No stored state: measure the unplayed state a seed would store, a
+        # player with no contacts and a group of one.
+        return NetworkConnectivity(
+            pool_size=1,
+            fringe_players=0,
+            outside_players=0,
+            outside_days=0,
+            group_size=1,
+            in_main_network=2 >= max(largest, 1),
+            connected=False,
         )
 
 
