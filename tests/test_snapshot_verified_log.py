@@ -17,10 +17,12 @@ from open_engine import (
     ExternalRatingSnapshot,
     InvalidSeedError,
     Match,
+    MatchResult,
     MatchType,
     Player,
     RatingEngine,
     RatingFormat,
+    RejectionReason,
     SnapshotError,
     replay,
 )
@@ -202,7 +204,7 @@ def _category_snapshot(feeds: bool) -> dict[str, object]:
     return _json(replay(rows, cfg=cfg, as_of=START + timedelta(days=10)))
 
 
-def test_doubles_count_may_include_category_self_reports() -> None:
+def test_doubles_count_must_include_category_self_reports() -> None:
     snap = _category_snapshot(True)
     state = _state(snap, "syn-a", "doubles")
     assert (state["matches_played"], state["verified_matches_played"]) == (3, 0)
@@ -270,10 +272,15 @@ def _random_ledger(rng: random.Random, count: int) -> list[Match]:
 
 
 def _random_seeds(rng: random.Random) -> list[Player]:
+    # Most players are imported in doubles, and some also in mixed doubles
+    # with an earlier capture date, so a counted self-reported category
+    # match can have every player frozen in doubles (#84).
     seeder = RatingEngine()
-    for pid, fmt in (("syn-a", D), ("syn-b", S), ("syn-c", MX), ("syn-d", D)):
-        on = START + timedelta(days=rng.randint(-5, 60))
-        seeder.seed_external_rating(pid, fmt, ExternalRatingSnapshot("ext", 4.0, on))
+    for pid in [f"syn-{c}" for c in "abcdefgh"]:
+        for fmt, chance, last in ((D, 0.9, 60), (MX, 0.5, 0), (S, 0.2, 60)):
+            if rng.random() < chance:
+                on = START + timedelta(days=rng.randint(-5, last))
+                seeder.seed_external_rating(pid, fmt, ExternalRatingSnapshot("ext", 4.0, on))
     return [seeder.players[pid] for pid in sorted(seeder.players)]
 
 
@@ -341,14 +348,27 @@ def _maybe_reseed(rng: random.Random, engine: RatingEngine) -> None:
         pass
 
 
-@pytest.mark.parametrize("cfg", CONFIGS, ids=CONFIG_IDS)
-@pytest.mark.parametrize("seed", range(15))
-def test_engines_the_code_produces_load(cfg: Config, seed: int) -> None:
+def _all_frozen_parent(match: Match, result: MatchResult) -> bool:
+    """A counted self-reported category match whose doubles update froze every player."""
+    return (
+        result.counted
+        and match.match_type is SR
+        and result.parent is not None
+        and result.parent.reason is RejectionReason.BEFORE_IMPORTED_BASELINE
+    )
+
+
+def _drive(cfg: Config, seed: int) -> int:
+    """
+    Check that every snapshot of one random run loads; return how many live
+    category matches had their doubles update rejected with every player frozen.
+    """
     rng = random.Random(seed)
     rows = _random_ledger(rng, 80)
     seeds = _random_seeds(rng)
     as_of = START + timedelta(days=130)
     covered = 0
+    all_frozen = 0
     replayed = replay(rows, seeds, cfg=cfg, as_of=as_of)
     covered += _loads(replayed, cfg)
     checkpoint = replay(rows, seeds, cfg=cfg, as_of=START + timedelta(days=60))
@@ -362,7 +382,7 @@ def test_engines_the_code_produces_load(cfg: Config, seed: int) -> None:
         if match.played_on > START + timedelta(days=60):
             if rng.random() < 0.1:
                 _maybe_reseed(rng, after_checkpoint)
-            after_checkpoint.record(match)
+            all_frozen += int(_all_frozen_parent(match, after_checkpoint.record(match)))
     covered += _loads(after_checkpoint, cfg)
     # Live, in random arrival order, so many matches are late, with reseed
     # attempts (accepted and refused) between rows.
@@ -374,10 +394,24 @@ def test_engines_the_code_produces_load(cfg: Config, seed: int) -> None:
     for match in shuffled:
         if rng.random() < 0.1:
             _maybe_reseed(rng, live)
-        live.record(match)
+        all_frozen += int(_all_frozen_parent(match, live.record(match)))
     covered += _loads(live, cfg)
     if cfg.category_feeds_parent and cfg.max_doubles_partner_gap is None:
         assert covered > 0
+    return all_frozen
+
+
+@pytest.mark.parametrize("cfg", CONFIGS, ids=CONFIG_IDS)
+@pytest.mark.parametrize("seed", range(15))
+def test_engines_the_code_produces_load(cfg: Config, seed: int) -> None:
+    _drive(cfg, seed)
+
+
+def test_fuzz_reaches_a_category_match_with_every_player_frozen_in_doubles() -> None:
+    # The exact rule rests on this case: the doubles update is rejected, so
+    # no doubles state moves, and every player's match is on or before its
+    # doubles capture date.
+    assert sum(_drive(Config(), seed) for seed in range(15)) > 0
 
 
 def test_live_import_with_frozen_logged_matches_loads_and_is_not_reseeded() -> None:
@@ -504,3 +538,75 @@ def test_gap_rejected_doubles_update_loads() -> None:
     assert (state.matches_played, state.verified_matches_played) == (1, 0)
     assert engine.players["syn-a"].ratings[MX].matches_played == 1
     RatingEngine.from_snapshot(_json(engine), cfg)
+
+
+def _doubles_counts_after_import(snap: dict[str, object]) -> dict[str, tuple[int, int]]:
+    """Each doubles state's (unverified count, logged doubles and category dates after import)."""
+    entries = snap["self_reported_log"]
+    players = snap["players"]
+    assert isinstance(entries, list) and isinstance(players, list)
+    counts: dict[str, tuple[int, int]] = {}
+    for player in players:
+        state = player["ratings"].get("doubles")
+        if state is None:
+            continue
+        after = state["initial_source_date"]
+        logged = sum(
+            1
+            for entry in entries
+            if RatingFormat(entry["rating_format"]) in (D, MX)
+            and any(player["id"] in team for team in entry["teams"])
+            for on in entry["dates"]
+            if after is None or on > after
+        )
+        counts[player["id"]] = (state["matches_played"] - state["verified_matches_played"], logged)
+    return counts
+
+
+def test_category_match_with_every_player_frozen_in_doubles_loads() -> None:
+    capture = START + timedelta(days=10)
+    seeder = RatingEngine()
+    for pid in ("syn-a", "syn-b", "syn-c", "syn-d"):
+        seeder.seed_external_rating(pid, D, ExternalRatingSnapshot("ext", 4.0, capture))
+    # syn-b's own mixed doubles import is earlier, so syn-b moves in mixed.
+    seeder.seed_external_rating("syn-b", MX, ExternalRatingSnapshot("ext", 4.0, START))
+    seeds = [seeder.players[pid] for pid in sorted(seeder.players)]
+    rows = [
+        _sr("syn-m0", ("syn-a", "syn-b"), ("syn-c", "syn-d"), START + timedelta(days=3), MX),
+        _sr("syn-m1", ("syn-a", "syn-b"), ("syn-c", "syn-d"), START + timedelta(days=15), D),
+        _sr("syn-m2", ("syn-a", "syn-c"), ("syn-b", "syn-d"), START + timedelta(days=16), MX),
+    ]
+    live = RatingEngine()
+    for player in seeds:
+        live.add_player(player)
+    first = live.record(rows[0])
+    assert first.counted and first.deltas["syn-b"] != 0.0
+    assert first.parent is not None
+    assert first.parent.reason is RejectionReason.BEFORE_IMPORTED_BASELINE
+    for match in rows[1:]:
+        assert live.record(match).counted
+    replayed = replay(rows, seeds, as_of=START + timedelta(days=20))
+    for engine, resumable in ((replayed, True), (live, False)):
+        snap = _json(engine)
+        assert snap["resumable"] is resumable
+        RatingEngine.from_snapshot(snap)
+        counts = _doubles_counts_after_import(snap)
+        assert set(counts) == {"syn-a", "syn-b", "syn-c", "syn-d"}
+        assert all(unverified == logged == 2 for unverified, logged in counts.values())
+
+
+def test_to_snapshot_refuses_a_relabeled_category_fed_doubles_update() -> None:
+    engine = RatingEngine()
+    for match in _feed_rows():
+        assert engine.record(match).counted
+    state = engine.players["syn-a"].ratings[D]
+    assert (state.matches_played, state.verified_matches_played) == (2, 0)
+    state.verified_matches_played = 1
+    with pytest.raises(
+        SnapshotError,
+        match=(
+            r"ratings\.doubles: matches_played - verified_matches_played \(1\) must equal "
+            r"the self-reported doubles and category matches logged for this player \(2\)"
+        ),
+    ):
+        engine.to_snapshot()
