@@ -17,11 +17,15 @@ class OpenEngineError(ValueError):
 
 
 class ConfigError(OpenEngineError):
-    """A Config or GameFormat value is out of range or incomplete."""
+    """
+    A Config value is not valid, or a GameFormat is not valid when it is
+    checked outside a match: by GameFormat.validate, the win probability
+    functions, or RatingEngine.predict_win_probability.
+    """
 
 
 class InvalidMatchError(OpenEngineError):
-    """A match, its teams, its scores, or its played_at is not valid."""
+    """A match, its teams, its scores, its played_at, or its GameFormat is not valid."""
 
 
 class InvalidSeedError(OpenEngineError):

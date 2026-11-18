@@ -232,9 +232,12 @@ Published behavior notes:
   other repeat raises `LedgerConflictError`, even after `as_of`. The
   result never depends on input order.
 - Errors: every error the engine raises on purpose is an `OpenEngineError`,
-  which is a `ValueError`. `ConfigError` covers Config and GameFormat
-  values, `InvalidMatchError` covers matches, teams, scores and
-  `played_at`, `InvalidSeedError` covers external and replay seeds (a
+  which is a `ValueError`. `ConfigError` covers Config values and a
+  GameFormat reached other than through a match (`GameFormat.validate`,
+  the win probability functions, and
+  `RatingEngine.predict_win_probability`), `InvalidMatchError` covers
+  matches, teams, scores, `played_at`, and a match's GameFormat,
+  `InvalidSeedError` covers external and replay seeds (a
   seed state that breaks the seed rules in `RatingEngine.add_player`,
   including a field of the wrong type, a blank id, a blank
   `initial_source` or `initial_external_player_id`, an external player id
@@ -567,7 +570,24 @@ class GameFormat:
     cap: int | None = None  # optional hard cap where win-by-1 ends the game
 
     def validate(self) -> None:
-        """Raise ConfigError when the format itself is not valid."""
+        """
+        Raise ConfigError when the format itself is not valid.
+
+        scoring must be a ScoringType member (a str equal to a member's value
+        is rejected). points_to and win_by must be ints, and cap an int or
+        None. A bool or a float is not accepted as an int; an int subclass
+        is. The types are checked before the ranges: points_to and win_by
+        positive, cap greater than points_to. Match.validate calls this
+        method and raises a ConfigError from it as InvalidMatchError with
+        the same message.
+        """
+        if not isinstance(self.scoring, ScoringType):
+            raise ConfigError(f"scoring must be a ScoringType, not {type(self.scoring).__name__}")
+        for name, number in (("points_to", self.points_to), ("win_by", self.win_by)):
+            if not isinstance(number, int) or isinstance(number, bool):
+                raise ConfigError(f"{name} must be an int, not {type(number).__name__}")
+        if self.cap is not None and (not isinstance(self.cap, int) or isinstance(self.cap, bool)):
+            raise ConfigError(f"cap must be an int or None, not {type(self.cap).__name__}")
         if self.points_to < 1:
             raise ConfigError("points_to must be positive")
         if self.win_by < 1:
@@ -1409,7 +1429,9 @@ class Match:
     tuple; when confirmed_by is not a set or frozenset; when game_format is
     not a GameFormat; when played_at is not a datetime or None; or when
     sequence or best_of is not an int (a bool or float is rejected). games may
-    be a tuple or list. The fields inside game_format are not type-checked.
+    be a tuple or list. It also calls game_format.validate, which checks the
+    fields inside the format, and raises InvalidMatchError with the same
+    message for a ConfigError that call raises.
     """
 
     match_id: str
@@ -1438,7 +1460,7 @@ class Match:
     status: MatchStatus = MatchStatus.COMPLETED
 
     def validate(self) -> None:
-        """Raise InvalidMatchError (or ConfigError for its game format) when not valid."""
+        """Raise InvalidMatchError when not valid, its game format included."""
         if not _is_id(self.match_id):
             raise InvalidMatchError("match_id is required for duplicate protection")
         if not isinstance(self.status, MatchStatus):
@@ -1484,7 +1506,10 @@ class Match:
             raise InvalidMatchError("best_of must be a positive odd number")
         if len(self.games) > self.best_of:
             raise InvalidMatchError("Games played cannot exceed best_of")
-        self.game_format.validate()
+        try:
+            self.game_format.validate()
+        except ConfigError as err:
+            raise InvalidMatchError(str(err)) from None
         for score_a, score_b in self.games:
             if not all(
                 isinstance(score, int) and not isinstance(score, bool)
@@ -4098,7 +4123,12 @@ class RatingEngine:
         game_format: GameFormat,
         best_of: int = 1,
     ) -> float:
-        """Calibrated probability that team A wins the match."""
+        """
+        Calibrated probability that team A wins the match.
+
+        Raises ConfigError when game_format is not valid (GameFormat.validate).
+        """
+        game_format.validate()
         share = self.predict_point_share(team_a, team_b, rating_format, game_format.scoring)
         raw = match_win_probability(share, game_format, best_of)
         return calibrate_win_probability(

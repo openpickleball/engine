@@ -676,10 +676,16 @@ def test_played_at_outside_utc_range_rejected():
 # 14. Duplicate rows must match in type, not only under == ------------------------
 
 TWO_GAMES = ((11, 5), (11, 5))
+
+
+class _Int(int):
+    """An int subclass: equal to the int under ==, valid, but of another type."""
+
+
 LOOSE_PAIRS = [
     pytest.param(
         {"game_format": GameFormat(points_to=11)},
-        {"game_format": GameFormat(points_to=11.0)},
+        {"game_format": GameFormat(points_to=_Int(11))},
         id="points_to",
     ),
 ]
@@ -699,6 +705,12 @@ INVALID_LOOSE_PAIRS = [
         {"match_type": "self_reported"},
         "match_type must be a MatchType, not str",
         id="match_type",
+    ),
+    pytest.param(
+        {"game_format": GameFormat(points_to=11)},
+        {"game_format": GameFormat(points_to=11.0)},
+        "points_to must be an int, not float",
+        id="points_to",
     ),
 ]
 
