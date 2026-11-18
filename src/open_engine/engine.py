@@ -2468,9 +2468,12 @@ def _reserved_source_broken(
     - in a category format, "open_parent:" plus that format's parent's
       value, as _new_state derives it: category_feeds_parent is on, the
       player has a parent state, the state is dated exactly when the parent
-      state is (the dates may differ, since a parent can be reseeded after
-      the derivation), an undated state has a played parent, and an
-      unplayed state has an RD of at least category_seed_rd.
+      state is (the dates may differ: a parent reseed refreshes an unplayed
+      derived state, so the engine's own states share the parent's date,
+      but a seed or snapshot made before that refresh existed, or built by
+      a caller, can hold another date, and keeps it once played), an
+      undated state has a played parent, and an unplayed state has an RD
+      of at least category_seed_rd.
     This does not check the rating or the date against the parent state's,
     so a caller can still build a state in these shapes.
     """
@@ -3998,7 +4001,10 @@ class RatingEngine:
           format's parent's value (doubles) needs Config.category_feeds_parent
           on, a doubles state in the same seed, an initial_source_date
           when that doubles state has one and none when it has none (the
-          two dates may differ), and an RD of at least
+          two dates may differ: a doubles reseed refreshes an unplayed
+          derived state, so the engine's own states share the doubles
+          date, but a seed or snapshot made before that refresh existed,
+          or built by a caller, can hold another date), and an RD of at least
           Config.category_seed_rd. An undated one also needs a played
           doubles state, which a seed cannot have, so such a seed is
           always rejected. A seed taken from an engine with
@@ -4174,6 +4180,14 @@ class RatingEngine:
         cover it. A category format with no stored state and no counted
         match can still be seeded, even when the player has an overall
         doubles rating.
+        Under category_feeds_parent, a successful seed of overall doubles
+        also replaces each of the player's stored category states that is
+        unplayed and derived from overall doubles (initial_source
+        "open_parent:doubles") with the state a category match would start
+        from right after the seed: the new rating and date, with an RD of
+        at least Config.category_seed_rd. Other category states, imported
+        or provisional, are not changed. A stored category state does not
+        follow later changes to the doubles state from matches (issue #112).
         The seed's RD is always Config.external_seed_rd: an external
         reliability is kept for display (imported_reliability), never turned
         into OPEN RD. There is no reference date here, so a snapshot captured
@@ -4300,6 +4314,20 @@ class RatingEngine:
             initial_evidence_reference=snapshot.evidence_reference,
         )
         self._put_state(player, rating_format, state)
+        # A stored, unplayed category state derived from the format just
+        # seeded must start from the new seed, as _new_state would build it
+        # now, or live recording and a replay of later matches disagree.
+        if cfg.category_feeds_parent:
+            for child in RatingFormat:
+                if child.parent is not rating_format:
+                    continue
+                derived = player.ratings.get(child)
+                if (
+                    derived is not None
+                    and derived.matches_played == 0
+                    and derived.initial_source == f"open_parent:{rating_format.value}"
+                ):
+                    self._put_state(player, child, self._new_state(player_id, child))
         return state
 
     def _in_counted_match(self, player_id: str, rating_format: RatingFormat) -> bool:

@@ -124,8 +124,10 @@ def test_an_engine_made_derived_state_still_loads(seeded_parent: bool) -> None:
 
 
 def test_a_zero_count_state_keeps_its_own_source_date() -> None:
-    # Derived from an unplayed seeded parent, which is then reseeded: the
-    # category state keeps the old date, and its count is 0.
+    # Derived from an unplayed seeded parent, which is then reseeded. The
+    # reseed refreshes the derived state (issue #101), but a snapshot made
+    # before that fix holds the old date. Such a state keeps its own date,
+    # and its count is 0.
     engine = RatingEngine()
     first = ExternalRatingSnapshot("external_standard", 4.0, date(2025, 1, 1))
     engine.seed_external_rating("syn-a", D, first)
@@ -133,7 +135,10 @@ def test_a_zero_count_state_keeps_its_own_source_date() -> None:
     second = ExternalRatingSnapshot("external_standard", 4.1, date(2025, 1, 5))
     engine.seed_external_rating("syn-a", D, second, replace_unplayed_seed=True)
     snap = _json(engine)
-    assert _ratings(snap)["mixed_doubles"]["initial_source_date"] == "2025-01-01"
+    assert _ratings(snap)["mixed_doubles"]["initial_source_date"] == "2025-01-05"
+    _ratings(snap)["mixed_doubles"].update(
+        rating=4.0, initial_rating=4.0, rd_as_of="2025-01-01", initial_source_date="2025-01-01"
+    )
     assert _ratings(snap)["doubles"]["initial_source_date"] == "2025-01-05"
     assert RatingEngine.from_snapshot(snap).to_snapshot() == snap
 
