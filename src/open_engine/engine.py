@@ -39,10 +39,13 @@ Published behavior notes:
   `team_size * imbalance` to the pool's total rating (twice the value in
   doubles). Each replay totals it per rating format in
   `ReplayInfo.net_rating_created`, from the unrounded changes, a category
-  match adding to its own format and, through its parent update, to
-  doubles. The backend should store and monitor that total, and add
-  `team_size * imbalance` of each live MatchResult (and its parent)
-  between replays. The engine reports the total but does not limit it.
+  match adding to its own format and, when category_feeds_parent is on
+  and its parent update counts, to doubles. The backend should store and
+  monitor that total. Between replays it can add `team_size * imbalance`
+  of each live MatchResult (and its parent); that running total is
+  approximate, since imbalance is rounded to 5 places, and the next
+  replay gives the exact total. The engine reports the total but does
+  not limit it.
 - Match performance is team A's share of all points across the match's
   games, blended with the match result by Config.win_weight:
   `(1 - win_weight) * point_share + win_weight * (1 if A won else 0)`.
@@ -117,8 +120,9 @@ Published behavior notes:
   established at any reliability. A category state derived from overall
   doubles starts its count at 0, as it starts matches_played at 0. With
   a minimum of 0 the rule is reliability alone. Imported
-  reliability never counts, and it is measured at the same reference date
-  as reliability, so it lapses with inactivity. Under the defaults, a new
+  reliability never counts toward established, and established is
+  measured at the same reference date as reliability, so it lapses with
+  inactivity. Under the defaults, a new
   player with no imported rating, playing one match a week with varied
   partners and opponents, becomes established after about 10 to 13
   tournament, league, or recreational verified matches (10 tournament, 11
@@ -293,6 +297,12 @@ Production notes:
   a loss as a forfeit, retirement, or unfinished match to avoid it. The
   engine cannot tell; the backend must. The engine does not record which
   team forfeited or retired, so the backend stores that.
+- Set match_type from organizer, league, or club provenance, and never
+  let whoever submits a match choose a verified type (tournament, league,
+  or rec_verified). match_type sets a match's weight and decides whether
+  it counts toward PlayerSummary.established, so a self-reported match
+  relabeled as verified would let players report their way to
+  established. The engine cannot tell; the backend must.
 - Assign match_ids in the backend. A party that can choose a match_id
   can submit a non-completed match under it first, and then the real
   match with that id never counts live (replay raises
@@ -553,7 +563,9 @@ class Config:
     can be a dict key or a set member. to_dict() and from_dict() store and
     load a config.
 
-    Only the mapping and format fields are type-checked so far. A scalar
+    The mapping and format fields, established_min_verified_matches (a
+    nonnegative int, not a bool), and reject_content_duplicates (a bool)
+    are type-checked; other scalar fields are not yet. Such a scalar
     field given a value JSON cannot hold (a Decimal, say) makes
     fingerprint(), ==, and hash() raise TypeError, and a non-finite float
     is written as NaN or Infinity, which strict JSON rejects.
@@ -1339,8 +1351,9 @@ class PlayerSummary:
     verified_matches_played (counted tournament, league, and recreational
     verified matches) is at least Config.established_min_verified_matches.
     Self-reported matches never count toward that minimum. Imported
-    reliability never counts toward it, and it is measured at the same
-    reference date as reliability, so it lapses with inactivity. A recently
+    reliability never counts toward established, and established is
+    measured at the same reference date as reliability, so it lapses with
+    inactivity. A recently
     captured imported rating can reach the threshold in fewer OPEN matches
     because of its lower starting RD; see the module docstring for counts.
     It is a label only and changes no rating. A rating that is not
@@ -1392,20 +1405,23 @@ class ReplayInfo:
     counted updates added to that pool (negative when they removed it):
     the sum over every counted update of the unrounded rating changes of
     every player in it, a frozen player adding 0.0. A category match adds
-    its category update to its own format and its overall doubles update,
-    when that counts, to doubles. Each player moves by their own K, so it
-    can be nonzero when K differs between the teams or a player is
-    clamped or frozen, and colluding accounts can grow it on purpose. It is
+    its category update to its own format and, when category_feeds_parent
+    is on and its overall doubles update counts, that update to doubles.
+    Each player moves by their own K, so it can be nonzero when K differs
+    between the teams or a player is clamped or frozen, and colluding
+    accounts can grow it on purpose. It is
     stored as a read-only mapping with a key for every RatingFormat in
     definition order (0.0 where nothing counted). Building a ReplayInfo
     copies the mapping given: a key may be a RatingFormat or its str
     value, a missing format gets 0.0, and a value that is not a mapping,
     an unknown key, or a format given twice raises SnapshotError (a
-    ReplayInfo is built only by replay and by snapshot loading). Updates are added in
-    ledger order, and a resume continues from the checkpoint's total, so
+    ReplayInfo is built only by replay and by snapshot loading). Updates
+    are added in ledger order, and a resume continues from the checkpoint's total, so
     a resume gives the same floats as a full replay. Live updates after
-    the replay do not change it; the backend adds team_size * imbalance
-    of each live MatchResult (and its parent) to follow them.
+    the replay do not change it. The backend can add team_size *
+    imbalance of each live MatchResult (and its parent) to follow them;
+    that is approximate (imbalance is rounded to 5 places), and the next
+    replay gives the exact total.
     """
 
     as_of: date
@@ -2857,8 +2873,8 @@ class RatingEngine:
         and max_rating, RD within rd_min and rd_max, an imported
         reliability between 0 and 100, nonnegative int counts no larger
         than 2**63 - 1, replay_info present exactly when calculated_as_of
-        is and consistent with it (its net_rating_created a finite float
-        for every RatingFormat, 0.0 for every format when matches_counted
+        is and consistent with it (its net_rating_created a finite float,
+        not a negative zero, for every RatingFormat, 0.0 for every format when matches_counted
         is 0 and for a format in which no player has a played state),
         self-reported matchups of two disjoint
         teams of the format's size, content keys and ledger digests of 64
@@ -2963,8 +2979,9 @@ class RatingEngine:
         - rating, rd, initial_rating, and an imported reliability are ints
           or finite floats (not bool), the counts are ints, partners and
           opponents are dicts, and dates are dates.
-        - No matches, last_played, partners, opponents, or live updates, and
-          inherited_live_updates is 0.
+        - No matches, last_played, partners, opponents, or live updates:
+          matches_played, verified_matches_played,
+          live_updates_since_replay, and inherited_live_updates are 0.
         - rating and initial_rating are within Config.min_rating and
           Config.max_rating.
         - A provisional state (no initial_source_date) has RD new_player_rd,
