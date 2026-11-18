@@ -226,7 +226,13 @@ TAMPERED: list[tuple[str, Callable[[Snap], None], str]] = [
         r"rd_as_of is after calculated_as_of",
     ),
     ("future partner", _future_partner, r"partners\['syn-b'\] is after calculated_as_of"),
-    ("future log date", _future_log, r"dates\[0\] is after calculated_as_of"),
+    # A logged date names players who moved or were frozen on or after it,
+    # so a future one is caught by that rule (#102) before the as_of check.
+    (
+        "future log date",
+        _future_log,
+        r"names 'syn-a', who has no singles state that a match on 2025-03-02",
+    ),
     (
         "considered count",
         _set_info(matches_considered=5),
