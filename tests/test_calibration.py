@@ -325,6 +325,7 @@ SEARCH_ARGUMENT_CASES = [
     pytest.param({"low": 1e308, "high": 1.7e308}, "must be finite", id="sum-overflow"),
     pytest.param({"low": -1.7e308, "high": -1.0}, "must be finite", id="double-low-overflow"),
     pytest.param({"low": 1.0, "high": 1.7e308}, "must be finite", id="double-high-overflow"),
+    pytest.param({"low": 1.0, "high": 1.5e307}, "must be finite", id="grid-overflow"),
     pytest.param({"low": -math.inf}, "low and high must be finite", id="low-minus-inf"),
     pytest.param({"tolerance": 0.0}, BAD_TOLERANCE, id="tol-zero"),
     pytest.param({"tolerance": -1.0}, BAD_TOLERANCE, id="tol-neg"),
@@ -341,8 +342,8 @@ def _no_prediction_work(*args: object, **kwargs: object) -> list[PrequentialPred
 def test_fit_scale_rejects_bad_search_arguments(
     monkeypatch: pytest.MonkeyPatch, kwargs: dict[str, float], message: str
 ) -> None:
-    # tolerance <= 0 used to hang the golden-section loop, and low >= high
-    # returned a fit from a meaningless search range.
+    # tolerance <= 0 could hang the golden-section loop, and low >= high
+    # could return a fit from a meaningless search range.
     monkeypatch.setattr(engine_module, "prequential_predictions", _no_prediction_work)
     with pytest.raises(EvaluationError, match=message):
         fit_scale([], scoring=ScoringType.RALLY, **kwargs)
@@ -360,8 +361,8 @@ def test_fit_win_calibration_rejects_bad_search_arguments(
 def test_fit_scale_ends_when_tolerance_is_below_float_spacing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A positive tolerance below the float spacing near the optimum used to
-    # hang: the bracket stops shrinking before it gets that narrow.
+    # A positive tolerance below the float spacing near the optimum could
+    # hang: the bracket can stop shrinking before it gets that narrow.
     monkeypatch.setattr(engine_module, "prequential_predictions", lambda *a, **k: [])
 
     def fake_report(predictions: object, cfg: Config, scoring: ScoringType) -> tuple[None, float]:
