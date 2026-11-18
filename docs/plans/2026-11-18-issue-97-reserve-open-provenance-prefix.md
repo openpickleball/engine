@@ -62,3 +62,5 @@ Residual: an `open_parent:<parent>` state with an `initial_source_date` and none
 - Not done: no uniqueness rule for evidence references; no `category_feeds_parent` requirement on `open_parent:` states.
 
 ## Proof
+
+Red tests (`tests/test_reserved_provenance.py`) on 47274fd: 77 failed, 39 passed. The failures: 54 `DID NOT RAISE InvalidSeedError` (reserved sources and blank evidence references in `seed_external_rating` and in seeds through `add_player`, `replay`, and both `prequential_predictions` modes), 5 `DID NOT RAISE PlayerError` (`attach_external_id`), 14 `DID NOT RAISE SnapshotError` (`from_snapshot`, `replay(from_snapshot=...)`, `to_snapshot`), and 4 regex mismatches where an `open_parent:doubles` seed state with an external player id fails only the later link check today. The 39 that pass are the criterion 4 and 7 tests (engine shapes accepted and round tripped), the blank-before-prefix order, sources without the exact prefix, a repeated evidence reference, and the #79 refusal for an engine-derived state.
