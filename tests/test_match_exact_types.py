@@ -21,6 +21,7 @@ import pytest
 
 from open_engine import (
     InvalidMatchError,
+    LedgerConflictError,
     Match,
     MatchType,
     RatingEngine,
@@ -28,6 +29,7 @@ from open_engine import (
     evaluate,
     fit_scale,
     fit_win_calibration,
+    ledger_order,
     prequential_predictions,
     replay,
 )
@@ -265,3 +267,47 @@ def test_plain_inputs_still_record() -> None:
     )
     assert engine.record(match).counted
     assert engine.record(_plain("syn-m2", day=11, confirmed_by=frozenset())).counted
+
+
+def _shadowed_validate() -> Match:
+    """An exact Match whose instance dict hides validate, with a blank id."""
+    match = _plain(Blank(" "))
+    match.__dict__["validate"] = lambda: None
+    return match
+
+
+def test_record_ignores_an_instance_validate() -> None:
+    engine = RatingEngine()
+    before = _state(engine)
+    with pytest.raises(InvalidMatchError, match="match_id is required"):
+        engine.record(_shadowed_validate())
+    assert _state(engine) == before
+
+
+@pytest.mark.parametrize("mode", ["live", "scheduled"])
+def test_ledger_entry_points_ignore_an_instance_validate(mode: str) -> None:
+    ledger = [_plain("syn-m0", day=1), _shadowed_validate()]
+    with pytest.raises(InvalidMatchError, match="match_id is required"):
+        replay(ledger, as_of=AS_OF)
+    with pytest.raises(InvalidMatchError, match="match_id is required"):
+        prequential_predictions(ledger, mode=mode)  # type: ignore[arg-type]
+
+
+def test_repeated_rows_compare_every_field_even_when_fields_are_shadowed() -> None:
+    """Hiding a field from dataclasses.fields on the instance must not merge rows."""
+    a = _plain(games=((11, 2),))
+    b = _plain(games=((2, 11),))
+    for match in (a, b):
+        shown = {k: v for k, v in Match.__dataclass_fields__.items() if k != "games"}
+        match.__dict__["__dataclass_fields__"] = shown
+    with pytest.raises(LedgerConflictError, match="syn-m1"):
+        replay([a, b], as_of=AS_OF)
+    with pytest.raises(LedgerConflictError, match="syn-m1"):
+        replay([b, a], as_of=AS_OF)
+
+
+def test_ledger_order_rejects_a_match_subclass() -> None:
+    with pytest.raises(InvalidMatchError, match="match must be a Match, not FlipMatch"):
+        ledger_order(_flip())
+    with pytest.raises(InvalidMatchError, match="match must be a Match, not str"):
+        ledger_order("syn-m1")  # type: ignore[arg-type]
