@@ -147,7 +147,7 @@ def test_snapshot_carries_sorted_reserved_ids() -> None:
     eng.record(FORFEIT)
     snapshot = eng.to_snapshot()
     assert snapshot["reserved_match_ids"] == ["syn-m1", "syn-m2"]
-    assert snapshot["snapshot_version"] == 7
+    assert snapshot["snapshot_version"] == 8
 
 
 def test_snapshot_of_a_fresh_engine_has_no_reserved_ids() -> None:

@@ -185,5 +185,5 @@ def test_considered_row_must_be_processed_or_reserved(source: Callable[[], Snap]
 def test_version_6_snapshot_is_refused() -> None:
     snap = _live()
     snap["snapshot_version"] = 6
-    with pytest.raises(SnapshotError, match=r"snapshot_version must be 7, not 6"):
+    with pytest.raises(SnapshotError, match=r"snapshot_version must be 8, not 6"):
         RatingEngine.from_snapshot(snap)
