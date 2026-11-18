@@ -99,8 +99,9 @@ Published behavior notes:
 - player_summary measures inactivity, RD, and reliability at a reference
   date. With no as_of, it is the later of the last replay date
   (calculated_as_of) and the player's last match. So a stale player is
-  measured at the replay date and loses reliability as replays move
-  forward, and a player with live matches since is measured at their last
+  measured at the replay date and loses reliability from RD and variety
+  as replays move forward (network connectivity can still change; see
+  its note), and a player with live matches since is measured at their last
   match. Players in one engine can be measured at different dates. With no
   as_of on an engine that was never replayed, it raises
   ReferenceDateError, as it does for an as_of that is not a plain date.
@@ -122,7 +123,8 @@ Published behavior notes:
   a minimum of 0 the rule is reliability alone. Imported
   reliability never counts toward established, and established is
   measured at the same reference date as reliability, so it lapses with
-  inactivity. Under the defaults, a new
+  inactivity unless network connectivity changes (see its note). Under
+  the defaults, a new
   player with no imported rating, playing one match a week with varied
   partners and opponents, becomes established after about 10 to 13
   tournament, league, or recreational verified matches (10 tournament, 11
@@ -156,43 +158,54 @@ Published behavior notes:
   the reference date, over Config.diversity_window_days, from the
   partners and opponents stored in each rating state (no other data, so
   a snapshot or a resume carries it and it needs no snapshot field). Two
-  players are in contact when either one's state lists the other with a
-  date in the window. The main network is the largest group of players
-  linked by contact, when exactly one group is largest; with a tie
-  there is none. Two players in contact are tied when they share at
-  least Config.connectivity_min_shared_contacts (4) contacts and each of
-  them is in contact with those players on at least
-  Config.connectivity_min_contact_days (3) distinct dates. A doubles
-  match between two groups with no earlier contact gives each pair
-  across them at most 2 shared contacts, so at the defaults it ties no
-  one across them, and it adds at most 3 outside players, on one date,
-  to a pool. It can still change which group is the main network. A
-  pool is a group linked
-  by ties; a player with no tie is a pool of one. A player is connected
-  when they are in the main network and their pool is them alone, holds
-  more than half the main network's players, or has at least
-  Config.connectivity_min_outside_players (8) players outside it in
-  contact, on at least connectivity_min_contact_days distinct contact
-  dates. A pool in a group that no match links to the main network is
-  never connected. A player who is not connected has PlayerSummary.reliability at most
-  Config.connectivity_reliability_cap (50.0, below the default
-  established threshold), so with the defaults they are not
-  established; None turns the cap off. The cap changes the displayed
-  reliability only: `reliability()` gives the value from RD and variety,
-  and no rating, RD, K, prediction, evaluate, prequential_predictions,
-  fit_scale, or fit_win_calibration output reads either. Limits: a pool
-  that holds more than half the main network, or the whole ledger, is
-  the network's own scale, which no ledger can place on another; pools
-  that play each other but not the rest of the main network count each
-  other's players as outside contacts; a state keeps only the last date
-  per contact, so repeated contact with the same player counts one date;
-  contacts leave the window as the reference date moves on, so a player
-  can become connected, and their reliability rise up to the value from
-  RD and variety, when the groups that outnumbered their pool drop out
-  of the window; and, as for variety, an as_of earlier than the stored
-  state does not rebuild past contacts. A summary for a format the player has no state
-  in is measured as if the unplayed state a seed would store were
-  stored: a player with no contacts.
+  players with a state in the format are in contact when either one's
+  state lists the other with a date in the window. A group is a set of
+  players linked by contact, and it is a main network when it has at
+  least half as many players as the largest group, so two separate
+  networks of similar size are each a main network, and a few new
+  accounts change the label only for a group near half the size of the
+  largest. Two players in contact are
+  tied when they share at least Config.connectivity_min_shared_contacts
+  (4) contacts and each of them is in contact with those shared players
+  on at least Config.connectivity_min_contact_days (3) distinct dates.
+  A pool is a set of players linked by ties; a player with no tie is a
+  pool of one. The pool's fringe is every player outside it in contact
+  with it whose own contacts are all in the pool or in contact with it,
+  such as a drop-in who met only the pool. Its outside players are the
+  other players in contact with it. A player is connected when they
+  have a contact in the window, their group is a main network, and
+  either the pool with its fringe holds more than half the group, or
+  the pool has at least Config.connectivity_min_outside_players (8)
+  outside players on at least connectivity_min_contact_days distinct
+  contact dates with them. A player who is not connected has
+  PlayerSummary.reliability at most Config.connectivity_reliability_cap
+  (50.0, below the default established threshold; the cap is shown
+  rounded down to 1 place), so under the defaults they are not
+  established. None turns the cap off. The cap changes the displayed
+  reliability only: `reliability()` gives the value from RD and
+  variety, and no rating, RD, K, prediction, evaluate,
+  prequential_predictions, fit_scale, or fit_win_calibration output
+  reads either. Limits: a pool that with its fringe holds more than
+  half its group is that group's own scale, which no ledger can place
+  on another, so a club that outnumbers the players it met is not
+  capped and can leave them capped; pools that play each other but not
+  the rest of their group count each other's players as outside
+  players; accounts the backend has not verified can pose as outside
+  players if they also play players the pool never met, and a cluster
+  of accounts more than twice the size of a real network makes that
+  network no longer a main network; a state keeps only the last date
+  per contact, so repeated contact with the same player counts one
+  date; contacts leave the window as the reference date moves on, so
+  connectivity can change with no new match, and a player can become
+  connected, with reliability rising up to the value from RD and
+  variety, when the groups that outnumbered theirs drop out of the
+  window; and, as for variety, an as_of earlier than the stored state
+  does not rebuild past contacts. A summary for a format the player has
+  no state in is measured as if the unplayed state a seed would store
+  were stored: a player with no contacts, so not connected. The result
+  for one format and reference date is rebuilt after each state change,
+  which costs about the sum over players of their contacts times their
+  contacts' contacts.
 - Ledger order: `replay` and `prequential_predictions` sort matches by
   `played_on` first. Within one `played_on` date, untimed matches come
   first (by `sequence`, then `match_id`), then timed matches (by the UTC
@@ -743,14 +756,14 @@ class Config:
     # date. Two players in contact are tied when they share at least
     # connectivity_min_shared_contacts partners or opponents and each of
     # them reached those players on at least connectivity_min_contact_days
-    # distinct dates; a pool is a
-    # connected group of ties. A player is connected when they are in the
-    # main network (the one largest group of players linked by contact) and
-    # their pool is themselves alone, holds more than half the main
-    # network, or has played at least connectivity_min_outside_players
-    # players outside it on at least connectivity_min_contact_days dates.
-    # PlayerSummary.reliability of a player who is not connected is at most
-    # connectivity_reliability_cap; None turns the cap off. A label only: it
+    # distinct dates; a pool is a set of players linked by ties. A player
+    # is connected when their group of players linked by contact has at
+    # least half as many players as the largest group and either the pool
+    # with its fringe (drop-ins who met only the pool) holds more than half
+    # the group or the pool has at least connectivity_min_outside_players
+    # other outside players on at least connectivity_min_contact_days
+    # dates. PlayerSummary.reliability of a player who is not connected is
+    # at most connectivity_reliability_cap; None turns the cap off. A label only: it
     # changes no rating, prediction, or evaluation. The defaults are
     # declared choices, not calibrated ones.
     connectivity_reliability_cap: float | None = 50.0
@@ -1415,34 +1428,49 @@ class MatchResult:
 @dataclass(frozen=True)
 class NetworkConnectivity:
     """
-    Whether a player's pool connects to the main network, in one format.
+    Whether a player's pool connects to the wider network, in one format.
 
     Measured over Config.diversity_window_days at the summary's reference
     date, from the partners and opponents stored in each rating state.
-    Two players are in contact when either one's state lists the other
-    with a date in the window. The main network is the largest group of
-    players linked by contact, when exactly one group is largest. Two
-    players in contact are tied when they share at least
-    Config.connectivity_min_shared_contacts contacts and each of them is
-    in contact with those players on at least
-    Config.connectivity_min_contact_days distinct dates. A pool is a group
-    linked by ties; a player with no tie is a pool of one.
+    Two players with a state in the format are in contact when either
+    one's state lists the other with a date in the window. A group is a
+    set of players linked by contact. A group is a main network when it
+    has at least half as many players as the largest group, so two
+    separate networks of similar size are each a main network.
 
-    connected is True when in_main_network is True and the pool is the
-    player alone, holds more than half the main network's players, or has
-    at least Config.connectivity_min_outside_players outside players over
-    at least Config.connectivity_min_contact_days outside days. When it is
-    False, PlayerSummary.reliability is at most
+    Two players in contact are tied when they share at least
+    Config.connectivity_min_shared_contacts contacts and each of them is
+    in contact with those shared players on at least
+    Config.connectivity_min_contact_days distinct dates. A pool is a set
+    of players linked by ties; a player with no tie is a pool of one. The
+    pool's fringe is every player outside the pool who is in contact with
+    it and whose own contacts are all in the pool or in contact with it:
+    a drop-in who met only the pool and its other contacts. The pool's
+    outside players are the other players outside it in contact with it,
+    and outside_days counts the distinct contact dates between the pool
+    and them.
+
+    connected is True when the player has a contact in the window, their
+    group is a main network, and either the pool with its fringe holds
+    more than half the group's players, or the pool has at least
+    Config.connectivity_min_outside_players outside players on at least
+    Config.connectivity_min_contact_days outside days. When it is False,
+    PlayerSummary.reliability is at most
     Config.connectivity_reliability_cap. It is a label only and changes no
     rating.
     """
 
     pool_size: int  # players in the pool, this player included
-    outside_players: int  # players outside the pool that its players are in contact with
-    outside_days: int  # distinct contact dates with those outside players
-    network_size: int  # players in the main network, 0 when no group is largest alone
-    in_main_network: bool
+    fringe_players: int  # drop-ins who met only the pool and its other contacts
+    outside_players: int  # other players outside the pool in contact with it
+    outside_days: int  # distinct contact dates between the pool and its outside players
+    group_size: int  # players linked to this player by contact, this player included
+    in_main_network: bool  # the group has at least half as many players as the largest
     connected: bool
+
+
+# Connectivity results kept per engine, by (format, reference date).
+_CONNECTIVITY_CACHE_SIZE = 16
 
 
 class _UnionFind:
@@ -1476,7 +1504,12 @@ class _UnionFind:
 def _contact_graph(
     players: Mapping[str, Player], rating_format: RatingFormat, cutoff: date
 ) -> dict[str, dict[str, date]]:
-    """Each player with a state in the format, to their contacts dated on or after cutoff."""
+    """
+    Each player with a state in the format, to their contacts dated on or after cutoff.
+
+    Only players with a state in the format are nodes, and a contact's
+    date is the later of the two states' dates for each other.
+    """
     graph: dict[str, dict[str, date]] = {}
     for pid in sorted(players):
         if rating_format in players[pid].ratings:
@@ -1486,11 +1519,10 @@ def _contact_graph(
         for contacts in (state.partners, state.opponents):
             for other in sorted(contacts):
                 on = contacts[other]
-                if other == pid or on < cutoff:
+                if other == pid or other not in graph or on < cutoff:
                     continue
                 for a, b in ((pid, other), (other, pid)):
-                    row = graph.setdefault(a, {})
-                    row[b] = _latest(row.get(b), on)
+                    graph[a][b] = _latest(graph[a].get(b), on)
     return graph
 
 
@@ -1498,17 +1530,19 @@ def _network_connectivity(
     players: Mapping[str, Player], rating_format: RatingFormat, reference: date, cfg: Config
 ) -> tuple[dict[str, NetworkConnectivity], int]:
     """
-    NetworkConnectivity of every player in the format's contact graph, and the main network size.
+    NetworkConnectivity of every player with a state in the format, and the largest group size.
 
-    Every loop runs over sorted ids, and every group is a union-find with
-    its smallest id as root, so the result depends only on the stored
-    states, the config, and the reference date.
+    Every loop runs over sorted ids, every group is a union-find with its
+    smallest id as root, and sets are read only for their sizes, so the
+    result depends only on the stored states, the config, and the
+    reference date.
     """
     cutoff = reference - timedelta(days=cfg.diversity_window_days)
     graph = _contact_graph(players, rating_format, cutoff)
     ids = sorted(graph)
     network = _UnionFind(ids)
     pools = _UnionFind(ids)
+    minimum_days = cfg.connectivity_min_contact_days
     for u in ids:
         row = graph[u]
         for v in sorted(row):
@@ -1520,52 +1554,50 @@ def _network_connectivity(
             if len(shared) < cfg.connectivity_min_shared_contacts:
                 continue
             # Each of them reached the shared contacts on enough dates, so a
-            # one-day event (all of one side's dates equal) never ties.
-            minimum = cfg.connectivity_min_contact_days
-            if len({row[w] for w in shared}) >= minimum and (
-                len({other[w] for w in shared}) >= minimum
+            # visitor for one day (all of their dates equal) never ties.
+            if len({row[w] for w in shared}) >= minimum_days and (
+                len({other[w] for w in shared}) >= minimum_days
             ):
                 pools.union(u, v)
 
-    sizes = network.sizes()
-    largest = max(sizes.values(), default=0)
-    leaders = [root for root in sorted(sizes) if sizes[root] == largest]
-    main = leaders[0] if len(leaders) == 1 else None
-    main_size = largest if main is not None else 0
-
+    group_sizes = network.sizes()
+    largest = max(group_sizes.values(), default=0)
     members: dict[str, list[str]] = {}
     for pid in ids:
         members.setdefault(pools.find(pid), []).append(pid)
     out: dict[str, NetworkConnectivity] = {}
     for root in sorted(members):
-        group = members[root]
-        outside: set[str] = set()
-        outside_days: set[date] = set()
-        for u in group:
-            for w, on in graph[u].items():
-                if pools.find(w) != root:
-                    outside.add(w)
-                    outside_days.add(on)
-        size = len(group)
-        in_main = main is not None and network.find(root) == main
-        connected = in_main and (
-            size == 1
-            or 2 * size > main_size
-            or (
-                len(outside) >= cfg.connectivity_min_outside_players
-                and len(outside_days) >= cfg.connectivity_min_contact_days
+        pool = members[root]
+        in_pool = set(pool)
+        boundary = {w for u in pool for w in graph[u] if w not in in_pool}
+        near = in_pool | boundary
+        fringe = {w for w in boundary if all(x in near for x in graph[w])}
+        outside = boundary - fringe
+        outside_days = {graph[u][w] for u in pool for w in graph[u] if w in outside}
+        group_size = group_sizes[network.find(root)]
+        in_main = 2 * group_size >= largest
+        connected = (
+            (len(pool) > 1 or bool(boundary))
+            and in_main
+            and (
+                2 * (len(pool) + len(fringe)) > group_size
+                or (
+                    len(outside) >= cfg.connectivity_min_outside_players
+                    and len(outside_days) >= minimum_days
+                )
             )
         )
-        for pid in group:
+        for pid in pool:
             out[pid] = NetworkConnectivity(
-                pool_size=size,
+                pool_size=len(pool),
+                fringe_players=len(fringe),
                 outside_players=len(outside),
                 outside_days=len(outside_days),
-                network_size=main_size,
+                group_size=group_size,
                 in_main_network=in_main,
                 connected=connected,
             )
-    return out, main_size
+    return out, largest
 
 
 @dataclass(frozen=True)
@@ -1594,7 +1626,7 @@ class PlayerSummary:
     Self-reported matches never count toward that minimum. Imported
     reliability never counts toward established, and established is
     measured at the same reference date as reliability, so it lapses with
-    inactivity. A recently
+    inactivity unless connectivity changes. A recently
     captured imported rating can reach the threshold in fewer OPEN matches
     because of its lower starting RD; see the module docstring for counts.
     It is a label only and changes no rating. A rating that is not
@@ -3880,7 +3912,8 @@ class RatingEngine:
         for a category state derived from overall doubles, the parent's live
         updates already in the rating it copied (see PlayerSummary).
 
-        It never changes engine state. For a known player with no state in
+        It never changes engine state; it only fills a private cache of
+        connectivity results, derived from the stored states. For a known player with no state in
         the format, it reports the starting state the player's first match in
         that format would use if played now (see state), without storing it.
 
@@ -3908,7 +3941,11 @@ class RatingEngine:
         earned = reliability(state, cfg, reference)
         cap = cfg.connectivity_reliability_cap
         if cap is not None and not connectivity.connected:
-            earned = min(earned, round(float(cap), 1))
+            # The cap as displayed, 1 place, never above the cap itself.
+            shown = round(float(cap), 1)
+            if shown > cap:
+                shown = round(shown - 0.1, 1)
+            earned = min(earned, shown)
 
         # Imported reliability is shown, separately, only while it is fresh,
         # higher than what OPEN has earned, and within the carry match limit.
@@ -3958,24 +3995,24 @@ class RatingEngine:
         """The player's NetworkConnectivity, from the cache or a new build of the format."""
         key = (rating_format, reference)
         if key not in self._connectivity:
+            if len(self._connectivity) >= _CONNECTIVITY_CACHE_SIZE:
+                self._connectivity.clear()
             self._connectivity[key] = _network_connectivity(
                 self.players, rating_format, reference, self.cfg
             )
-        found, main_size = self._connectivity[key]
+        found, largest = self._connectivity[key]
         if player_id in found:
             return found[player_id]
         # No stored state: measure the unplayed state a seed would store, a
-        # player with no contacts. Alone in an empty format it is the main
-        # network. Next to other players it is outside the main network, and
-        # when the largest group is a single player it ties with it.
-        alone = not found
+        # player with no contacts and a group of one.
         return NetworkConnectivity(
             pool_size=1,
+            fringe_players=0,
             outside_players=0,
             outside_days=0,
-            network_size=1 if alone else (0 if main_size == 1 else main_size),
-            in_main_network=alone,
-            connected=alone,
+            group_size=1,
+            in_main_network=2 >= max(largest, 1),
+            connected=False,
         )
 
 
