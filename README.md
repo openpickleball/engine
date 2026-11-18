@@ -174,6 +174,8 @@ A match moves ratings by how the result compared with the expectation.
 
 `Match.status` says how a match ended. It is a `MatchStatus` and defaults to `COMPLETED`. A status that is not a `MatchStatus` member, such as the plain text `"forfeit"` or `None`, raises `InvalidMatchError`.
 
+The other `Match` fields are checked the same way. `rating_format` must be a `RatingFormat` and `match_type` a `MatchType`, so a str such as `"tournament"` raises `InvalidMatchError` even though it equals a member's value. `team_a` and `team_b` must be tuples, `confirmed_by` a set or frozenset, `sequence` and `best_of` ints (not a `bool` or a float), `game_format` a `GameFormat`, and `played_at` a `datetime` or `None`.
+
 - `COMPLETED`: at least one game and a decided winner. Nothing changes for these matches.
 - `FORFEIT`: the match was not played, so it must have no games.
 - `RETIRED`: a player stopped, for example through injury, before a winner was decided.
