@@ -30,7 +30,8 @@ Check the seed's own `external_ids`. A rating state with `initial_external_playe
   - `_snap_player`: after `_check_inherited_live_updates` (so existing derived-state messages keep precedence), for each format in sorted order with `p = f"{path}.ratings.{fmt.value}"`: `SnapshotError(f"{p}.initial_source must not be blank")`; `SnapshotError(f"{p}.initial_external_player_id must be null or not blank")`; `SnapshotError(f"{p}.initial_external_player_id must be linked in {path}.external_ids under initial_source")`.
   - Docstrings: `add_player` seed rules list, `seed_external_rating`, `from_snapshot`, and the module docstring's `InvalidSeedError` note.
 - `README.md`: the `InvalidSeedError` bullet (blank external source or id in `seed_external_rating`, and seed provenance) and the snapshot schema's "Identities follow the seed and link rules" sentence.
-- `CHANGELOG.md`: a `**Breaking:**` entry under `### Security` in `## [Unreleased]`, with a "Migration:" note.
+- `README.md` also: the `PlayerError` bullet drops the whitespace-only source or id case for `seed_external_rating`, which now raises `InvalidSeedError`.
+- `CHANGELOG.md`: a `**Breaking:**` entry under `### Security` in `## [Unreleased]`, with a "Migration:" note. Also a closing sentence on the issue #52 entry under `### Changed`, whose `seed_external_rating` rules the new entry replaces, so the unreleased notes do not contradict each other.
 
 ## Order of work
 
