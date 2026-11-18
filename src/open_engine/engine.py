@@ -160,7 +160,7 @@ Published behavior notes:
   `player_summary` call with no date to measure at or with an as_of that
   is not a plain date.
 - Snapshots and checkpoints: `RatingEngine.to_snapshot()` gives the whole
-  engine state as JSON-safe data (schema version 4) with sorted keys and
+  engine state as JSON-safe data (schema version 5) with sorted keys and
   lists, and `RatingEngine.from_snapshot` loads it back after validating
   every key, type, and range and checking the config version and
   fingerprint. A replay's snapshot is a checkpoint:
@@ -226,7 +226,8 @@ Published behavior notes:
   directly and once through its `parent` update. `parent` has
   `possible_duplicate_of` None, so read the top-level field.
 - `record` validates every match first. A valid match whose `match_id` was
-  already processed returns a result that is not counted, with
+  already processed, or reserved by a match that was not completed,
+  returns a result that is not counted, with
   `RejectionReason.DUPLICATE_MATCH_ID`, instead of raising. A match with
   the same content as an earlier counted match under another match_id is
   flagged or, by config, rejected (see the note on likely duplicates).
@@ -237,10 +238,15 @@ Published behavior notes:
   format, and no decided winner, so in a best of 1 they have no games; a
   partial game is not recorded. A match that is not completed is never
   rated: `record` returns `RejectionReason.MATCH_NOT_COMPLETED` after the
-  match_id check (a processed match_id still gets DUPLICATE_MATCH_ID) and
-  changes nothing, so its match_id is not marked processed and a later
-  completed match with that id can count live. The engine does not check
-  that the later row is the same match: different players count too.
+  match_id check (a processed or reserved match_id gets
+  DUPLICATE_MATCH_ID). It changes no rating, count, or content key, and
+  is not marked processed, but it reserves its match_id: every later
+  `record` call for a match with that id that does not raise returns
+  DUPLICATE_MATCH_ID, completed or not, with the same players or not.
+  That matches replay, where a second row with the id is a conflict or
+  collapses into the first. A live reservation clears the snapshot's
+  resumable mark. A forfeit relabeled as completed needs a new match_id
+  live.
   `replay` accepts such a row: it counts toward
   `ReplayInfo.matches_considered`, not `matches_counted`. A full replay
   gives each player the same rating states as a full replay of the
@@ -927,8 +933,9 @@ class Match:
     forfeit must have no games. A retired or incomplete match has zero or more
     finished games, each valid in game_format, and no decided winner; a
     partial game is not recorded. record never counts a match that is not
-    completed: after the match_id check (a processed match_id gets
-    DUPLICATE_MATCH_ID), it returns RejectionReason.MATCH_NOT_COMPLETED.
+    completed: after the match_id check (a processed or reserved match_id
+    gets DUPLICATE_MATCH_ID), it returns RejectionReason.MATCH_NOT_COMPLETED
+    and reserves the match_id, so a later match with it is a duplicate.
     """
 
     match_id: str
@@ -1188,7 +1195,8 @@ class RejectionReason(_StrEnum):
     Why record() did not count a match.
 
     MATCH_NOT_COMPLETED covers every MatchStatus other than COMPLETED; the
-    status itself is on the match.
+    status itself is on the match. DUPLICATE_MATCH_ID covers a match_id
+    already processed or reserved by a match that was not completed.
     """
 
     DUPLICATE_MATCH_ID = "duplicate_match_id"
@@ -1653,7 +1661,7 @@ def _validate_seed(player: Player, cfg: Config) -> None:
 # Snapshots
 # ---------------------------------------------------------------------------
 
-SNAPSHOT_VERSION = 4
+SNAPSHOT_VERSION = 5
 
 _TOP_KEYS = frozenset(
     {
@@ -1665,6 +1673,7 @@ _TOP_KEYS = frozenset(
         "replay_info",
         "players",
         "processed_match_ids",
+        "reserved_match_ids",
         "self_reported_log",
         "content_keys",
         "possible_duplicates",
@@ -1706,6 +1715,7 @@ class _Snapshot:
 
     players: dict[str, Player]
     processed_match_ids: set[str]
+    reserved_match_ids: set[str]
     self_reported_log: dict[MatchupKey, list[date]]
     content_keys: dict[str, str]
     possible_duplicates: dict[str, str]
@@ -2239,6 +2249,47 @@ def _snap_possible_duplicates(
     return duplicates
 
 
+def _check_reserved(
+    reserved: set[str],
+    processed: set[str],
+    duplicates: Mapping[str, str],
+    considered: Mapping[str, str] | None,
+) -> None:
+    """
+    Raise SnapshotError unless the reserved match ids fit the rest of the snapshot.
+
+    record checks both sets before it adds an id to either, so no reserved
+    id is processed. considered is the ledger digests of a resumable
+    snapshot, else None. A replay reserves only a row it considered, and
+    in one ledger a completed row and a non-completed row with the same id
+    conflict, so a reserved id is never a possible duplicate there. Live,
+    a copy rejected under reject_content_duplicates and then a
+    non-completed match reusing its id is both.
+    """
+    where = "snapshot.reserved_match_ids names"
+    for match_id in sorted(reserved):
+        if match_id in processed:
+            raise SnapshotError(f"{where} {match_id!r}, which is in processed_match_ids")
+        if considered is None:
+            continue
+        if match_id not in considered:
+            raise SnapshotError(f"{where} {match_id!r}, which is not in ledger_digests")
+        if match_id in duplicates:
+            raise SnapshotError(f"{where} {match_id!r}, which is a possible_duplicates key")
+
+
+def _snap_match_ids(value: object, path: str) -> set[str]:
+    """A list of non-blank str match ids with no repeats, read as a set."""
+    ids: set[str] = set()
+    for index, item in enumerate(_snap_list(value, path)):
+        item_path = f"{path}[{index}]"
+        match_id = _snap_id(item, item_path)
+        if match_id in ids:
+            raise SnapshotError(f"{item_path}: duplicate match id {match_id!r}")
+        ids.add(match_id)
+    return ids
+
+
 def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
     """Validate a snapshot against cfg and read it. Raises SnapshotError naming the bad value."""
     if not isinstance(snapshot, Mapping):
@@ -2278,14 +2329,8 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
         players[player.id] = player
         player_paths[player.id] = path
 
-    processed: set[str] = set()
-    ids = _snap_list(raw["processed_match_ids"], "snapshot.processed_match_ids")
-    for index, value in enumerate(ids):
-        path = f"snapshot.processed_match_ids[{index}]"
-        match_id = _snap_id(value, path)
-        if match_id in processed:
-            raise SnapshotError(f"{path}: duplicate match id {match_id!r}")
-        processed.add(match_id)
+    processed = _snap_match_ids(raw["processed_match_ids"], "snapshot.processed_match_ids")
+    reserved = _snap_match_ids(raw["reserved_match_ids"], "snapshot.reserved_match_ids")
 
     log: dict[MatchupKey, list[date]] = {}
     entries = _snap_list(raw["self_reported_log"], "snapshot.self_reported_log")
@@ -2330,10 +2375,12 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
         cfg.reject_content_duplicates,
         digests if resumable else None,
     )
+    _check_reserved(reserved, processed, possible_duplicates, digests if resumable else None)
 
     snap = _Snapshot(
         players,
         processed,
+        reserved,
         log,
         content_keys,
         possible_duplicates,
@@ -2364,6 +2411,11 @@ class RatingEngine:
         self.cfg = cfg or Config()
         self.players: dict[str, Player] = {}
         self.processed_match_ids: set[str] = set()
+        # match_id of each match record rejected as not completed. A later
+        # match with one of these ids is a duplicate, as in replay, where a
+        # second row with the id is a conflict or collapses into the first.
+        # Never in processed_match_ids.
+        self._reserved_match_ids: set[str] = set()
         self.self_reported_log: dict[MatchupKey, list[date]] = {}
         self.calculated_as_of: date | None = None
         self.replay_info: ReplayInfo | None = None
@@ -2410,7 +2462,7 @@ class RatingEngine:
 
     def to_snapshot(self) -> dict[str, object]:
         """
-        The engine's whole state as JSON-safe data (schema version 4).
+        The engine's whole state as JSON-safe data (schema version 5).
 
         json.dumps(snapshot, allow_nan=False) works with no custom encoder,
         and RatingEngine.from_snapshot rebuilds the engine from it, or from
@@ -2418,13 +2470,15 @@ class RatingEngine:
         every list in a fixed order, so the same state always gives the same
         text. Numbers keep their type: an int stays an int.
 
-        Keys: snapshot_version (4), engine_version (informational),
+        Keys: snapshot_version (5), engine_version (informational),
         config_version and config_fingerprint (of this engine's Config),
         calculated_as_of (ISO date or null), replay_info (null, or its
         fields with as_of as an ISO date), players (sorted by id: id,
         account_user_id, external_ids, and ratings by format value, each
         state with every RatingState field, dates as ISO text, and partners
         and opponents as id to ISO date), processed_match_ids (sorted),
+        reserved_match_ids (sorted ids of matches record rejected as not
+        completed, which a later match cannot reuse),
         self_reported_log (sorted by format then teams: rating_format,
         teams as two sorted id lists, and dates in stored order),
         content_keys (the content key digest of each counted match, see
@@ -2475,6 +2529,7 @@ class RatingEngine:
             "possible_duplicates": _sorted_dict(self.possible_duplicates.items()),
             "processed_match_ids": sorted(self.processed_match_ids, key=str),
             "replay_info": replay_info,
+            "reserved_match_ids": sorted(self._reserved_match_ids, key=str),
             "resumable": self._resumable,
             "self_reported_log": _log_form(self.self_reported_log),
             "snapshot_version": SNAPSHOT_VERSION,
@@ -2492,7 +2547,7 @@ class RatingEngine:
         cfg must be the Config the snapshot was taken under (default
         Config()): its version and fingerprint must equal the snapshot's.
         The whole snapshot is validated before anything is built: exactly
-        the schema's keys at every level, snapshot_version 4, dates as
+        the schema's keys at every level, snapshot_version 5, dates as
         YYYY-MM-DD text, non-blank str ids with no repeated player or match
         id, RatingFormat values as format keys, ratings within min_rating
         and max_rating, RD within rd_min and rd_max, an imported
@@ -2505,8 +2560,11 @@ class RatingEngine:
         match that is a content_keys value and whose own id is not one, a
         possible duplicate id that is a processed match id under the
         default config and is not one under reject_content_duplicates (and,
-        in a resumable snapshot, is a ledger_digests id), and a bool
-        resumable that is false without a replay.
+        in a resumable snapshot, is a ledger_digests id), reserved match
+        ids with no repeats and none in processed_match_ids (and, in a
+        resumable snapshot, each a ledger_digests id and not a
+        possible_duplicates key), and a bool resumable that is false
+        without a replay.
         Every state must be one the engine can produce: initial_rating
         within the rating bounds; an unplayed state with RD new_player_rd,
         external_seed_rd, or at least category_seed_rd, and no partners,
@@ -2536,6 +2594,7 @@ class RatingEngine:
         state = _read_snapshot(snapshot, engine.cfg)
         engine.players = state.players
         engine.processed_match_ids = state.processed_match_ids
+        engine._reserved_match_ids = state.reserved_match_ids
         engine.self_reported_log = state.self_reported_log
         engine._content_keys = state.content_keys
         engine.possible_duplicates = state.possible_duplicates
@@ -2919,12 +2978,16 @@ class RatingEngine:
         earlier than played_on, raises InvalidMatchError right after the
         match is validated, before any check that rejects the match.
         Nothing is changed unless the match counts, except that a match
-        rejected as a possible duplicate is recorded in possible_duplicates.
-        A match whose status is not MatchStatus.COMPLETED is never counted:
-        after the match_id check, it returns
-        RejectionReason.MATCH_NOT_COMPLETED and changes nothing (its
-        match_id is not marked processed, so a later completed match with
-        that id can still count).
+        rejected as a possible duplicate is recorded in possible_duplicates,
+        and a match that is not completed reserves its match_id.
+        A match_id already processed or reserved returns
+        RejectionReason.DUPLICATE_MATCH_ID. A match whose status is not
+        MatchStatus.COMPLETED is never counted: after the match_id check, it
+        returns RejectionReason.MATCH_NOT_COMPLETED and reserves its
+        match_id. It is not marked processed and moves no rating, but every
+        later call for a match with that id that does not raise returns
+        DUPLICATE_MATCH_ID, as replay never counts a second row with one
+        id. Reserving clears the snapshot's resumable mark.
         Live results apply in
         arrival order: MatchResult.late (and parent.late, for a category
         match) flags a match dated before a player's last match in that
@@ -2947,10 +3010,14 @@ class RatingEngine:
             )
         if as_of is not None and as_of < match.played_on:
             raise InvalidMatchError("as_of cannot be earlier than the match date")
-        if match.match_id in self.processed_match_ids:
+        match_id = match.match_id
+        if match_id in self.processed_match_ids or match_id in self._reserved_match_ids:
             return MatchResult(False, match.rating_format, RejectionReason.DUPLICATE_MATCH_ID)
         if match.status is not MatchStatus.COMPLETED:
-            # Changes nothing, so a later completed row with this id can count.
+            # Reserve the id, so a later match with it is a duplicate, as in
+            # replay. No rating, count, or content key changes.
+            self._changed()
+            self._reserved_match_ids.add(match_id)
             return MatchResult(False, match.rating_format, RejectionReason.MATCH_NOT_COMPLETED)
 
         cfg = self.cfg
@@ -3559,8 +3626,8 @@ def prequential_predictions(
     format (imported baseline, or at least `burn_in_matches` OPEN matches),
     its scoring equals `scoring` when given, it is played on or after
     `score_from` when given, and its status is MatchStatus.COMPLETED (a
-    forfeit, retired, or incomplete row is recorded, which changes nothing,
-    but never predicted). Only matches that `record` counts are kept.
+    forfeit, retired, or incomplete row is recorded, which changes no
+    rating, but never predicted). Only matches that `record` counts are kept.
     This "established" is not `PlayerSummary.established`.
 
     "live" records every match live in one engine, in ledger order.

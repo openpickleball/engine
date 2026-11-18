@@ -46,7 +46,10 @@ In `record`, right after the `as_of` type check, raise `InvalidMatchError("as_of
 
 - `src/open_engine/engine.py`: `record`; `RatingEngine.__init__`, `to_snapshot`, `from_snapshot`; `_TOP_KEYS`, `_Snapshot`, `_read_snapshot` and a reader for the new key; `_check_resumable` (or the reader) for the resumable rules; `SNAPSHOT_VERSION`; module docstring (match status note, "schema version 4"); `record`, `to_snapshot`, `from_snapshot` docstrings.
 - `tests/test_snapshot.py`: `TOP_LEVEL_KEYS` and the engine attribute list (both fail until updated, by design).
-- New `tests/test_reserved_match_ids.py`: the tests below.
+- New `tests/test_record_as_of_order.py`: the #72 tests, committed red on their own, so the frozen #72 test is not in a file the #73 work edits.
+- New `tests/test_reserved_match_ids.py`: the #73 live, replay, load, carriage, resumable, and resume tests, committed red.
+- New `tests/test_snapshot_reserved_match_ids.py`: the snapshot validation tests (criterion 5), written after the #73 fix commit's reader, red for the rules not yet enforced.
+- `src/open_engine/engine.py` docstrings of `Match`, `RejectionReason`, and `prequential_predictions` also said a non-completed match "changes nothing"; they now name the reservation.
 - Existing tests that assert the old behavior (a completed row counting after a non-completed row with the same id, or version 4): update them to the new rule. Search `tests/test_match_status.py`, `tests/test_match_status_review.py`, and any test that hard-codes `snapshot_version` 4 or a snapshot dict.
 - `README.md`: match status section (line ~181), snapshot schema (version 5, new key, its rules, "A version 1 to 4 snapshot does not load").
 - `CHANGELOG.md`: Fixed entries for #72 and #73 under Unreleased; correct the #22 "Added" entry and the snapshot entry's "schema version 4" so they describe the current behavior.
@@ -68,11 +71,11 @@ In `record`, right after the `as_of` type check, raise `InvalidMatchError("as_of
 
 ## Proof
 
-- Criterion 1: `test_record_rejects_early_as_of_for_every_rejection` (parametrized).
+- Criterion 1: `test_record_rejects_early_as_of_for_every_rejection` (parametrized, in `tests/test_record_as_of_order.py`), and `test_early_as_of_raises_for_a_reserved_id` for a reserved `match_id`.
 - Criterion 2: the existing suite, plus a test that a replay with a non-completed row dated after `as_of` still succeeds.
 - Criterion 3: `test_live_reserves_not_completed_match_id` (completed reuse, identical repeat, ratings unchanged) and `test_live_and_replay_agree_on_reused_id`.
 - Criterion 4: tests on a replayed engine and on a `from_snapshot` engine.
-- Criterion 5: parametrized snapshot validation tests, plus the live overlap round trip.
+- Criterion 5: parametrized snapshot validation tests in `tests/test_snapshot_reserved_match_ids.py`, plus the live overlap round trip.
 - Criterion 6: `test_live_reservation_clears_resumable`, `test_resume_with_not_completed_rows_equals_full_replay`.
 - Criterion 7: measured with `scratchpad/digest.py` (replay and live of `multi_year_ledger()` from `tests/test_replay_live_parity.py`, snapshot hashed without `snapshot_version`, `engine_version`, and `reserved_match_ids`). On main (54aab22): completed-only replay `78523b1289e8cab8`, completed-only live `ed051854141775da`, ledger with every 7th row a forfeit replayed `19b1364891406cd0`. The branch must print the same three hashes.
 - No live drive: this is a library with no app; the gate and the repro script (`scratchpad/repro.py`, the two issue repros) cover the changed paths, including failure paths.
