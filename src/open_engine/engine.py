@@ -188,10 +188,12 @@ Published behavior notes:
   reliability only: `reliability()` gives the value from RD and
   variety, and no rating, RD, K, prediction, evaluate,
   prequential_predictions, fit_scale, or fit_win_calibration output
-  reads either. Limits: a pool that with its fringe holds more than
-  half its group is that group's own scale, which no ledger can place
-  on another, so a club that outnumbers the players it met is not
-  capped and can leave them capped; pools that play each other but not
+  reads either. connectivity is built for every summary, with the cap
+  on or off. Limits: a pool in a main network that with its fringe
+  holds more than half its group is that group's own scale, which no
+  ledger can place on another, so a club in a main network that
+  outnumbers the players it met is not capped and can leave them
+  capped; pools that play each other but not
   the rest of their group count each other's players as outside
   players; accounts the backend has not verified can pose as outside
   players if they also play players the pool never met, and a cluster
@@ -1569,8 +1571,9 @@ def _network_connectivity(
             shared = row.keys() & other.keys()
             if len(shared) < cfg.connectivity_min_shared_contacts:
                 continue
-            # Each of them reached the shared contacts on enough dates, so a
-            # visitor for one day (all of their dates equal) never ties.
+            # Each of them reached the shared contacts on enough dates, so,
+            # with a minimum of 2 or more, a visitor for one day (all of
+            # their dates equal) never ties.
             if len({row[w] for w in shared}) >= minimum_days and (
                 len({other[w] for w in shared}) >= minimum_days
             ):

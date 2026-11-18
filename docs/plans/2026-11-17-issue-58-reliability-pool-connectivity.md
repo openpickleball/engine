@@ -1,6 +1,6 @@
 # Plan: Reliability does not see whether a player's pool connects to the wider network (issue #58)
 
-Risk tier: High. The change adds a public dataclass, four `Config` fields, and a `PlayerSummary` field, changes the default `PlayerSummary.reliability` and `established` for players in closed pools, and touches a security-sensitive label (how credible a rating looks). It must not change any rating, RD, K, prediction, `evaluate`, or fit output.
+Risk tier: High. The change adds a public dataclass, four `Config` fields, and a `PlayerSummary` field, can cap `PlayerSummary.reliability` and `established` for players in closed pools when the cap is set (off by default after the scope revision below), and touches a security-sensitive label (how credible a rating looks). It must not change any rating, RD, K, prediction, `evaluate`, or fit output.
 
 Domain skills: none apply. This is a standard-library Python package with no framework, UI, API, data store, authentication, payments, or email. superpowers:test-driven-development applies.
 
@@ -24,14 +24,14 @@ All measured per rating format, at the summary's reference date, over the rollin
 4. Pool: connected components of strong ties. A player with no strong tie is a pool of one.
 5. Fringe and outside players: the pool's boundary is every player outside it in contact with it. Its fringe is the boundary players whose own contacts are all in the pool or the boundary (drop-ins). Its outside players are the rest of the boundary, and `outside_days` counts distinct contact dates between the pool and them. (Revised after review: drop-ins and accounts that only played the club used to count as outside contact.)
 6. Connected: the player has a contact in the window, the group is a main network, and either the pool with its fringe holds more than half the group, or the pool has at least `connectivity_min_outside_players` (default 8) outside players on at least `connectivity_min_contact_days` outside days. (Revised after review: the first draft treated a pool of one as connected, which let small closed groups, same-day groups, and stragglers, who never tie, lose the cap after one bridge match.)
-7. Cap: when not connected and `connectivity_reliability_cap` (default 50.0) is not None, `PlayerSummary.reliability` is `min(earned, cap)`. `established` and the imported reliability carry compare against that displayed value, as today.
+7. Cap: when not connected and `connectivity_reliability_cap` (50.0 in the first draft; `None` by default after the scope revision below) is not None, `PlayerSummary.reliability` is `min(earned, cap)`. `established` and the imported reliability carry compare against that displayed value, as today.
 8. Report: new frozen public dataclass `NetworkConnectivity` with `pool_size`, `fringe_players`, `outside_players`, `outside_days`, `group_size`, `in_main_network`, and `connected`. New `PlayerSummary.connectivity` as the last field. A player with no stored state in the format is measured as if the unplayed state a seed would store were stored (consistent with `player_summary`'s rule for a missing format): a group of one with no contacts, never connected, in a main network only when the largest group has at most 2 players.
 9. Determinism: every traversal iterates sorted ids, union-find roots are the smallest id, and no set or dict is iterated in an order that reaches the output. The result depends only on the stored states, the config, and the reference date.
 10. Speed: building the graph is O(players + contacts); strong ties use C-level set intersection per contact pair. The result for one (format, reference date) is cached on the engine in a private `_connectivity` dict, cleared by `_changed()` (every state change already goes through it). The cache is derived data, not state: it never changes a rating or a later replay, and a fresh engine rebuilds it, so it is not in the snapshot. `test_snapshot_covers_every_engine_attribute` lists it with that reason.
 
 Config validation in `__post_init__`: `connectivity_reliability_cap` is None or a number from 0 to 100 (`ConfigError("connectivity_reliability_cap must be None or a number from 0 to 100")`); the three counts are ints (not bools) of at least 1 (`ConfigError("<name> must be a positive int")`). All four are scalars or None, which `norm()` already turns into stable JSON, so the fingerprint, `to_dict`, and `from_dict` cover them. The cap is shown rounded down to 1 place, so displayed reliability never exceeds it. The cache keeps at most 16 (format, date) entries.
 
-Limits to document (claims must hold): a pool that is the whole ledger, or more than half the main network, is the network's own scale and is never capped; the term cannot place it. Pools that play each other but not the rest of the main network can count each other's players as outside contacts. Contacts keep only the last date per pair, so `outside_days` can undercount repeated contact with the same player. `as_of` earlier than the stored state does not rebuild past contacts (as for variety).
+Limits to document (claims must hold): a pool in a main network that, with its fringe, holds more than half its group is that group's own scale and is not capped (a player with no contact in the window is never connected); the term cannot place it. Pools that play each other but not the rest of the main network can count each other's players as outside contacts. Contacts keep only the last date per pair, so `outside_days` can undercount repeated contact with the same player. `as_of` earlier than the stored state does not rebuild past contacts (as for variety).
 
 ## Acceptance criteria
 
@@ -50,7 +50,7 @@ Limits to document (claims must hold): a pool that is the whole ledger, or more 
 - `src/open_engine/__init__.py`: export `NetworkConnectivity`.
 - `README.md`: reliability paragraph, Public API.
 - `CHANGELOG.md`: Added and Changed entries.
-- Tests: new `tests/test_network_connectivity.py`; `tests/test_snapshot.py` attribute list; any test whose assertions change under the default cap (explained in the PR).
+- Tests: new `tests/test_network_connectivity.py`; `tests/test_snapshot.py` attribute list; tests that pin the default fingerprint or the `PlayerSummary` field list.
 
 ## Order of work
 
@@ -61,7 +61,7 @@ Limits to document (claims must hold): a pool that is the whole ledger, or more 
 
 ## Risks
 
-- Existing tests with disconnected groups may now see capped reliability. Each is checked; ratings never change.
+- Existing tests with disconnected groups could see capped reliability with the cap on; after the scope revision the default leaves them unchanged. Ratings never change.
 - Single linkage can still chain a pool into a dense group it met across several days. That is repeated contact, which is what the issue asks for.
 - Cost on large ledgers: the cache keeps it to one build per format and reference date.
 
