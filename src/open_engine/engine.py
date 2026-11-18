@@ -455,7 +455,7 @@ import json
 import math
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass, replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from enum import Enum, StrEnum
 from typing import Literal, TypeGuard, TypeVar
 
@@ -682,10 +682,26 @@ _INT_BONUS_LIMIT = 2**511
 _INT_BONUS_LIMIT_TEXT = "2**511"
 
 # The longest day window a Config accepts: the days from date.min to
-# date.max, which timedelta holds. It does not make every window safe: one
-# that reaches back before date.min from a match or reference date currently
-# raises OverflowError (issue #92).
+# date.max, which timedelta holds. A window that reaches back before date.min
+# from a match or reference date stops at date.min (_days_before, issue #92).
 _MAX_DAYS = (date.max - date.min).days
+_MAX_ORDINAL = date.max.toordinal()
+
+
+def _days_before(day: date, days: int) -> date:
+    """
+    The date `days` days before `day`, clamped to date.min and date.max.
+
+    Window cutoffs use it, so a match or reference date near date.min, or a
+    very long window, never raises OverflowError. Every cutoff is compared
+    inclusively (a date on or after it is in the window), so a cutoff at
+    date.min keeps every date, as one before it would: no result changes.
+    A negative `days` moves forward and stops at date.max; the one caller
+    that moves forward (a scheduled window's grid date) is always before a
+    match date, so it never reaches that bound.
+    """
+    return date.fromordinal(min(max(1, day.toordinal() - days), _MAX_ORDINAL))
+
 
 # Config scalar fields by kind, checked for type and finiteness first.
 _CONFIG_NUMBER_FIELDS = (
@@ -844,8 +860,8 @@ class Config:
       self_reported_repeat_window_days are from 1 to 3,652,058 (the days
       from date.min to date.max, which timedelta holds), and
       import_reliability_max_age_days from 0 to that. A window that
-      reaches back before date.min from a match or reference date
-      currently raises OverflowError (issue #92). diversity_target,
+      reaches back before date.min from a match or reference date stops
+      at date.min instead of raising OverflowError. diversity_target,
       self_reported_max_repeats, and the three connectivity counts are at
       least 1;
       import_reliability_carry_matches and
@@ -1918,7 +1934,7 @@ def _network_connectivity(
     result depends only on the stored states, the config, and the
     reference date.
     """
-    cutoff = reference - timedelta(days=cfg.diversity_window_days)
+    cutoff = _days_before(reference, cfg.diversity_window_days)
     graph = _contact_graph(players, rating_format, cutoff)
     ids = sorted(graph)
     network = _UnionFind(ids)
@@ -2155,7 +2171,7 @@ def _actual_point_share(match: Match, cfg: Config) -> tuple[float, bool]:
 
 
 def _rolling_unique_count(interactions: dict[str, date], on: date, window_days: int) -> int:
-    cutoff = on - timedelta(days=window_days)
+    cutoff = _days_before(on, window_days)
     return sum(1 for last_seen in interactions.values() if last_seen >= cutoff)
 
 
@@ -4276,7 +4292,7 @@ class RatingEngine:
                     )
                     return unconfirmed, net
             matchup = _matchup_key(match)
-            cutoff = match.played_on - timedelta(days=cfg.self_reported_repeat_window_days)
+            cutoff = _days_before(match.played_on, cfg.self_reported_repeat_window_days)
             prior = sum(
                 1 for d in self.self_reported_log.get(matchup, []) if cutoff <= d <= match.played_on
             )
@@ -5008,17 +5024,24 @@ def prequential_predictions(
     interval = cfg.replay_interval_days
     if anchor is None:
         anchor = completed[0].played_on
-    windows: dict[date, list[Match]] = {}
+    # Each match goes in window k, the largest k with anchor + k * interval
+    # strictly before played_on, and is predicted from a replay to that grid
+    # date. The matches dated on or before it are exactly those in earlier
+    # windows. Windows are keyed by k, not by date, because the first grid
+    # date can fall before date.min (issue #92). Only that one can, and no
+    # match is before it, so its replay date is clamped at date.min without
+    # adding a match dated date.min to the replay that predicts it.
+    window_of = {m.match_id: ((m.played_on - anchor).days - 1) // interval for m in ordered}
+    windows: dict[int, list[Match]] = {}
     for match in ordered:
-        # Largest k with anchor + k * interval strictly before played_on.
-        k = ((match.played_on - anchor).days - 1) // interval
-        windows.setdefault(anchor + timedelta(days=k * interval), []).append(match)
+        windows.setdefault(window_of[match.match_id], []).append(match)
 
-    for replay_date, window in sorted(windows.items()):
+    for k, window in sorted(windows.items()):
         if score_from is not None and all(m.played_on < score_from for m in window):
             continue
+        replay_date = _days_before(anchor, -k * interval)
         engine = _replay(
-            [m for m in ordered if m.played_on <= replay_date],
+            [m for m in ordered if window_of[m.match_id] < k],
             seeds,
             cfg=cfg,
             as_of=replay_date,
