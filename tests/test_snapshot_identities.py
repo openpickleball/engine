@@ -1,8 +1,9 @@
-"""A snapshot accepts every identity the engine's own methods produce (issue #16).
+"""A snapshot loads shared or blank account and external ids (issues #16, #52).
 
-Identity values do not affect ratings, and the engine lets seeds and its
-link methods set shared or blank account and external ids. A snapshot of
-such an engine must still save and load. All ids are synthetic.
+Identity values do not affect ratings. Since issue #52, no engine method
+builds a shared or blank identity, but snapshot loading still only type
+checks them until issue #61 makes it match the entry points. These tests
+set the identities directly on the engine's players. All ids are synthetic.
 """
 
 from __future__ import annotations
@@ -18,50 +19,40 @@ from open_engine import Player, RatingEngine, replay
 AS_OF = date(2025, 1, 1)
 
 
+def _with_players(*players: Player) -> RatingEngine:
+    engine = replay([], [], as_of=AS_OF)
+    for player in players:
+        engine.players[player.id] = player
+    return engine
+
+
 def _shared_account() -> RatingEngine:
-    seeds = [
+    return _with_players(
         Player(id="syn-a1", account_user_id="acct-1"),
         Player(id="syn-a2", account_user_id="acct-1"),
-    ]
-    return replay([], seeds, as_of=AS_OF)
+    )
 
 
 def _shared_external_id() -> RatingEngine:
-    seeds = [
+    return _with_players(
         Player(id="syn-b1", external_ids={"src": "x1"}),
         Player(id="syn-b2", external_ids={"src": "x1"}),
-    ]
-    return replay([], seeds, as_of=AS_OF)
+    )
 
 
-def _blank_seed_ids() -> RatingEngine:
-    seed = Player(id="syn-c1", external_ids={"src": " "}, account_user_id=" ")
-    return replay([], [seed], as_of=AS_OF)
-
-
-def _blank_linked_account() -> RatingEngine:
-    engine = RatingEngine()
-    engine.link_account("syn-d1", "   ")
-    return engine
-
-
-def _blank_attached_source() -> RatingEngine:
-    engine = RatingEngine()
-    engine.attach_external_id("syn-d1", " ", "id")
-    return engine
+def _blank_ids() -> RatingEngine:
+    return _with_players(Player(id="syn-c1", external_ids={" ": " "}, account_user_id=" "))
 
 
 BUILDERS: dict[str, Callable[[], RatingEngine]] = {
-    "A shared account from seeds": _shared_account,
-    "A2 shared external id from seeds": _shared_external_id,
-    "A3 blank ids on a seed": _blank_seed_ids,
-    "B blank account from link_account": _blank_linked_account,
-    "B2 blank source from attach_external_id": _blank_attached_source,
+    "A shared account": _shared_account,
+    "A2 shared external id": _shared_external_id,
+    "A3 blank account, source, and external id": _blank_ids,
 }
 
 
 @pytest.mark.parametrize("build", list(BUILDERS.values()), ids=list(BUILDERS))
-def test_api_built_identities_round_trip(build: Callable[[], RatingEngine]) -> None:
+def test_set_identities_round_trip(build: Callable[[], RatingEngine]) -> None:
     engine = build()
     first = json.loads(json.dumps(engine.to_snapshot()))
     restored = RatingEngine.from_snapshot(first)

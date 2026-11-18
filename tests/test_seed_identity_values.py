@@ -239,7 +239,9 @@ LINK_ROWS: list[tuple[str, Callable[[RatingEngine], object], str]] = [
     (
         "seed_external_space_external_id",
         lambda e: e.seed_external_rating(
-            "syn-c", D, ExternalRatingSnapshot("ext", 4.0, date(2026, 10, 1), external_player_id=" ")
+            "syn-c",
+            D,
+            ExternalRatingSnapshot("ext", 4.0, date(2026, 10, 1), external_player_id=" "),
         ),
         r"^source and external_player_id are required$",
     ),

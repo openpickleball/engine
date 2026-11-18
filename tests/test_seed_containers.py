@@ -67,7 +67,9 @@ def test_prequential(seed: Any, message: str, mode: Any) -> None:
         prequential_predictions([], [seed], mode=mode)
 
 
-def test_blank_id_is_still_accepted() -> None:
+def test_blank_id_is_rejected() -> None:
+    # Accepted before issue #52; tests/test_seed_identity_values.py covers every entry point.
     eng = RatingEngine()
-    eng.add_player(Player("", {}))
-    assert "" in eng.players
+    with pytest.raises(InvalidSeedError, match=r"^Seed player id must not be blank$"):
+        eng.add_player(Player("", {}))
+    assert eng.players == {}
