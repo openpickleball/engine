@@ -81,8 +81,8 @@ CASES: list[tuple[str, Call, type[OpenEngineError], str]] = [
     (
         "new: seed with an identity and no source",
         lambda e: e.seed_external_rating("syn-new", D, _snap("", "ext-q")),
-        PlayerError,
-        "source and external_player_id are required",
+        InvalidSeedError,
+        "External snapshot source must not be blank",
     ),
     (
         "new: blank account",
@@ -136,8 +136,8 @@ CASES: list[tuple[str, Call, type[OpenEngineError], str]] = [
     (
         "blank: seed_external_rating with no source",
         lambda e: e.seed_external_rating("", D, _snap("", "ext-q")),
-        PlayerError,
-        "player_id is required",
+        InvalidSeedError,
+        "External snapshot source must not be blank",
     ),
     # An existing player.
     (
@@ -179,8 +179,8 @@ CASES: list[tuple[str, Call, type[OpenEngineError], str]] = [
     (
         "existing: seed with an identity and no source",
         lambda e: e.seed_external_rating("syn-d", MX, _snap("", "ext-q")),
-        PlayerError,
-        "source and external_player_id are required",
+        InvalidSeedError,
+        "External snapshot source must not be blank",
     ),
     (
         "existing: seed over an unplayed seed",
