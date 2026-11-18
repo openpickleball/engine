@@ -1849,6 +1849,18 @@ class RejectionReason(_StrEnum):
     MATCH_NOT_COMPLETED = "match_not_completed"  # forfeit, retired, or incomplete
 
 
+# Rejections whose outcome a seed's rating or date can change. record keeps
+# the players of each such rejected update, and the seed methods refuse a
+# seed that could change it (issue #99).
+_SEED_SENSITIVE_REASONS = frozenset(
+    {
+        RejectionReason.BEFORE_IMPORTED_BASELINE,
+        RejectionReason.SINGLES_RATING_GAP,
+        RejectionReason.DOUBLES_PARTNER_GAP,
+    }
+)
+
+
 @dataclass
 class MatchResult:
     """
@@ -2665,7 +2677,7 @@ def _validate_seed(player: Player, cfg: Config) -> None:
 # Snapshots
 # ---------------------------------------------------------------------------
 
-SNAPSHOT_VERSION = 7
+SNAPSHOT_VERSION = 8
 
 _TOP_KEYS = frozenset(
     {
@@ -2683,9 +2695,11 @@ _TOP_KEYS = frozenset(
         "possible_duplicates",
         "ledger_digests",
         "ledger_player_ids",
+        "seed_sensitive_rejections",
         "resumable",
     }
 )
+_REJECTION_KEYS = frozenset({"rating_format", "players"})
 _REPLAY_INFO_KEYS = frozenset(
     {
         "as_of",
@@ -2735,6 +2749,7 @@ class _Snapshot:
     replay_info: ReplayInfo | None
     ledger_digests: dict[str, str]
     ledger_player_ids: set[str]
+    seed_sensitive_rejections: dict[str, tuple[RatingFormat, tuple[str, ...]]]
     resumable: bool
 
 
@@ -3396,6 +3411,126 @@ def _snap_possible_duplicates(
     return duplicates
 
 
+def _has_dated_baseline(player: Player | None, fmt: RatingFormat, cfg: Config) -> bool:
+    """
+    True when a fmt match would freeze this player for a date on or before an import.
+
+    That is a stored fmt state with an initial_source_date, or, with none
+    stored, under category_feeds_parent in a category format, a parent
+    state with one: the state a category match starts from carries the
+    parent's date (see RatingEngine._new_state).
+    """
+    if player is None:
+        return False
+    state = player.ratings.get(fmt)
+    if state is not None:
+        return state.initial_source_date is not None
+    parent = fmt.parent
+    if parent is None or not cfg.category_feeds_parent:
+        return False
+    base = player.ratings.get(parent)
+    return base is not None and base.initial_source_date is not None
+
+
+def _snap_seed_sensitive_rejections(
+    value: object,
+    players: Mapping[str, Player],
+    processed: set[str],
+    reserved: set[str],
+    duplicates: Mapping[str, str],
+    ledger_player_ids: set[str] | None,
+    cfg: Config,
+) -> dict[str, tuple[RatingFormat, tuple[str, ...]]]:
+    """
+    Seed-sensitive rejections read from a snapshot: match_id to (format, sorted player ids).
+
+    record adds an entry only for an update rejected for
+    BEFORE_IMPORTED_BASELINE, SINGLES_RATING_GAP, or DOUBLES_PARTNER_GAP,
+    naming every player of the match. A match's own rejected update
+    reserves its id. A counted match's rejected update is its overall
+    doubles update under category_feeds_parent, and every player of a
+    counted match has a player record (a frozen one already had a state).
+    A possible duplicate is rejected before any rating is read, so a
+    reserved one is never an entry. With no gap rule for the format, only
+    BEFORE_IMPORTED_BASELINE can add an entry, which needs every player
+    frozen, and the seed methods refuse to replace those states, so each
+    named player still has a dated baseline there (_has_dated_baseline).
+    ledger_player_ids is that set in a resumable snapshot, else None: a
+    replay names only players in rows it considered.
+    """
+    if not isinstance(value, Mapping):
+        raise SnapshotError("snapshot.seed_sensitive_rejections must be an object")
+    rejections: dict[str, tuple[RatingFormat, tuple[str, ...]]] = {}
+    for key, entry in value.items():
+        if not _is_id(key):
+            raise SnapshotError(
+                "snapshot.seed_sensitive_rejections has a key that is not a non-blank str"
+            )
+        path = f"snapshot.seed_sensitive_rejections[{key!r}]"
+        raw = _snap_object(entry, path, _REJECTION_KEYS)
+        fmt_value = raw["rating_format"]
+        if not _is_plain_str(fmt_value) or fmt_value not in _FORMAT_VALUES:
+            raise SnapshotError(f"{path}.rating_format must be a RatingFormat value")
+        fmt = RatingFormat(fmt_value)
+        named = [
+            _snap_id(item, f"{path}.players[{index}]")
+            for index, item in enumerate(_snap_list(raw["players"], f"{path}.players"))
+        ]
+        if len(named) != 2 * fmt.team_size:
+            raise SnapshotError(
+                f"{path}.players must name {2 * fmt.team_size} players for {fmt.value}"
+            )
+        if named != sorted(set(named)):
+            raise SnapshotError(f"{path}.players must be sorted with no repeats")
+        if key in processed:
+            if fmt is not RatingFormat.DOUBLES:
+                raise SnapshotError(
+                    f"{path} is a processed match id, so its rating_format must be doubles: "
+                    "a counted match records only a rejected overall doubles update"
+                )
+            if not cfg.category_feeds_parent:
+                raise SnapshotError(
+                    f"{path} is a processed match id, which needs category_feeds_parent: "
+                    "only then does a counted match send a doubles update"
+                )
+            for pid in named:
+                if pid not in players:
+                    raise SnapshotError(f"{path}.players names {pid!r}, which is not in players")
+        elif key in reserved:
+            if key in duplicates:
+                raise SnapshotError(
+                    f"{path} is a possible_duplicates key; a possible duplicate is rejected "
+                    "before any rating is read"
+                )
+        else:
+            raise SnapshotError(
+                f"snapshot.seed_sensitive_rejections has key {key!r}, which is in neither "
+                "processed_match_ids nor reserved_match_ids"
+            )
+        gap = (
+            cfg.max_singles_rating_gap
+            if fmt is RatingFormat.SINGLES
+            else (cfg.max_doubles_partner_gap)
+        )
+        if gap is None:
+            for pid in named:
+                if not _has_dated_baseline(players.get(pid), fmt, cfg):
+                    raise SnapshotError(
+                        f"{path}.players names {pid!r}, which has no dated {fmt.value} "
+                        f"baseline; with no gap rule for {fmt.value}, only "
+                        "before_imported_baseline is recorded, and it freezes every player"
+                    )
+        if ledger_player_ids is not None:
+            for pid in named:
+                if pid not in ledger_player_ids:
+                    raise SnapshotError(
+                        f"{path}.players names {pid!r}, which is not in ledger_player_ids "
+                        "in a resumable snapshot"
+                    )
+        rejections[key] = (fmt, tuple(named))
+    return rejections
+
+
 def _check_reserved(
     reserved: set[str],
     processed: set[str],
@@ -3671,6 +3806,16 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
         digests if resumable else None,
     )
 
+    seed_sensitive = _snap_seed_sensitive_rejections(
+        raw["seed_sensitive_rejections"],
+        players,
+        processed,
+        reserved,
+        possible_duplicates,
+        ledger_player_ids if resumable else None,
+        cfg,
+    )
+
     snap = _Snapshot(
         players,
         processed,
@@ -3682,6 +3827,7 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
         replay_info,
         digests,
         ledger_player_ids,
+        seed_sensitive,
         resumable,
     )
     if resumable:
@@ -3727,6 +3873,13 @@ class RatingEngine:
         # Every player id named in a row a replay considered, counted or
         # not. Resume refuses a seed for one of them.
         self._ledger_player_ids: set[str] = set()
+        # match_id of each update record rejected for a reason a seed can
+        # change (_SEED_SENSITIVE_REASONS), to the rating format of that
+        # update and the sorted ids of the match's players: a match's own
+        # update (its id is reserved), or the overall doubles update of a
+        # counted category match (its id is processed). The seed methods
+        # refuse a seed that could change one of these. Never cleared.
+        self._seed_sensitive_rejections: dict[str, tuple[RatingFormat, tuple[str, ...]]] = {}
         # True only while the state is exactly what replay produced, so a
         # snapshot of it can be resumed from. Replay sets it at the end.
         self._resumable = False
@@ -3837,6 +3990,10 @@ class RatingEngine:
             "replay_info": replay_info,
             "reserved_match_ids": sorted(self._reserved_match_ids, key=str),
             "resumable": self._resumable,
+            "seed_sensitive_rejections": _sorted_dict(
+                (match_id, {"players": list(players), "rating_format": fmt.value})
+                for match_id, (fmt, players) in self._seed_sensitive_rejections.items()
+            ),
             "self_reported_log": _log_form(self.self_reported_log),
             "snapshot_version": SNAPSHOT_VERSION,
         }
@@ -3938,6 +4095,7 @@ class RatingEngine:
         engine.replay_info = state.replay_info
         engine._ledger_digests = state.ledger_digests
         engine._ledger_player_ids = state.ledger_player_ids
+        engine._seed_sensitive_rejections = state.seed_sensitive_rejections
         engine._resumable = state.resumable
         return engine
 
@@ -4043,7 +4201,7 @@ class RatingEngine:
         its (source, external id) pairs, with the messages link_account and
         attach_external_id use. Nothing changes when either is raised.
         """
-        self._add_seed(player, self._held_identities())
+        self._add_seed(player, self._held_identities(), check_rejections=True)
 
     def _held_identities(self) -> _HeldIdentities:
         """The accounts and (source, external id) pairs the engine's players hold."""
@@ -4052,19 +4210,27 @@ class RatingEngine:
             held.add(p)
         return held
 
-    def _add_seed(self, player: Player, held: _HeldIdentities) -> None:
+    def _add_seed(
+        self, player: Player, held: _HeldIdentities, *, check_rejections: bool = False
+    ) -> None:
         """
         add_player, with the identities already held passed in.
 
         held must hold every identity of the engine's players; it gains the
         seed's identities once the seed is added. A batch of seeds builds it
         once, so each seed's uniqueness check is a set lookup instead of a
-        scan of every player.
+        scan of every player. check_rejections (add_player only) refuses a
+        seed that could change a seed-sensitive rejection. Replay adds its
+        seeds before any row, and resume refuses a seed for any player named
+        in a row the checkpoint considered, so neither needs it.
         """
         _check_seed_identity(player)
         if player.id in self.players:
             raise PlayerError(f"Player already exists: {player.id}")
         _validate_seed(player, self.cfg)
+        if check_rejections:
+            for fmt in sorted(player.ratings, key=lambda f: f.value):
+                self._check_seed_sensitive(player.id, fmt)
         # The same uniqueness rules, with the same messages, as link_account
         # and attach_external_id.
         account = player.account_user_id
@@ -4288,6 +4454,7 @@ class RatingEngine:
                         f"Cannot seed a rating that a counted {child.value} match for this "
                         "player depends on"
                     )
+        self._check_seed_sensitive(player_id, rating_format)
         if existing is not None:
             if not replace_unplayed_seed:
                 raise InvalidSeedError(
@@ -4329,6 +4496,29 @@ class RatingEngine:
                 ):
                     self._put_state(player, child, self._new_state(player_id, child))
         return state
+
+    def _check_seed_sensitive(self, player_id: str, rating_format: RatingFormat) -> None:
+        """
+        Raise InvalidSeedError when a seed could change a seed-sensitive rejection.
+
+        A rejected update in rating_format depends on the player's state
+        there, and, under category_feeds_parent, a rejected category update
+        also depends on the player's parent state, from which a category
+        state without a stored one starts. A replay adds every seed before
+        any row, so a new seed could make it count a row live rejected.
+        """
+        for match_id in sorted(self._seed_sensitive_rejections):
+            fmt, players = self._seed_sensitive_rejections[match_id]
+            if player_id not in players:
+                continue
+            if fmt is rating_format or (
+                self.cfg.category_feeds_parent and fmt.parent is rating_format
+            ):
+                raise InvalidSeedError(
+                    f"Cannot seed: a rejected {fmt.value} match that named this player "
+                    f"({match_id}) could count with a new seed; a new seed for this player "
+                    "needs a full replay from corrected seeds"
+                )
 
     def _in_counted_match(self, player_id: str, rating_format: RatingFormat) -> bool:
         """
@@ -4617,6 +4807,7 @@ class RatingEngine:
             match, match.rating_format, repeat_factor
         )
         if not primary.counted or primary_updates is None:
+            self._note_seed_sensitive(match, primary)
             return primary, net
         primary.possible_duplicate_of = twin
         net[match.rating_format] = primary_net
@@ -4630,6 +4821,8 @@ class RatingEngine:
             )
             if parent_updates is not None:
                 net[parent_format] = parent_net
+            else:
+                self._note_seed_sensitive(match, primary.parent)
 
         self._commit(match.rating_format, primary_updates, live)
         if parent_updates and parent_format is not None:
@@ -4641,6 +4834,13 @@ class RatingEngine:
             self.possible_duplicates[match.match_id] = twin
         self.processed_match_ids.add(match.match_id)
         return primary, net
+
+    def _note_seed_sensitive(self, match: Match, result: MatchResult) -> None:
+        """Record a rejected update whose outcome a new seed could change."""
+        if result.reason in _SEED_SENSITIVE_REASONS:
+            self._changed()
+            players = tuple(sorted(match.team_a + match.team_b))
+            self._seed_sensitive_rejections[match.match_id] = (result.rating_format, players)
 
     def _commit(
         self, rating_format: RatingFormat, updates: dict[str, RatingState], live: bool
