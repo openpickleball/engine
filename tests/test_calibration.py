@@ -321,6 +321,7 @@ SEARCH_ARGUMENT_CASES = [
     pytest.param({"low": 2.0, "high": 2.0}, "low must be less than high", id="low-equals-high"),
     pytest.param({"low": math.nan}, "low and high must be finite", id="low-nan"),
     pytest.param({"high": math.inf}, "low and high must be finite", id="high-inf"),
+    pytest.param({"low": -1e308, "high": 1e308}, "high - low must be finite", id="width-overflow"),
     pytest.param({"low": -math.inf}, "low and high must be finite", id="low-minus-inf"),
     pytest.param({"tolerance": 0.0}, BAD_TOLERANCE, id="tol-zero"),
     pytest.param({"tolerance": -1.0}, BAD_TOLERANCE, id="tol-neg"),
@@ -351,3 +352,29 @@ def test_fit_win_calibration_rejects_bad_search_arguments(
     monkeypatch.setattr(engine_module, "prequential_predictions", _no_prediction_work)
     with pytest.raises(EvaluationError, match=message):
         fit_win_calibration([], **kwargs)
+
+
+def test_fit_scale_ends_when_tolerance_is_below_float_spacing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A positive tolerance below the float spacing near the optimum used to
+    # hang: the bracket stops shrinking before it gets that narrow.
+    monkeypatch.setattr(engine_module, "prequential_predictions", lambda *a, **k: [])
+
+    def fake_report(predictions: object, cfg: Config, scoring: ScoringType) -> tuple[None, float]:
+        return None, (cfg.scale_by_scoring[scoring] - 3.1234567) ** 2
+
+    monkeypatch.setattr(engine_module, "_report_from_predictions", fake_report)
+    fit = fit_scale([], scoring=ScoringType.RALLY, tolerance=1e-17)
+    assert fit.scale == 3.123
+
+
+def test_fit_win_calibration_ends_when_tolerance_is_below_float_spacing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_predictions(monkeypatch, _synthetic_predictions([0.6], [True]))
+    monkeypatch.setattr(
+        engine_module, "calibrate_win_probability", lambda raw, a: a - 1.3712345 + 1.0
+    )
+    fit = fit_win_calibration([], tolerance=1e-17)
+    assert fit.a == 1.371
