@@ -324,3 +324,60 @@ def test_live_import_with_frozen_logged_matches_loads_and_is_not_reseeded() -> N
             replace_unplayed_seed=True,
         )
     RatingEngine.from_snapshot(_json(engine))
+
+
+# -- category matches that fed doubles (#84) ------------------------------------
+
+
+def _sr(
+    match_id: str, a: tuple[str, str], b: tuple[str, str], on: date, fmt: RatingFormat
+) -> Match:
+    return Match(
+        match_id, a, b, ((11, 7),), on, fmt, match_type=SR, confirmed_by=frozenset({a[0], b[0]})
+    )
+
+
+@pytest.mark.parametrize("resumable", [True, False])
+def test_relabeled_category_fed_doubles_update_does_not_load(resumable: bool) -> None:
+    rows = [
+        _sr("syn-m1", ("syn-a", "syn-b"), ("syn-c", "syn-d"), date(2026, 1, 5), D),
+        _sr("syn-m2", ("syn-a", "syn-e"), ("syn-f", "syn-g"), date(2026, 1, 6), MX),
+    ]
+    snap = _json(replay(rows, as_of=date(2026, 1, 10)))
+    state = _state(snap, "syn-a", "doubles")
+    assert (state["matches_played"], state["verified_matches_played"]) == (2, 0)
+    state["verified_matches_played"] = 1
+    snap["resumable"] = resumable
+    with pytest.raises(
+        SnapshotError,
+        match=(
+            r"ratings\.doubles: matches_played - verified_matches_played \(1\) must equal "
+            r"the self-reported doubles and category matches logged for this player \(2\)"
+        ),
+    ):
+        RatingEngine.from_snapshot(snap)
+
+
+def test_relabeled_category_fed_update_of_a_resumable_import_does_not_load() -> None:
+    seed_on = START + timedelta(days=2)
+    rows = [
+        # On or before the capture date: syn-a is frozen in doubles, but the
+        # match is logged because the other players moved.
+        _sr("syn-m0", ("syn-a", "syn-b"), ("syn-c", "syn-d"), START + timedelta(days=1), MX),
+        _sr("syn-m1", ("syn-a", "syn-b"), ("syn-c", "syn-d"), START + timedelta(days=5), D),
+        _sr("syn-m2", ("syn-a", "syn-e"), ("syn-f", "syn-g"), START + timedelta(days=6), MX),
+    ]
+    seeds = [_imported("syn-a", D, 4.0, seed_on)]
+    snap = _json(replay(rows, seeds, as_of=START + timedelta(days=10)))
+    assert snap["resumable"] is True
+    state = _state(snap, "syn-a", "doubles")
+    assert (state["matches_played"], state["verified_matches_played"]) == (2, 0)
+    state["verified_matches_played"] = 1
+    with pytest.raises(
+        SnapshotError,
+        match=(
+            r"ratings\.doubles: matches_played - verified_matches_played \(1\) must equal "
+            r"the self-reported doubles and category matches logged for this player \(2\)"
+        ),
+    ):
+        RatingEngine.from_snapshot(snap)
