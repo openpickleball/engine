@@ -841,8 +841,12 @@ class Config:
     - 0 <= k_min <= k_max, and the largest K, k_min + (k_max - k_min) *
       1.0 as player_k computes it (it can round just above k_max), times
       the largest match weight times max_information_multiplier is
-      finite in floats. Exact int arithmetic from int weights and
-      multipliers near 2**511 is not bounded yet (issue #93).
+      finite in floats. When the self-reported match weight,
+      max_information_multiplier, and self_reported_repeat_factor are all
+      ints, a self-reported match's step weight is their exact int product:
+      it must convert to a float, the largest K times that float must be
+      finite, and with an int rd_shrink_per_match, rd_shrink_per_match
+      times the exact product must convert too.
     - 0 < rd_min < rd_max <= 2**511, and rd_max - rd_min is greater
       than 0 as computed (an int and a float that are equal once
       converted are rejected). The three seed RDs lie within
@@ -1148,18 +1152,45 @@ class Config:
         # The largest step size a match can reach. When it overflows to inf,
         # a surprise of exactly 0 gives a NaN change. The largest K is what
         # player_k returns at fraction 1.0, which can round above k_max. The
-        # check bounds the step as computed in floats: an all-int product is
-        # exact, and math.isfinite raises on one too large for a float. An
-        # exact int product the engine can form from int config values, such
-        # as on a self-reported match, is not covered yet (issue #93).
+        # first check bounds the step as computed in floats.
         largest_k = _as_float(self.k_min + (self.k_max - self.k_min) * 1.0)
         largest_weight = _as_float(max(self.match_weights.values())) * _as_float(
             self.max_information_multiplier
         )
+        k_message = (
+            "k_max times the largest match weight and max_information_multiplier must be finite"
+        )
         if not math.isfinite(largest_k * largest_weight):
-            raise ConfigError(
-                "k_max times the largest match weight and max_information_multiplier must be finite"
-            )
+            raise ConfigError(k_message)
+        # On a self-reported match the step weight is weight * factor**prior
+        # * multiplier. With an int weight, an int factor (factor**prior is
+        # then the int 1), and an int multiplier (information_multiplier
+        # returns it at most), that product is an exact int. Converting it
+        # can raise OverflowError, or land one ulp above the float product
+        # checked above, and an int rd_shrink_per_match times it is another
+        # exact int. So form those products as the engine does (issue #93).
+        weight = self.match_weights[MatchType.SELF_REPORTED]
+        multiplier = self.max_information_multiplier
+        if (
+            isinstance(weight, int)
+            and isinstance(multiplier, int)
+            and isinstance(self.self_reported_repeat_factor, int)
+        ):
+            exact_weight = int.__int__(weight) * int.__int__(multiplier)
+            try:
+                step_weight = _as_float(exact_weight)
+            except OverflowError:
+                raise ConfigError(k_message) from None
+            if not math.isfinite(largest_k * step_weight):
+                raise ConfigError(k_message)
+            if isinstance(self.rd_shrink_per_match, int):
+                try:
+                    _as_float(int.__int__(self.rd_shrink_per_match) * exact_weight)
+                except OverflowError:
+                    raise ConfigError(
+                        "rd_shrink_per_match times the largest match weight and "
+                        "max_information_multiplier must be finite"
+                    ) from None
         if self.replay_interval_days <= 0:
             raise ConfigError("replay_interval_days must be positive")
         if self.diversity_window_days <= 0 or self.diversity_target <= 0:

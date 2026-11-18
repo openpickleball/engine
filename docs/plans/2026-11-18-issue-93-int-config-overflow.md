@@ -49,7 +49,10 @@ Option A (bound the int magnitudes of `match_weights`, `max_information_multipli
 
 Rejected (each asserts `pytest.raises(ConfigError, match=...)` and that the error is an `OpenEngineError` and not an `OverflowError` escaping):
 
-- The issue's repro: `w = m = math.isqrt(6 * 2**1024 // 10)`, `k_min=0, k_max=1`, every match weight `w`, `max_information_multiplier=m`, `self_reported_repeat_factor=1`, `rd_shrink_per_match=2`, `game_length_weights={11: int(sys.float_info.max), 15: 1.1, 21: 1.2}`. `w * m` does not convert.
+Every case uses `game_length_weights={11: int(sys.float_info.max), 15: 1.1, 21: 1.2}`, so `information_multiplier` returns `max_information_multiplier` itself.
+
+- The issue's repro: `w = m = math.isqrt(6 * 2**1024 // 10)`, `k_min=0, k_max=1`, every match weight `w`, `max_information_multiplier=m`, `self_reported_repeat_factor=1`, `rd_shrink_per_match=2`. `w * m` converts (about `1.0786e308`), so the K check passes. The overflow is `2 * w * m` at the RD line, so the expected message is the `rd_shrink_per_match` one.
+- No float conversion (K path): `w = 2**511 + 2**458 - 1`, `m = 2**513 - 2**459 - 1`, `k_min=0, k_max=1`, factor `1`, `rd_shrink_per_match=0`. Each rounds down to a float (`2**511` and `2**513 - 2**460`) whose product is the largest finite float, so the existing float check passes, but `w * m` does not convert. On main a self-reported `record` raises `OverflowError` at the `raw_delta` line. (`w = m = 2**512` does not work here: the existing float check already rejects it on main.)
 - The ulp case: `w = m = 2**511 + 2**457` (`float(w * w) > float(w) ** 2`), `k_min = k_max = K` where `K` is the largest float with `K * (float(w) * float(m))` finite, factor `1`, `rd_shrink_per_match=0`. On main a self-reported match with equal points (`win_weight=0`, games `(11, 9), (0, 11), (11, 2)`, `best_of=3`) moves all four players to `max_rating` with `clamped=()`.
 - The RD case: `w = m = 2**511`, `k_min=0, k_max=1`, factor `1`, `rd_shrink_per_match=4` (int). `w * m = 2**1022` converts; `4 * 2**1022` does not. On main `record` of a self-reported match raises `OverflowError`.
 - Only the self-reported weight needs to be int: the same configs with only `match_weights[SELF_REPORTED]` set to the int and the other weights `1.0` are rejected too.
@@ -62,7 +65,7 @@ Accepted (still build, and `record` plus `replay` of a self-reported match and a
 - An int `rd_shrink_per_match` with float weights: builds.
 - `Config()` builds and its fingerprint is `17f2981186edf96c`.
 
-No rating change for a valid config: a parametrized test over a small grid of int and float configs that build (int and float weights, multiplier, factor, shrink) records a fixed synthetic ledger and compares each `MatchResult` and final state with values pinned from main (computed before the fix, recorded in the test). Since no rating code changes, the comparison is a guard, and the Proof section records a one-off script run against `origin/main`.
+No rating change for a valid config: a parametrized test over a small grid of int and float configs that build (int and float weights, multiplier, factor, shrink) records a fixed synthetic ledger and compares each match's `effective_weight` and every player's final rating and RD, after `record` and after `replay`, with values pinned from main (computed before the fix, recorded in the test). Since no rating code changes, the comparison is a guard, and the Proof section records a one-off script run against `origin/main`.
 
 ## Risks
 
@@ -75,4 +78,22 @@ No rating change for a valid config: a parametrized test over a small grid of in
 Measured on `origin/main` (c263831):
 
 - The issue repro raises `OverflowError: int too large to convert to float` from `engine.record`.
-- With `w = m = 2**511 + 2**460*...` (seeded search), `k_min = k_max = 3.9999999999999996`, factor `1`, `rd_shrink_per_match=0`, `win_weight=0`, a self-reported match with equal points returns `surprise=0.0`, every delta `4.5`, every rating `8.0` (`max_rating`), `clamped=()`, `imbalance=9.0`.
+- The issue repro's `OverflowError` is raised at the RD line, `state.rd * (1.0 - cfg.rd_shrink_per_match * effective_weight)`: `float(w * m)` is `1.0786158809173895e+308`, and `2 * w * m` does not convert.
+- With `w = m = 2**511 + 2**457`, `k_min = k_max = 3.9999999999999996` (the largest float with `K * float(w) ** 2` finite), factor `1`, `rd_shrink_per_match=0`, `win_weight=0`, a self-reported match with equal points (games `(11, 9), (0, 11), (11, 2)`) returns `surprise=0.0`, every delta `4.5`, every rating `8.0` (`max_rating`), `clamped=()`, `imbalance=9.0`.
+- The RD case (`w = m = 2**511`, `rd_shrink_per_match=4`) raises `OverflowError` at the RD line. The no-float-conversion case raises `OverflowError` at `raw_delta = sign * player_k(state, cfg) * effective_weight * surprise`.
+
+The rewritten test still catches the defect. In a scratch worktree at `git merge-base origin/main HEAD` (c263831), with only `tests/test_int_config_overflow.py` copied in (`$SP` is the session scratchpad):
+
+```
+git worktree add --detach $SP/base $(git merge-base origin/main HEAD)
+cp tests/test_int_config_overflow.py $SP/base/tests/
+cd $SP/base && PYTHONPATH=$SP/base/src .venv/bin/python -m pytest -p no:cacheprovider tests/test_int_config_overflow.py -q
+```
+
+Result: `8 failed, 11 passed`. All 8 failures are the rejected cases (4 cases, all-int and SR-only-int), each `Failed: DID NOT RAISE ConfigError`: the config builds on main. The 11 passing tests are the accepted, fingerprint, and pinned-rating guards. The worktree was then removed.
+
+No rating change for a valid config, compared against main. `$SP/compare.py` builds the pinned grid plus five more configs that build before and after (at the bound, a float repeat factor, a float self-reported weight, an int shrink with float weights, small int weights with float K), records the grid ledger plus a self-reported and a tournament match, and prints every `effective_weight` (value and type), `deltas`, `clamped`, `imbalance`, the final rating and RD of every player after `record` and after `replay`, and `Config().fingerprint()`. Run once with `sys.path` starting at the merge-base `src` and once at this branch's `src`, then `diff main.out fix.out`: 101 lines each, identical. The fingerprint is `17f2981186edf96c` in both.
+
+## Approvals
+
+- The coordinator approved rewriting the frozen test's issue-repro cases after the red commit. The plan said `w * m` does not convert for the issue's repro, but it does (about `1.0786e308`). The repro's `OverflowError` comes from the RD line, so those cases must expect the `rd_shrink_per_match` message, not the K message. The same approval added the no-float-conversion case, so the K path keeps its own rejected test. The rewritten test was frozen again from its commit.
