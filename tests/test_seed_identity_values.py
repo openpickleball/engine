@@ -9,6 +9,8 @@ are synthetic.
 
 from __future__ import annotations
 
+import copy
+import time
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import date
@@ -265,3 +267,65 @@ def test_identity_methods_reject_whitespace(
     with pytest.raises(PlayerError, match=message):
         call(eng)
     assert eng.players == {}
+
+
+NON_STR_ROWS: list[tuple[str, Callable[[RatingEngine], object], str]] = [
+    ("link_int_account", lambda e: e.link_account("syn-c", 5), r"^account_user_id is required$"),
+    (
+        "link_bytes_account",
+        lambda e: e.link_account("syn-c", b"acct"),
+        r"^account_user_id is required$",
+    ),
+    (
+        "attach_int_external_id",
+        lambda e: e.attach_external_id("syn-c", "src", 7),
+        r"^source and external_player_id are required$",
+    ),
+    ("link_int_player_id", lambda e: e.link_account(5, "acct-1"), r"^player_id is required$"),
+    (
+        "attach_int_player_id",
+        lambda e: e.attach_external_id(5, "src", "x1"),
+        r"^player_id is required$",
+    ),
+    ("player_int_id", lambda e: e.player(5), r"^player_id is required$"),
+]
+
+
+@pytest.mark.parametrize(
+    ("call", "message"), [row[1:] for row in NON_STR_ROWS], ids=[row[0] for row in NON_STR_ROWS]
+)
+def test_identity_methods_reject_non_str(
+    call: Callable[[RatingEngine], object], message: str
+) -> None:
+    eng = RatingEngine(CFG)
+    with pytest.raises(PlayerError, match=message):
+        call(eng)
+    assert eng.players == {}
+
+
+def test_resume_conflict_leaves_the_checkpoint_unchanged() -> None:
+    first = Player("syn-a", {}, account_user_id="acct-1")
+    checkpoint = replay([], [first], cfg=CFG, as_of=AS_OF).to_snapshot()
+    before = copy.deepcopy(checkpoint)
+    seeds = [
+        Player("syn-b", {}, account_user_id="acct-2"),
+        Player("syn-c", {}, account_user_id="acct-1"),
+    ]
+    with pytest.raises(PlayerError, match=ACCOUNT_TAKEN):
+        replay([], seeds, cfg=CFG, as_of=AS_OF, from_snapshot=checkpoint)
+    assert checkpoint == before
+    resumed = replay([], seeds[:1], cfg=CFG, as_of=AS_OF, from_snapshot=checkpoint)
+    assert set(resumed.players) == {"syn-a", "syn-b"}
+
+
+def test_many_seeds_are_checked_in_linear_time() -> None:
+    # The uniqueness check once scanned every player per seed, so 20,000
+    # seeds took about 9 s. A set lookup per seed takes well under 1 s.
+    seeds = [
+        Player(f"syn-{i}", {}, account_user_id=f"acct-{i}", external_ids={"src": f"x{i}"})
+        for i in range(20_000)
+    ]
+    start = time.perf_counter()
+    engine = replay([], seeds, cfg=CFG, as_of=AS_OF)
+    assert time.perf_counter() - start < 3.0
+    assert len(engine.players) == 20_000

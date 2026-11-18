@@ -1592,6 +1592,20 @@ def _check_seed_date(player: Player, latest: date, limit: str) -> None:
             )
 
 
+@dataclass
+class _HeldIdentities:
+    """Accounts and (source, external id) pairs held by players, for seed checks."""
+
+    accounts: set[str] = field(default_factory=set)
+    external_ids: set[tuple[str, str]] = field(default_factory=set)
+
+    def add(self, player: Player) -> None:
+        """Record the player's account and external identities as held."""
+        if player.account_user_id is not None:
+            self.accounts.add(player.account_user_id)
+        self.external_ids.update(player.external_ids.items())
+
+
 def _check_seed_identity(player: object) -> None:
     """Raise InvalidSeedError unless the seed is a Player with a non-blank str id."""
     if not isinstance(player, Player):
@@ -2508,9 +2522,9 @@ class RatingEngine:
         also an RD of at least category_seed_rd and an rd_as_of that is set
         and no later than the parent state's. Identities are only type checked
         (account_user_id a str or null, external_ids str to str), since
-        they do not affect ratings. The engine's own methods no longer
-        build shared or blank ones, but a snapshot holding them still
-        loads. A resumable snapshot also holds no
+        they do not affect ratings. The engine's seed and link methods
+        do not create shared or blank ones, but a snapshot holding them
+        still loads. A resumable snapshot also holds no
         date after calculated_as_of and no nonzero inherited_live_updates,
         and its replay_info counts equal the
         number of ledger digests and processed match ids. These checks
@@ -2545,7 +2559,7 @@ class RatingEngine:
         only in uncounted rows, or in rows after a replay's as_of, has no
         player record.
         """
-        if not player_id or not player_id.strip():
+        if not _is_id(player_id):
             raise PlayerError("player_id is required")
         if player_id not in self.players:
             raise UnknownPlayerError(f"Unknown player: {player_id}")
@@ -2594,32 +2608,43 @@ class RatingEngine:
         its (source, external id) pairs, with the messages link_account and
         attach_external_id use. Nothing changes when either is raised.
         """
+        self._add_seed(player, self._held_identities())
+
+    def _held_identities(self) -> _HeldIdentities:
+        """The accounts and (source, external id) pairs the engine's players hold."""
+        held = _HeldIdentities()
+        for p in self.players.values():
+            held.add(p)
+        return held
+
+    def _add_seed(self, player: Player, held: _HeldIdentities) -> None:
+        """
+        add_player, with the identities already held passed in.
+
+        held must hold every identity of the engine's players; it gains the
+        seed's identities once the seed is added. A batch of seeds builds it
+        once, so each seed's uniqueness check is a set lookup instead of a
+        scan of every player.
+        """
         _check_seed_identity(player)
         if player.id in self.players:
             raise PlayerError(f"Player already exists: {player.id}")
         _validate_seed(player, self.cfg)
-        self._check_seed_links(player)
-        self._put_player(clone_player(player))
-
-    def _check_seed_links(self, player: Player) -> None:
-        """
-        Raise PlayerError when another player holds the seed's identities.
-
-        The same uniqueness rules, with the same messages, as link_account
-        and attach_external_id. Changes nothing.
-        """
+        # The same uniqueness rules, with the same messages, as link_account
+        # and attach_external_id.
         account = player.account_user_id
-        if account is not None and any(p.account_user_id == account for p in self.players.values()):
+        if account is not None and account in held.accounts:
             raise PlayerError("This account is already linked to another player profile")
         for source in sorted(player.external_ids):
-            external_player_id = player.external_ids[source]
-            if any(p.external_ids.get(source) == external_player_id for p in self.players.values()):
+            if (source, player.external_ids[source]) in held.external_ids:
                 raise PlayerError("This external identity is already linked to another player")
+        self._put_player(clone_player(player))
+        held.add(player)
 
     @staticmethod
     def _check_player_id(player_id: str) -> None:
         """Raise PlayerError for a blank player id."""
-        if not player_id or not player_id.strip():
+        if not _is_id(player_id):
             raise PlayerError("player_id is required")
 
     def _check_account(self, player_id: str, account_user_id: str) -> None:
@@ -3358,8 +3383,9 @@ def _replay(
     """
     engine = RatingEngine(cfg) if start is None else start
     named_before = frozenset(engine._ledger_player_ids)
+    held = engine._held_identities()
     for player in seed_players:
-        engine.add_player(player)
+        engine._add_seed(player, held)
         if player.id in named_before:
             raise SnapshotError(
                 f"Cannot resume: the seed for {player.id} names a player in rows the "
@@ -3565,8 +3591,9 @@ def prequential_predictions(
     # earlier seeds too, in the same order and with the same messages, so
     # both modes reject the same seeds before any rating work.
     scratch = RatingEngine(cfg)
+    held = scratch._held_identities()
     for player in seeds:
-        scratch.add_player(player)
+        scratch._add_seed(player, held)
         if completed:
             _check_seed_date(player, completed[-1].played_on, "the last completed ledger match")
     predictions: list[PrequentialPrediction] = []
@@ -3585,8 +3612,9 @@ def prequential_predictions(
 
     if mode == "live":
         engine = RatingEngine(cfg)
+        held = engine._held_identities()
         for player in seeds:
-            engine.add_player(player)
+            engine._add_seed(player, held)
         for match in ordered:
             step(engine, match)
         return predictions

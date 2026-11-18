@@ -46,6 +46,12 @@ Error choice: #52 asks for `InvalidSeedError` for blank values on a seed and `Pl
 - `README.md`: `InvalidSeedError` and `PlayerError` bullets, and the snapshot schema's identities sentence.
 - `CHANGELOG.md`: a Breaking entry under Unreleased.
 
+## Revision after review
+
+- The first version scanned every player per seed, so a batch of N seeds took about N squared comparisons (20,000 seeds took about 9 s). `add_player` now calls `_add_seed(player, held)`, where `held` is a `_HeldIdentities` (sets of accounts and (source, external id) pairs). `add_player` builds it from the engine's players; `_replay` and both `prequential_predictions` modes build it once per batch and pass it to each seed. A test bounds 20,000 seeds at 3 s.
+- `_check_player_id` and `RatingEngine.player` use `_is_id`, so a non-str player id raises `PlayerError` instead of `AttributeError` (folded in: same identity checks, and CLAUDE.md allows only `OpenEngineError`s).
+- A seed state's `initial_source` and `initial_external_player_id` (imported provenance) are not checked against identities held by other players. That is out of this plan's scope and filed as issue #74.
+
 ## Order of work
 
 1. Write `tests/test_seed_identity_values.py`; run it red on the current code.
