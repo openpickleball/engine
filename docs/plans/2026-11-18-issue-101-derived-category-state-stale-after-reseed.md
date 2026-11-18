@@ -26,7 +26,7 @@ Script (synthetic ids): seed syn-b, syn-c, syn-d in mixed at 4.0 (2026-01-01); s
 - `src/open_engine/engine.py`: `seed_external_rating` refreshes derived children after `_put_state` of the new seed; its docstring says so; reword the two "dates may differ" notes.
 - `tests/test_reseed_refreshes_derived.py` (new): the tests below.
 - `README.md`: the `seed_external_rating` description under `InvalidSeedError` mentions the refresh, and the "dates may differ" parenthetical is reworded the same way.
-- `CHANGELOG.md`: Fixed entry.
+- `CHANGELOG.md`: entry under `### Security` (replay determinism), moved there from `### Fixed` after review.
 - Added during the work: three existing tests built a derived state dated before its parent by reseeding the parent, which the fix no longer allows. `tests/test_addendum_review_fixes.py::test_a_zero_count_state_keeps_its_own_source_date` now edits the snapshot to the pre-fix date, `tests/test_future_seed.py::_imported` builds the earlier-dated parent into the seed by hand, and `tests/test_reserved_provenance_shapes.py::test_parent_reseed_keeps_the_derived_state_loadable_and_seedable` asserts the refresh and then loads a hand-built seed with the old date. Each still checks the validation rule it was written for, since a seed or snapshot made before the fix can hold such a state.
 
 ## Order of work

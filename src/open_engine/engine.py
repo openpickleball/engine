@@ -4187,9 +4187,9 @@ class RatingEngine:
         from right after the seed: the new rating and date, with an RD of
         at least Config.category_seed_rd. Other category states, imported
         or provisional, are not changed. So a replay given the stored state
-        and one without it agree, as long as the player's doubles rating
-        does not move before that first category match. A stored state
-        does not follow later doubles changes (issue #112).
+        and one without it agree, as long as no counted match changes the
+        player's doubles state before that first category match. A stored
+        state does not follow later doubles changes (issue #112).
         The seed's RD is always Config.external_seed_rd: an external
         reliability is kept for display (imported_reliability), never turned
         into OPEN RD. There is no reference date here, so a snapshot captured
