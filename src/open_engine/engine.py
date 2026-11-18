@@ -1520,19 +1520,30 @@ class Match:
     and, like every rejected match, reserves the match_id: a later record
     call for a match with it that does not raise returns DUPLICATE_MATCH_ID.
 
-    match_id and the team player ids must each be a non-blank str, exactly
-    a str (not a subclass); validate raises InvalidMatchError otherwise.
-    The elements of confirmed_by are not type-checked.
+    The match must be a Match itself, not a subclass: record, replay, and
+    prequential_predictions (and so evaluate, fit_scale, and
+    fit_win_calibration) and ledger_order raise InvalidMatchError for a
+    subclass before they change any state or call its validate, and
+    Match.validate raises it for a subclass that does not override it. A
+    subclass could return one value to validation and another to rating.
+    The same calls raise it for a Match whose instance __dict__ holds
+    anything but its own fields, which could hide a method validate calls.
+
+    match_id, the team player ids, and each member of confirmed_by must be a
+    non-blank str, exactly a str (not a subclass); validate raises
+    InvalidMatchError otherwise.
 
     validate checks the type of status, rating_format, match_type, team_a,
     team_b, confirmed_by, game_format, played_at, sequence, and best_of. It
     raises InvalidMatchError when status is not a MatchStatus, rating_format
     is not a RatingFormat, or match_type is not a MatchType (a str is
-    rejected, even one equal to a member's value); when a team is not a
-    tuple; when confirmed_by is not a set or frozenset; when game_format is
-    not a GameFormat; when played_at is not a datetime or None; or when
-    sequence or best_of is not an int (a bool or float is rejected). games may
-    be a tuple or list. It also calls game_format.validate, which checks the
+    rejected, even one equal to a member's value); when a team is not
+    exactly a tuple; when confirmed_by is not exactly a set or frozenset;
+    when game_format is not a GameFormat; when played_at is not a datetime
+    or None; or when sequence or best_of is not an int (a bool or float is
+    rejected). games and each game in it must be exactly a tuple or list,
+    and each score exactly an int (a subclass of any of these is rejected).
+    It also calls game_format.validate, which checks the
     fields inside the format, and raises InvalidMatchError with the same
     message for a ConfigError that call raises.
     """
@@ -1564,13 +1575,14 @@ class Match:
 
     def validate(self) -> None:
         """Raise InvalidMatchError when not valid, its game format included."""
+        _require_plain_match(self)
         if not _is_id(self.match_id):
             raise InvalidMatchError("match_id is required for duplicate protection")
         if not isinstance(self.status, MatchStatus):
             raise InvalidMatchError(
                 f"status must be a MatchStatus, not {type(self.status).__name__}"
             )
-        self._validate_field_types()
+        Match._validate_field_types(self)
         completed = self.status is MatchStatus.COMPLETED
         expected_size = self.rating_format.team_size
         if len(self.team_a) != expected_size or len(self.team_b) != expected_size:
@@ -1582,6 +1594,8 @@ class Match:
             raise InvalidMatchError("Player ids must be non-empty strings")
         if len(set(all_ids)) != len(all_ids):
             raise InvalidMatchError("A player cannot appear more than once in a match")
+        if not all(_is_id(pid) for pid in self.confirmed_by):
+            raise InvalidMatchError("confirmed_by player ids must be non-empty strings")
         if not set(self.confirmed_by) <= set(all_ids):
             raise InvalidMatchError("confirmed_by may only contain match participants")
         if not _is_plain_date(self.played_on):
@@ -1595,7 +1609,7 @@ class Match:
             raise InvalidMatchError("played_at must fall on played_on")
         if self.sequence < 0:
             raise InvalidMatchError("sequence must be nonnegative")
-        if not isinstance(self.games, (tuple, list)):
+        if type(self.games) not in (tuple, list):
             raise InvalidMatchError(
                 f"games must be a tuple or list, not {type(self.games).__name__}"
             )
@@ -1603,7 +1617,7 @@ class Match:
             raise InvalidMatchError("At least one game score is required")
         if self.status is MatchStatus.FORFEIT and self.games:
             raise InvalidMatchError("A forfeit cannot have game scores")
-        if not all(isinstance(game, (tuple, list)) and len(game) == 2 for game in self.games):
+        if not all(type(game) in (tuple, list) and len(game) == 2 for game in self.games):
             raise InvalidMatchError("Each game must be a pair of scores")
         if self.best_of < 1 or self.best_of % 2 == 0:
             raise InvalidMatchError("best_of must be a positive odd number")
@@ -1614,10 +1628,7 @@ class Match:
         except ConfigError as err:
             raise InvalidMatchError(str(err)) from None
         for score_a, score_b in self.games:
-            if not all(
-                isinstance(score, int) and not isinstance(score, bool)
-                for score in (score_a, score_b)
-            ):
+            if not all(type(score) is int for score in (score_a, score_b)):
                 raise InvalidMatchError("Game scores must be integers")
             if score_a < 0 or score_b < 0 or score_a == score_b:
                 raise InvalidMatchError("Game scores must be nonnegative and cannot be tied")
@@ -1645,18 +1656,25 @@ class Match:
 
         Runs before validate uses any of these fields. A str equal to an enum
         member's value is rejected, a list team is rejected, and a bool or
-        float sequence or best_of is rejected.
+        float sequence or best_of is rejected. Teams and confirmed_by must be
+        exactly their types: a subclass could give validation one value and
+        rating another.
         """
         checks: tuple[tuple[str, object, type | tuple[type, ...], str], ...] = (
             ("rating_format", self.rating_format, RatingFormat, "a RatingFormat"),
             ("match_type", self.match_type, MatchType, "a MatchType"),
-            ("team_a", self.team_a, tuple, "a tuple"),
-            ("team_b", self.team_b, tuple, "a tuple"),
-            ("confirmed_by", self.confirmed_by, (set, frozenset), "a set or frozenset"),
             ("game_format", self.game_format, GameFormat, "a GameFormat"),
         )
         for name, value, kind, label in checks:
             if not isinstance(value, kind):
+                raise InvalidMatchError(f"{name} must be {label}, not {type(value).__name__}")
+        exact: tuple[tuple[str, object, tuple[type, ...], str], ...] = (
+            ("team_a", self.team_a, (tuple,), "a tuple"),
+            ("team_b", self.team_b, (tuple,), "a tuple"),
+            ("confirmed_by", self.confirmed_by, (set, frozenset), "a set or frozenset"),
+        )
+        for name, value, kinds, label in exact:
+            if type(value) not in kinds:
                 raise InvalidMatchError(f"{name} must be {label}, not {type(value).__name__}")
         if self.played_at is not None and not isinstance(self.played_at, datetime):
             raise InvalidMatchError(
@@ -1665,6 +1683,43 @@ class Match:
         for name, number in (("sequence", self.sequence), ("best_of", self.best_of)):
             if not isinstance(number, int) or isinstance(number, bool):
                 raise InvalidMatchError(f"{name} must be an int, not {type(number).__name__}")
+
+
+def _require_plain_match(match: object) -> None:
+    """
+    Raise InvalidMatchError unless match is a Match itself, not a subclass.
+
+    A subclass can override a field with a property that changes between
+    reads, or override validate, and so pass validation with one value and
+    be rated with another. An exact Match must also hold nothing in its
+    instance __dict__ but its own fields: another entry there could hide a
+    method validate calls, such as validate or _validate_field_types, or
+    the field list (__dataclass_fields__).
+    """
+    if type(match) is not Match:
+        raise InvalidMatchError(f"match must be a Match, not {type(match).__name__}")
+    held = vars(match)
+    # An exact dict, so __len__ and __iter__ cannot hide an entry.
+    if (
+        type(held) is not dict
+        or len(held) != len(_MATCH_FIELD_NAMES)
+        or not all(type(name) is str and name in _MATCH_FIELD_NAMES for name in held)
+    ):
+        raise InvalidMatchError("match has attributes that are not Match fields")
+
+
+_MATCH_FIELD_NAMES = frozenset(f.name for f in fields(Match))
+
+
+def _validate_match(match: Match) -> None:
+    """
+    Check that match is a Match itself, then validate it; InvalidMatchError if not.
+
+    The type check comes first, so a subclass's own validate never runs and
+    an instance __dict__ that holds anything but the fields raises.
+    """
+    _require_plain_match(match)
+    Match.validate(match)
 
 
 def _is_plain_str(value: object) -> TypeGuard[str]:
@@ -1702,8 +1757,10 @@ def ledger_order(match: Match) -> tuple[date, int, datetime, int, str]:
     Matches sort by played_on. Within one day, untimed matches come first,
     by sequence then match_id. Timed matches follow, by the UTC instant of
     played_at, then sequence, then match_id. played_at must be
-    timezone-aware; a naive value raises InvalidMatchError.
+    timezone-aware; a naive value raises InvalidMatchError, and so does a
+    match that is not exactly a Match (a subclass included).
     """
+    _require_plain_match(match)
     if match.played_at is None:
         return (match.played_on, 0, _UTC_MIN, match.sequence, match.match_id)
     return (match.played_on, 1, _utc_instant(match.played_at), match.sequence, match.match_id)
@@ -1724,7 +1781,7 @@ def _ledger(matches: Iterable[Match]) -> list[Match]:
     by_id: dict[str, tuple[Match, tuple[object, ...]]] = {}
     conflicts: set[str] = set()
     for match in matches:
-        match.validate()
+        _validate_match(match)
         key = _canonical(match)
         _, kept_key = by_id.setdefault(match.match_id, (match, key))
         if kept_key != key:
@@ -1746,7 +1803,7 @@ def _canonical(match: Match) -> tuple[object, ...]:
     with distinct zone objects inside a fold as unequal.
     """
     others = tuple(
-        (f.name, _strict(getattr(match, f.name))) for f in fields(match) if f.name != "played_at"
+        (f.name, _strict(getattr(match, f.name))) for f in fields(Match) if f.name != "played_at"
     )
     if match.played_at is None:
         return (others, None, None)
@@ -1764,7 +1821,7 @@ def _strict(value: object) -> object:
     if is_dataclass(value) and not isinstance(value, type):
         return (
             type(value),
-            tuple((f.name, _strict(getattr(value, f.name))) for f in fields(value)),
+            tuple((f.name, _strict(getattr(value, f.name))) for f in fields(type(value))),
         )
     if isinstance(value, (tuple, list)):
         return (type(value), tuple(_strict(item) for item in value))
@@ -1783,7 +1840,7 @@ def _match_digest(match: Match) -> str:
     whether a row it is given is the row the checkpoint saw.
     """
     others = [
-        [f.name, _json_form(getattr(match, f.name))] for f in fields(match) if f.name != "played_at"
+        [f.name, _json_form(getattr(match, f.name))] for f in fields(Match) if f.name != "played_at"
     ]
     timing: list[object] | None = None
     if match.played_at is not None:
@@ -1810,7 +1867,7 @@ def _json_form(value: object) -> object:
     """
     tag = f"{type(value).__module__}.{type(value).__qualname__}"
     if is_dataclass(value) and not isinstance(value, type):
-        return [tag, [[f.name, _json_form(getattr(value, f.name))] for f in fields(value)]]
+        return [tag, [[f.name, _json_form(getattr(value, f.name))] for f in fields(type(value))]]
     if isinstance(value, (tuple, list)):
         return [tag, [_json_form(item) for item in value]]
     if isinstance(value, (frozenset, set)):
@@ -4960,7 +5017,7 @@ class RatingEngine:
         ReplayInfo.net_rating_created.
         """
         net: dict[RatingFormat, float] = {}
-        match.validate()
+        _validate_match(match)
         if as_of is not None and not _is_plain_date(as_of):
             raise InvalidMatchError(
                 f"as_of must be a plain date (not a datetime), not {type(as_of).__name__}"
@@ -5755,7 +5812,7 @@ def prequential_predictions(
     predictions: list[PrequentialPrediction] = []
 
     def step(engine: RatingEngine, match: Match) -> None:
-        match.validate()
+        _validate_match(match)
         eligible = (
             (scoring is None or match.game_format.scoring is scoring)
             and (score_from is None or match.played_on >= score_from)
