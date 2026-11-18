@@ -21,6 +21,7 @@ from open_engine import (
     MatchType,
     RatingEngine,
     RatingFormat,
+    SnapshotError,
     replay,
 )
 
@@ -84,3 +85,20 @@ def test_an_external_seed_without_an_external_id_loads() -> None:
     players = snapshot["players"]
     assert isinstance(players, list)
     assert players[0]["external_ids"] == {}
+
+
+def test_resume_refuses_a_live_update_count_in_a_snapshot_that_is_not_resumable() -> None:
+    engine = replay(LEDGER, as_of=AS_OF)
+    engine.link_account("syn-a", "acct-1")
+    snapshot: Snap = json.loads(json.dumps(engine.to_snapshot()))
+    assert snapshot["resumable"] is False
+    players = snapshot["players"]
+    assert isinstance(players, list)
+    assert players[0]["id"] == "syn-a"
+    state = players[0]["ratings"]["doubles"]
+    assert state["matches_played"] > 0
+    state["live_updates_since_replay"] = 1
+    with pytest.raises(
+        SnapshotError, match=r"^Cannot resume: the snapshot has live updates since its replay$"
+    ):
+        replay(LEDGER, as_of=AS_OF, from_snapshot=snapshot)
