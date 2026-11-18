@@ -126,6 +126,13 @@ Message rules: keep every existing message. A type or finiteness failure on a sc
 `"<name> must be None or a finite number"`. Mapping values keep
 `"<name> values must be finite numbers"`. New range failures name the field and the bound.
 
+Departure found while implementing: existing tests match a combined message for a type or
+finiteness failure in six fields, so those fields keep it for type failures too:
+`established_reliability_threshold` (NaN gives "must be between 0 and 100"),
+`established_min_verified_matches` ("must be a nonnegative int"),
+`connectivity_reliability_cap` ("must be None or a number from 0 to 100"), and the three
+connectivity counts ("must be a positive int"). Every other field uses the messages above.
+
 ## Files that change
 
 - `src/open_engine/engine.py`: `Config.__post_init__` rewritten as one pass: type and
