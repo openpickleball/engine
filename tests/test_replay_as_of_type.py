@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from open_engine import Match, RatingFormat, ReferenceDateError, replay
+from open_engine import Match, Player, RatingFormat, ReferenceDateError, replay
 
 D = RatingFormat.DOUBLES
 M1 = Match("syn-m1", ("syn-a", "syn-b"), ("syn-c", "syn-d"), ((11, 5),), date(2026, 3, 2), D)
@@ -50,6 +50,18 @@ def test_bad_as_of_raises_before_row_checks(as_of: object) -> None:
 def test_bad_as_of_raises_before_whole_ledger_checks(whole_ledger: object) -> None:
     with pytest.raises(ReferenceDateError, match="as_of"):
         replay([M1], as_of=datetime(2026, 3, 31), whole_ledger=whole_ledger)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("as_of", list(BAD_AS_OF.values()), ids=list(BAD_AS_OF))
+def test_bad_as_of_raises_before_seed_checks(as_of: object) -> None:
+    with pytest.raises(ReferenceDateError, match="as_of"):
+        replay([], [Player("syn-z"), Player("syn-z")], as_of=as_of)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("as_of", list(BAD_AS_OF.values()), ids=list(BAD_AS_OF))
+def test_bad_as_of_raises_before_snapshot_load(as_of: object) -> None:
+    with pytest.raises(ReferenceDateError, match="as_of"):
+        replay([M1], as_of=as_of, from_snapshot={})  # type: ignore[arg-type]
 
 
 def test_date_subclass_as_of_is_accepted() -> None:
