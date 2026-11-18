@@ -849,11 +849,13 @@ class Config:
       max_information_multiplier, and self_reported_repeat_factor are all
       ints, and information_multiplier can return
       max_information_multiplier itself. The check counts it as
-      reachable when, for some allowed format, the length weight times
-      the game count factor at sys.maxsize games (the most len()
-      returns) is not below it, so it can reject a config whose
-      multiplier only a match too long to build would reach. Then the
-      weight times the multiplier must convert to a float, the largest K
+      reachable when, for some (scoring, points) in allowed_game_formats,
+      game_length_weights[points] * (1.0 + game_count_bonus *
+      (sys.maxsize - 1)) is not below it (sys.maxsize is the most games
+      len() can report). No real match has that many games, so the check
+      can reject a config whose multiplier no real match reaches. When it
+      is reachable, the self-reported weight times the multiplier must
+      convert to a float, the largest K
       times that float must be finite, and with an int
       rd_shrink_per_match, rd_shrink_per_match times the exact product
       must convert too.
