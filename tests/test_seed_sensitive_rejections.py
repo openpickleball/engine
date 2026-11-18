@@ -164,10 +164,19 @@ def test_a_baseline_rejected_doubles_update_of_a_counted_category_match_is_recor
     assert RatingEngine.from_snapshot(snap).to_snapshot() == snap
 
 
-def test_the_doubles_seed_for_a_counted_category_match_with_a_rejected_parent_is_refused() -> None:
+def test_the_79_rule_refuses_a_doubles_seed_after_a_rejected_parent_update() -> None:
+    # The counted category match refuses the doubles seed first (issue #79
+    # rule); the rejected doubles update is still recorded.
     engine = _gap_engine()
+    assert engine._seed_sensitive_rejections["syn-mx"] == (
+        D,
+        ("syn-p", "syn-q", "syn-r", "syn-s"),
+    )
     before = engine.to_snapshot()
-    with pytest.raises(InvalidSeedError):
+    with pytest.raises(
+        InvalidSeedError,
+        match="Cannot seed a rating that a counted mixed_doubles match for this player depends on",
+    ):
         engine.seed_external_rating("syn-r", D, _snap(4.0))
     assert engine.to_snapshot() == before
 
@@ -595,6 +604,8 @@ CONFIGS = {
         category_feeds_parent=False, max_singles_rating_gap=0.6, max_doubles_partner_gap=0.6
     ),
     "reject copies": Config(reject_content_duplicates=True, max_doubles_partner_gap=0.6),
+    "apart no gaps": Config(category_feeds_parent=False),
+    "both gaps": Config(max_singles_rating_gap=0.6, max_doubles_partner_gap=0.6),
 }
 START = date(2025, 1, 1)
 END = date(2025, 5, 1)  # the last seed date
@@ -801,3 +812,62 @@ def test_fuzz_every_engine_made_snapshot_loads() -> None:
         "doubles_partner_gap:",
         "doubles_partner_gap:parent",
     } <= seen
+
+
+def _seed_attempt(
+    engine: RatingEngine, rng: random.Random, pool: list[str]
+) -> tuple[str, RatingFormat] | str:
+    """
+    Try one random seed. Returns (player, format) when accepted, else the error text.
+    """
+    pid = rng.choice(pool + ["syn-new"])
+    fmt = rng.choice(FORMATS)
+    on = START + timedelta(days=rng.randrange(-20, (END - START).days))
+    rating = round(rng.uniform(2.5, 6.0), 2)
+    try:
+        if rng.random() < 0.7:
+            engine.seed_external_rating(
+                pid, fmt, _snap(rating, on), replace_unplayed_seed=rng.random() < 0.5
+            )
+        else:
+            engine.add_player(_seed(pid, fmt, rating, on))
+    except OpenEngineError as exc:
+        return str(exc)
+    return pid, fmt
+
+
+@pytest.mark.parametrize("name", sorted(CONFIGS))
+def test_fuzz_live_seeds_between_matches_equal_a_replay_of_the_accepted_seeds(
+    name: str,
+) -> None:
+    # Every seed live accepts between matches must give the same state as
+    # a replay that adds it before every row.
+    cfg = CONFIGS[name]
+    refusals = 0
+    for seed in range(4):
+        rng = random.Random(1000 + seed)
+        pool = [f"syn-p{i:02d}" for i in range(10)]
+        rows = sorted(_ledger(rng, pool, 40), key=ledger_order)
+        engine = RatingEngine(cfg)
+        accepted: dict[tuple[str, RatingFormat], RatingState] = {}
+        for player in _seeds(rng, pool):
+            engine.add_player(player)
+            for fmt, state in player.ratings.items():
+                accepted[(player.id, fmt)] = copy.deepcopy(state)
+        for match in rows:
+            engine.record(match)
+            for _ in range(2):
+                outcome = _seed_attempt(engine, rng, pool)
+                if isinstance(outcome, str):
+                    refusals += "could count with a new seed" in outcome
+                    continue
+                pid, fmt = outcome
+                accepted[(pid, fmt)] = copy.deepcopy(engine.players[pid].ratings[fmt])
+        seeds: dict[str, Player] = {}
+        for (pid, fmt), state in sorted(accepted.items(), key=lambda item: item[0][0]):
+            seeds.setdefault(pid, Player(id=pid)).ratings[fmt] = state
+        full = replay(rows, list(seeds.values()), cfg=cfg, as_of=AS_OF)
+        assert _normalized(_round_trips(engine)) == _normalized(_round_trips(full))
+    # Some seeds were refused for a seed-sensitive rejection, so the
+    # comparison covers the refusal, not only seeds nothing blocks.
+    assert refusals

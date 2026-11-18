@@ -1841,9 +1841,9 @@ class RejectionReason(_StrEnum):
 
     BEFORE_IMPORTED_BASELINE, SINGLES_RATING_GAP, and DOUBLES_PARTNER_GAP
     read the players' seeded ratings or dates, so record also keeps the
-    players of an update rejected for one of them, and the seed methods
-    refuse a seed that could change it (see
-    RatingEngine.seed_external_rating).
+    players of an update rejected for one of them, and
+    RatingEngine.seed_external_rating and RatingEngine.add_player refuse a
+    seed that could change it (see seed_external_rating).
     """
 
     DUPLICATE_MATCH_ID = "duplicate_match_id"
@@ -3440,6 +3440,33 @@ def _has_dated_baseline(player: Player | None, fmt: RatingFormat, cfg: Config) -
     return base is not None and base.initial_source_date is not None
 
 
+def _names_category_match(named: Sequence[str], players: Mapping[str, Player]) -> bool:
+    """
+    True when named could be the players of a counted category match.
+
+    A counted match moves at least one player, and that player's played
+    state in the match's category records one other player as a partner
+    and the other two as opponents. Those maps are never pruned. Not every
+    player needs a state there: a frozen player can be frozen through a
+    category state derived from overall doubles that was never stored.
+    """
+    for pid in named:
+        player = players[pid]
+        others = set(named) - {pid}
+        for fmt in RatingFormat:
+            if fmt.parent is not RatingFormat.DOUBLES:
+                continue
+            state = player.ratings.get(fmt)
+            if state is None or state.matches_played == 0:
+                continue
+            # The maps span every match the state played, so a named
+            # player can be in both: try each one as the partner.
+            for partner in sorted(others & set(state.partners)):
+                if others - {partner} <= set(state.opponents):
+                    return True
+    return False
+
+
 def _snap_seed_sensitive_rejections(
     value: object,
     players: Mapping[str, Player],
@@ -3504,6 +3531,12 @@ def _snap_seed_sensitive_rejections(
             for pid in named:
                 if pid not in players:
                     raise SnapshotError(f"{path}.players names {pid!r}, which is not in players")
+            if not _names_category_match(named, players):
+                raise SnapshotError(
+                    f"{path} names no player with a played category state that has one "
+                    "other named player as a partner and the other two as opponents, as a "
+                    "counted category match leaves"
+                )
         elif key in reserved:
             if key in duplicates:
                 raise SnapshotError(
@@ -4053,7 +4086,9 @@ class RatingEngine:
         size of non-blank str ids, sorted with no repeats. Its match_id is
         a reserved id that is not a possible_duplicates key, or a processed
         id with rating_format doubles under category_feeds_parent whose
-        every named player is in players. With no gap rule for its format
+        every named player is in players, one of them with a played
+        category state that has one other named player as a partner and
+        the other two as opponents. With no gap rule for its format
         (max_singles_rating_gap for singles, max_doubles_partner_gap for
         the others), every named player has a state with an
         initial_source_date there or, with none stored, under
@@ -4221,7 +4256,8 @@ class RatingEngine:
           DOUBLES_PARTNER_GAP that names the seed's id, nor, under
           Config.category_feeds_parent, in that format's parent, as
           seed_external_rating refuses. Only add_player checks this, after
-          the duplicate id: replay adds its seeds before any row, and
+          the other seed rules and the duplicate id check and before the
+          account and external identity uniqueness checks: replay adds its seeds before any row, and
           resume refuses a seed for any player in a row its checkpoint
           considered.
         add_player has no reference date, so it does not check that
@@ -4552,18 +4588,22 @@ class RatingEngine:
         state without a stored one starts. A replay adds every seed before
         any row, so a new seed could make it count a row live rejected.
         """
-        for match_id in sorted(self._seed_sensitive_rejections):
-            fmt, players = self._seed_sensitive_rejections[match_id]
-            if player_id not in players:
-                continue
-            if fmt is rating_format or (
-                self.cfg.category_feeds_parent and fmt.parent is rating_format
-            ):
-                raise InvalidSeedError(
-                    f"Cannot seed: a rejected {fmt.value} match that named this player "
-                    f"({match_id}) could count with a new seed; a new seed for this player "
-                    "needs a full replay from corrected seeds"
-                )
+        feeds = self.cfg.category_feeds_parent
+        blocking = [
+            match_id
+            for match_id, (fmt, players) in self._seed_sensitive_rejections.items()
+            if player_id in players
+            and (fmt is rating_format or (feeds and fmt.parent is rating_format))
+        ]
+        if blocking:
+            # The smallest id, so the message does not depend on dict order.
+            match_id = min(blocking)
+            fmt = self._seed_sensitive_rejections[match_id][0]
+            raise InvalidSeedError(
+                f"Cannot seed: a rejected {fmt.value} match that named this player "
+                f"({match_id}) could count with a new seed; a new seed for this player "
+                "needs a full replay from corrected seeds"
+            )
 
     def _in_counted_match(self, player_id: str, rating_format: RatingFormat) -> bool:
         """
@@ -4730,8 +4770,13 @@ class RatingEngine:
         second row with one id. A corrected resubmission (for example a
         self-reported match after confirmation) needs a new match_id; see
         the module notes for which rejections allow one. A match rejected as
-        a possible duplicate is also recorded in possible_duplicates. Either
-        change clears the snapshot's resumable mark. A match whose status
+        a possible duplicate is also recorded in possible_duplicates. A
+        match rejected for BEFORE_IMPORTED_BASELINE, SINGLES_RATING_GAP, or
+        DOUBLES_PARTNER_GAP is also recorded, with its players and format,
+        in seed_sensitive_rejections (see to_snapshot), and so is a counted
+        category match whose overall doubles update is rejected for one of
+        those, under doubles. Each of these changes clears the snapshot's
+        resumable mark. A match whose status
         is not MatchStatus.COMPLETED is never counted: after the match_id
         check, it returns RejectionReason.MATCH_NOT_COMPLETED.
         Live results apply in
@@ -4792,9 +4837,12 @@ class RatingEngine:
         """
         _record after the match_id check: the result and net of a match not seen before.
 
-        Changes state only when the match counts, or when it is rejected as
-        a possible duplicate (possible_duplicates). _record reserves the
-        match_id of every result that does not count.
+        Changes state only when the match counts, when it is rejected as
+        a possible duplicate (possible_duplicates), or when an update is
+        rejected for a reason in _SEED_SENSITIVE_REASONS
+        (_seed_sensitive_rejections: the match's own update, or the
+        overall doubles update of a counted category match). _record
+        reserves the match_id of every result that does not count.
         """
         net: dict[RatingFormat, float] = {}
         if match.status is not MatchStatus.COMPLETED:
