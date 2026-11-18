@@ -471,7 +471,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import UTC, date, datetime
 from enum import Enum, StrEnum
-from typing import Literal, TypeGuard, TypeVar
+from typing import Literal, TypeGuard, TypeVar, cast
 
 # Explicit re-exports, so `from open_engine.engine import X` passes mypy --strict.
 from ._errors import ConfigError as ConfigError
@@ -808,6 +808,27 @@ def _as_float(value: float) -> float:
     return float.__float__(value)
 
 
+_N = TypeVar("_N")
+
+
+def _plain_number(value: _N) -> _N:
+    """
+    An int or float as exactly int or float, from its own value (issue #107).
+
+    An int subclass gives int.__int__(value) and a float subclass
+    float.__float__(value), so a subclass's operators never reach a check,
+    the fingerprint, or rating code. A bool or anything that is not an int
+    or float is returned as is, for the caller's type check to reject.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return cast(_N, int.__int__(value))
+    if isinstance(value, float):
+        return cast(_N, float.__float__(value))
+    return value
+
+
 def _is_config_whole(value: object) -> bool:
     """True for an int (not bool) that is also a config number."""
     return _is_whole_number(value) and _is_config_number(value)
@@ -1056,6 +1077,11 @@ class Config:
         # subclass would give a snapshot that does not load.
         if type(self.version) is not str:
             raise ConfigError(must_be("version", "a str"))
+        # Store every number as the plain int or float of its own value, so
+        # the checks, fingerprint(), and rating code all read the same value
+        # (issue #107). A bool or a non-number is kept for the checks below.
+        for name in _CONFIG_NUMBER_FIELDS + _CONFIG_WHOLE_FIELDS + _CONFIG_OPTIONAL_NUMBER_FIELDS:
+            object.__setattr__(self, name, _plain_number(getattr(self, name)))
         for name in _CONFIG_NUMBER_FIELDS:
             if not _is_config_number(getattr(self, name)):
                 raise ConfigError(must_be(name, "a finite number"))
@@ -1078,6 +1104,10 @@ class Config:
             value = getattr(self, name)
             if not isinstance(value, Mapping):
                 raise ConfigError(f"{name} must be a mapping")
+            # One read of the caller's mapping, with plain values; every
+            # check below and the stored copy read this dict.
+            value = {key: _plain_number(item) for key, item in value.items()}
+            object.__setattr__(self, name, value)
             if not all(_is_config_number(item) for item in value.values()):
                 raise ConfigError(f"{name} values must be finite numbers")
         if not all(_is_config_whole(key) for key in self.game_length_weights):
@@ -1097,21 +1127,24 @@ class Config:
             raise ConfigError("game_length_weights values must be positive")
         if not isinstance(self.allowed_game_formats, (set, frozenset)):
             raise ConfigError("allowed_game_formats must be a set or frozenset")
+        # Each entry is read once, through tuple's own methods, so a tuple
+        # subclass cannot show the check one pair and the stored set another.
+        formats: set[tuple[ScoringType, int]] = set()
         for entry in self.allowed_game_formats:
-            if not (
-                isinstance(entry, tuple)
-                and len(entry) == 2
-                and entry[0] in _SCORING_VALUES
-                and _is_config_whole(entry[1])
-            ):
+            if not (isinstance(entry, tuple) and tuple.__len__(entry) == 2):
                 raise ConfigError(
                     "allowed_game_formats entries must be (scoring type, whole number) pairs"
                 )
-        formats = frozenset(
-            (ScoringType(scoring), int.__int__(points))
-            for scoring, points in self.allowed_game_formats
-        )
-        object.__setattr__(self, "allowed_game_formats", formats)
+            entry_scoring = tuple.__getitem__(entry, 0)
+            entry_points = tuple.__getitem__(entry, 1)
+            if not (entry_scoring in _SCORING_VALUES and _is_config_whole(entry_points)):
+                raise ConfigError(
+                    "allowed_game_formats entries must be (scoring type, whole number) pairs"
+                )
+            formats.add(
+                (ScoringType(cast(str, entry_scoring)), int.__int__(cast(int, entry_points)))
+            )
+        object.__setattr__(self, "allowed_game_formats", frozenset(formats))
         for name, kind, label in (
             ("scale_by_scoring", ScoringType, "scoring type"),
             ("win_calibration_by_scoring", ScoringType, "scoring type"),
@@ -1289,7 +1322,9 @@ class Config:
                 return [norm(v) for v in value]
             return value
 
-        return {f.name: norm(getattr(self, f.name)) for f in fields(self)}
+        # The fields of Config itself: an instance __dataclass_fields__ or a
+        # subclass's extra fields never change the fingerprint (issue #107).
+        return {f.name: norm(getattr(self, f.name)) for f in fields(Config)}
 
     def _canonical(self) -> str:
         return json.dumps(self._payload(), sort_keys=True)
@@ -2687,6 +2722,41 @@ def _check_seed_identity(player: object) -> None:
         raise InvalidSeedError("Seed player id must not be blank")
 
 
+_SEED_NUMBER_FIELDS = (
+    "rating",
+    "rd",
+    "initial_rating",
+    "initial_source_reliability",
+    "matches_played",
+    "verified_matches_played",
+    "live_updates_since_replay",
+    "inherited_live_updates",
+)
+
+
+def _plain_seed(player: Player) -> Player:
+    """
+    A copy of a seed whose rating states hold plain int and float numbers.
+
+    Only a ratings dict that is exactly a dict, and states that are exactly
+    RatingState, are copied; anything else is left for _validate_seed to
+    reject. The caller's player and states are not changed (issue #107).
+    """
+    if type(player.ratings) is not dict:
+        return player
+    ratings = {
+        fmt: (
+            replace(
+                state, **{name: _plain_number(getattr(state, name)) for name in _SEED_NUMBER_FIELDS}
+            )
+            if type(state) is RatingState
+            else state
+        )
+        for fmt, state in player.ratings.items()
+    }
+    return replace(player, ratings=ratings)
+
+
 def _validate_seed(player: Player, cfg: Config) -> None:
     """Raise InvalidSeedError unless the seed and every seed state follow the seed rules."""
     _check_seed_identity(player)
@@ -2950,7 +3020,7 @@ def _snap_opt_date(value: object, path: str) -> date | None:
 
 def _snap_number(value: object, path: str) -> float:
     if isinstance(value, (int, float)) and _is_finite_number(value):
-        return value
+        return _plain_number(value)
     raise SnapshotError(f"{path} must be a finite number (an int or float, not bool)")
 
 
@@ -2959,9 +3029,12 @@ _MAX_COUNT = 2**63 - 1
 
 
 def _snap_count(value: object, path: str) -> int:
-    if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= _MAX_COUNT:
+    if not isinstance(value, int) or isinstance(value, bool):
         raise SnapshotError(f"{path} must be a nonnegative int no larger than 2**63 - 1")
-    return value
+    count = int.__int__(value)
+    if not 0 <= count <= _MAX_COUNT:
+        raise SnapshotError(f"{path} must be a nonnegative int no larger than 2**63 - 1")
+    return count
 
 
 def _snap_format(value: object, path: str) -> RatingFormat:
@@ -3044,6 +3117,7 @@ def _snap_state_fields(value: object, path: str, cfg: Config) -> RatingState:
             raise SnapshotError(
                 f"{path}.initial_source_reliability must be a finite number or null"
             )
+        imported = _plain_number(imported)
         if not 0 <= imported <= 100:
             raise SnapshotError(f"{path}.initial_source_reliability must be between 0 and 100")
     return RatingState(
@@ -4507,6 +4581,8 @@ class RatingEngine:
         _check_seed_identity(player)
         if player.id in self.players:
             raise PlayerError(f"Player already exists: {player.id}")
+        # Check and store plain numbers, never the caller's objects.
+        player = _plain_seed(player)
         _validate_seed(player, self.cfg)
         if check_rejections:
             for fmt in sorted(player.ratings, key=lambda f: f.value):
@@ -4687,6 +4763,13 @@ class RatingEngine:
         # values on later reads than the ones checked here.
         if type(snapshot) is not ExternalRatingSnapshot:
             raise InvalidSeedError("snapshot must be an ExternalRatingSnapshot")
+        # A new snapshot with plain numbers: the checks and the stored state
+        # read the same values, and the caller's snapshot is not changed.
+        snapshot = replace(
+            snapshot,
+            rating=_plain_number(snapshot.rating),
+            reliability=_plain_number(snapshot.reliability),
+        )
         if not _is_plain_date(snapshot.captured_on):
             raise InvalidSeedError("External snapshot captured_on must be a date")
         if not _is_plain_str(snapshot.source):
