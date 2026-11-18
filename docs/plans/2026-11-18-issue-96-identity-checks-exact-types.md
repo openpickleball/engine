@@ -29,11 +29,16 @@ Also found in Phase 1: `ExternalRatingSnapshot.evidence_reference` and a seed st
 7. Every snapshot the engine writes loads: a test builds an engine through every identity entry point (add_player with external_ids and an account, seed_external_rating with an external id and evidence reference, attach_external_id, link_account, record, replay) with synthetic ids, and `from_snapshot(json.loads(json.dumps(snap)))` succeeds and gives an equal snapshot.
 8. Plain `str` and `dict` values behave as before: the existing suite passes unchanged.
 9. Docstrings of the entry points say "a str (not a subclass)" where they state types; the `(issue #96 covers ...)` caveats in `add_player` and `_check_provenance` are removed. README, if it states these types, likewise. `CHANGELOG.md`: a `**Breaking:**` entry under `### Security` with a Migration note (convert with `str(x)` / `dict(d)` before calling); the #74 entry's "issue #96" caveat is updated to say it is fixed.
+10. Also fixed in review (F1, F2): a seed must be exactly a `Player` and each seed state exactly a `RatingState` (`InvalidSeedError`, "Seed must be a Player, not ..." and "rating state must be a RatingState"), and `seed_external_rating` requires exactly an `ExternalRatingSnapshot`. A subclass can return different values on later reads (a property or `__getattribute__`), so it could pass the checks and then store another player's id or unlinked provenance. A seed state's `partners` and `opponents` must be exactly `dict` (a subclass can report itself empty while holding items). Covered at `add_player`, `replay` seeds, `prequential_predictions` (both modes), and `seed_external_rating`.
+11. Also fixed in review (F3): `Config.version` must be exactly `str` (`ConfigError`, "version must be a str"). With the exact snapshot loader, a str subclass version built a Config whose snapshot did not load. The loader stays exact.
+12. Also fixed in review (F4): the snapshot loader reads `content_keys` keys, `ledger_digests` values, format keys, and dates only from plain `str` (`SnapshotError`, existing messages). A digest subclass that never compares as different let a resume skip `LedgerConflictError`.
+13. Also fixed in review (F6): `seed_provisional_rating` raises `InvalidSeedError("rating_format must be a RatingFormat")` before anything changes, instead of an `AttributeError` for a str or storing a non-format key.
 
 ## Files that change
 
 - `src/open_engine/engine.py`: `_is_plain_str`, `_is_id`; `_seed_type_broken` (initial_source, initial_external_player_id, initial_evidence_reference); `_check_seed_identity`; `_validate_seed` (ratings and external_ids `type(...) is dict`, keys and values, account_user_id); `seed_external_rating` (source, external_player_id, evidence_reference); `_snap_str`, `_snap_opt_str`, `_snap_id`, `_snap_player`, and the other loader `isinstance(key, str)` id checks use `_is_plain_str`; docstrings.
 - `tests/test_exact_identity_types.py` (new): criteria 2 to 7, parametrized per entry point and field, asserting the specific error subclass with `match=`, and that state is unchanged.
+- Also fixed in review: `engine.py` `Config.__post_init__` (version), `_seed_type_broken` (partners, opponents), `_check_seed_identity` (Player), `_validate_seed` (RatingState), `seed_external_rating` (snapshot type), `_snap_content_keys`, the `ledger_digests` read, `_snap_format`, `_snap_date`, `seed_provisional_rating`; docstrings of `player`, `state`, `player_summary`, `seed_provisional_rating`, `_check_player_id`, `Match`, `add_player`, `_check_provenance`, and the module error notes. `tests/test_exact_identity_types_review.py` (new) covers criteria 10 to 13.
 - `README.md`, `CHANGELOG.md`.
 
 ## Order of work
@@ -49,6 +54,7 @@ Also found in Phase 1: `ExternalRatingSnapshot.evidence_reference` and a seed st
 - Error messages: keep the existing messages ("must be a str", "is required", "must not be blank") so existing tests and callers' matches still hold; a subclass gets the type message where one exists.
 - Snapshot schema and `snapshot_version` do not change; no Config, RatingState, or Player fields change.
 - Not done: Config number subclasses (#107); `confirmed_by` element types; `_is_plain_date` stays as it is.
+- Also fixed in review: exact `Player`, `RatingState`, and `ExternalRatingSnapshot` reject subclasses a caller may use on purpose (for example an ORM-backed record); they must build the plain dataclass. Exact `Config.version` rejects a str subclass version that used to build. Still not done (follow-ups): number subclasses in seed states, and `Match` subclasses.
 
 ## Proof
 

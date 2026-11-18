@@ -239,16 +239,20 @@ Published behavior notes:
   matches, teams, scores, `played_at`, and a match's GameFormat,
   `InvalidSeedError` covers external and replay seeds (a
   seed state that breaks the seed rules in `RatingEngine.add_player`,
-  including a field of the wrong type, a blank id, a blank
-  `initial_source` or `initial_external_player_id`, an external player id
+  including a field of the wrong type (a str or dict subclass, or a
+  Player or RatingState subclass, counts as the wrong type), a blank id,
+  a blank `initial_source` or `initial_external_player_id`, an external player id
   the seed's own `external_ids` does not link under its `initial_source`,
   or a rating or initial rating outside the bounds, raised by
   `add_player`, `replay`, and `prequential_predictions`, and so by
   `evaluate`, `fit_scale`, and `fit_win_calibration`; `replay` also
   rejects a seed dated after `as_of`, and `prequential_predictions` one
   dated after its last completed ledger match, and
-  `RatingEngine.seed_external_rating` rejects a blank or whitespace-only
-  source or external id),
+  `RatingEngine.seed_external_rating` rejects a snapshot that is not
+  exactly an `ExternalRatingSnapshot`, a source, external id, or
+  `evidence_reference` that is not exactly a str (a str subclass
+  included, and None allowed for the external id and evidence
+  reference), and a blank or whitespace-only source or external id),
   `PlayerError` covers player identities, including a seed whose
   account or external identity another player holds (its subclass
   `UnknownPlayerError` covers a read of a player id with no player
@@ -1039,7 +1043,9 @@ class Config:
         def must_be(name: str, kind: str) -> str:
             return _CONFIG_TYPE_MESSAGES.get(name, f"{name} must be {kind}")
 
-        if not isinstance(self.version, str):
+        # Exactly str: the snapshot loader accepts only a plain str, so a
+        # subclass would give a snapshot that does not load.
+        if type(self.version) is not str:
             raise ConfigError(must_be("version", "a str"))
         for name in _CONFIG_NUMBER_FIELDS:
             if not _is_config_number(getattr(self, name)):
@@ -1505,8 +1511,9 @@ class Match:
     and, like every rejected match, reserves the match_id: a later record
     call for a match with it that does not raise returns DUPLICATE_MATCH_ID.
 
-    match_id and every player id must be a non-blank str, exactly a str
-    (not a subclass); validate raises InvalidMatchError otherwise.
+    match_id and the team player ids must each be a non-blank str, exactly
+    a str (not a subclass); validate raises InvalidMatchError otherwise.
+    The elements of confirmed_by are not type-checked.
 
     validate checks the type of status, rating_format, match_type, team_a,
     team_b, confirmed_by, game_format, played_at, sequence, and best_of. It
@@ -2405,7 +2412,8 @@ def _seed_type_broken(state: RatingState) -> str | None:
         if not isinstance(value, int) or isinstance(value, bool):
             return f"{name} must be an int"
     for name in ("partners", "opponents"):
-        if not isinstance(getattr(state, name), dict):
+        # Exactly dict: a subclass can report itself empty while holding items.
+        if type(getattr(state, name)) is not dict:
             return f"{name} must be a dict"
     for name in ("rating", "rd", "initial_rating"):
         if not _is_finite_number(getattr(state, name)):
@@ -2507,7 +2515,8 @@ class _HeldIdentities:
 
 def _check_seed_identity(player: object) -> None:
     """Raise InvalidSeedError unless the seed is a Player with a non-blank plain str id."""
-    if not isinstance(player, Player):
+    # Exactly Player: a subclass can return a different id on a later read.
+    if type(player) is not Player:
         raise InvalidSeedError(f"Seed must be a Player, not {type(player).__name__}")
     if not _is_plain_str(player.id):
         raise InvalidSeedError(f"Seed player id must be a str, not {type(player.id).__name__}")
@@ -2541,7 +2550,9 @@ def _validate_seed(player: Player, cfg: Config) -> None:
             )
     for fmt in sorted(player.ratings):
         state = player.ratings[fmt]
-        if not isinstance(state, RatingState):
+        # Exactly RatingState: a subclass can return different values on
+        # later reads, and _clone_state would keep the subclass.
+        if type(state) is not RatingState:
             raise InvalidSeedError(
                 f"Seed for {player.id} in {fmt}: rating state must be a RatingState"
             )
@@ -2749,7 +2760,7 @@ def _snap_id(value: object, path: str) -> str:
 def _snap_date(value: object, path: str) -> date:
     """A date written as exact YYYY-MM-DD text."""
     message = f"{path} must be a date in YYYY-MM-DD form"
-    if not isinstance(value, str):
+    if not _is_plain_str(value):
         raise SnapshotError(message)
     try:
         parsed = date.fromisoformat(value)
@@ -2781,7 +2792,7 @@ def _snap_count(value: object, path: str) -> int:
 
 
 def _snap_format(value: object, path: str) -> RatingFormat:
-    if not isinstance(value, str) or value not in {fmt.value for fmt in RatingFormat}:
+    if not _is_plain_str(value) or value not in {fmt.value for fmt in RatingFormat}:
         raise SnapshotError(f"{path} {value!r} is not a RatingFormat")
     return RatingFormat(value)
 
@@ -2938,9 +2949,12 @@ def _check_provenance(
     (source, id) pair to the same player, or through a seed (add_player,
     replay seeds, resume), which must already list the pair in its own
     external_ids. No engine method unlinks an id, so the pair stays in the
-    player's external_ids. Every entry point requires plain str and dict
-    values (not subclasses), so a subclass cannot pass these checks there
-    and give a snapshot that does not load.
+    player's external_ids. Every entry point requires the seed, its
+    states, an external snapshot, and the ids and provenance strs checked
+    here to be exact types (not subclasses), so a subclass of one of them
+    cannot pass these provenance checks there and then load as different
+    values. Other seed fields can still hold number subclasses, which this
+    does not cover.
     """
     for fmt in sorted(states, key=lambda f: f.value):
         state = states[fmt]
@@ -3201,7 +3215,7 @@ def _snap_content_keys(value: object, processed: set[str]) -> dict[str, str]:
     keys: dict[str, str] = {}
     owners: set[str] = set()
     for key, match_id in value.items():
-        if not isinstance(key, str) or len(key) != 64 or not set(key) <= _HEX:
+        if not _is_plain_str(key) or len(key) != 64 or not set(key) <= _HEX:
             raise SnapshotError(
                 f"snapshot.content_keys has a key that is not 64 lowercase hex characters: {key!r}"
             )
@@ -3511,7 +3525,7 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
     for key, digest in digests_raw.items():
         if not _is_id(key):
             raise SnapshotError("snapshot.ledger_digests has an id that is not a non-blank str")
-        if not isinstance(digest, str) or len(digest) != 64 or not set(digest) <= _HEX:
+        if not _is_plain_str(digest) or len(digest) != 64 or not set(digest) <= _HEX:
             raise SnapshotError(
                 f"snapshot.ledger_digests[{key!r}] must be 64 lowercase hex characters"
             )
@@ -3813,8 +3827,9 @@ class RatingEngine:
         """
         The player record for player_id. Read-only: it never creates a player.
 
-        Raises PlayerError for a blank player_id and UnknownPlayerError when
-        no player record exists for it. A player is created by add_player,
+        Raises PlayerError for a player_id that is blank or not exactly a
+        str (a subclass is rejected), and UnknownPlayerError when no player
+        record exists for it. A player is created by add_player,
         seed_provisional_rating, seed_external_rating, link_account,
         attach_external_id, or a counted record (and so replay). An id named
         only in uncounted rows, or in rows after a replay's as_of, has no
@@ -3843,8 +3858,10 @@ class RatingEngine:
           RatingFormat, and every value is a RatingState. Its external_ids
           are a dict of str to str with no blank or whitespace-only source
           or id, and its account_user_id is None or a str that is not blank
-          or whitespace only. Every str and dict here, and the provenance
-          strs below, must be exactly str and dict, not a subclass.
+          or whitespace only. The seed must be exactly a Player and each
+          state exactly a RatingState, and every str and dict here, the
+          provenance strs below, and partners and opponents must be
+          exactly str and dict, not a subclass.
         - rating, rd, initial_rating, and an imported reliability are ints
           or finite floats (not bool), the counts are ints, partners and
           opponents are dicts, dates are dates, initial_source is a str,
@@ -3854,8 +3871,10 @@ class RatingEngine:
           an initial_external_player_id that is set.
         - An initial_external_player_id that is set is linked in the seed's
           own external_ids under initial_source, so the uniqueness check
-          below covers it, and a seed cannot carry another player's
-          external identity as its provenance.
+          below covers it. Since the seed must be exactly a Player, each
+          state exactly a RatingState, and these ids exactly str and dict,
+          a seed cannot carry another player's external identity as its
+          provenance.
         - No matches, last_played, partners, opponents, or live updates:
           matches_played, verified_matches_played,
           live_updates_since_replay, and inherited_live_updates are 0.
@@ -3915,7 +3934,7 @@ class RatingEngine:
 
     @staticmethod
     def _check_player_id(player_id: str) -> None:
-        """Raise PlayerError for a blank player id."""
+        """Raise PlayerError for a player id that is blank or not exactly a str."""
         if not _is_id(player_id):
             raise PlayerError("player_id is required")
 
@@ -4048,7 +4067,9 @@ class RatingEngine:
         # here is one add_player and replay accept.
         if not isinstance(rating_format, RatingFormat):
             raise InvalidSeedError("rating_format must be a RatingFormat")
-        if not isinstance(snapshot, ExternalRatingSnapshot):
+        # Exactly ExternalRatingSnapshot: a subclass can return different
+        # values on later reads than the ones checked here.
+        if type(snapshot) is not ExternalRatingSnapshot:
             raise InvalidSeedError("snapshot must be an ExternalRatingSnapshot")
         if not _is_plain_date(snapshot.captured_on):
             raise InvalidSeedError("External snapshot captured_on must be a date")
@@ -4150,7 +4171,16 @@ class RatingEngine:
         return False
 
     def seed_provisional_rating(self, player_id: str, rating_format: RatingFormat) -> RatingState:
-        """The player's state in a format. Creates a new unplayed state if it is missing."""
+        """
+        The player's state in a format. Creates a new unplayed state if it is missing.
+
+        Raises InvalidSeedError when rating_format is not a RatingFormat (a
+        str is not converted), and PlayerError for a player_id that is
+        blank or not exactly a str (a subclass is rejected). Both are
+        checked before anything changes, so a failed call creates no player.
+        """
+        if not isinstance(rating_format, RatingFormat):
+            raise InvalidSeedError("rating_format must be a RatingFormat")
         player = self._player_or_new(player_id)
         if rating_format not in player.ratings:
             self._put_state(player, rating_format, self._new_state(player_id, rating_format))
@@ -4204,7 +4234,8 @@ class RatingEngine:
         provisional default. That object is a new copy each call and is not
         engine state, so changing it changes nothing. Use
         seed_provisional_rating to store it. Raises UnknownPlayerError when no
-        player record exists for the id, and PlayerError for a blank id.
+        player record exists for the id, and PlayerError for an id that is
+        blank or not exactly a str (a subclass is rejected).
         """
         player = self.player(player_id)
         if rating_format in player.ratings:
@@ -4617,7 +4648,8 @@ class RatingEngine:
         Raises ReferenceDateError when as_of is None and the engine was never
         replayed, or when as_of is not a plain date (a datetime is not one).
         These checks come first. Then it raises UnknownPlayerError when no
-        player record exists for the id, and PlayerError for a blank id.
+        player record exists for the id, and PlayerError for an id that is
+        blank or not exactly a str (a subclass is rejected).
         """
         if as_of is not None and not _is_plain_date(as_of):
             raise ReferenceDateError(
