@@ -358,10 +358,40 @@ def _all_frozen_parent(match: Match, result: MatchResult) -> bool:
     )
 
 
-def _drive(cfg: Config, seed: int) -> int:
+def _counting_replay(
+    rows: list[Match],
+    seeds: list[Player],
+    cfg: Config,
+    as_of: date,
+    from_snapshot: dict[str, object] | None = None,
+) -> tuple[RatingEngine, int]:
     """
-    Check that every snapshot of one random run loads; return how many live
-    category matches had their doubles update rejected with every player frozen.
+    replay, also returning how many rows were counted with every player frozen
+    in the doubles update (_all_frozen_parent). The spy returns what the
+    engine's own per-row step returns, so the replay is unchanged.
+    """
+    hits = 0
+    original = RatingEngine._record
+
+    def spy(
+        self: RatingEngine, match: Match, *, as_of: date | None = None
+    ) -> tuple[MatchResult, dict[RatingFormat, float]]:
+        nonlocal hits
+        out = original(self, match, as_of=as_of)
+        hits += int(_all_frozen_parent(match, out[0]))
+        return out
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(RatingEngine, "_record", spy)
+        engine = replay(rows, seeds, cfg=cfg, as_of=as_of, from_snapshot=from_snapshot)
+    return engine, hits
+
+
+def _drive(cfg: Config, seed: int) -> tuple[int, int]:
+    """
+    Check that every snapshot of one random run loads. Return how many
+    category matches had their doubles update rejected with every player
+    frozen, in the replays (resumable snapshots) and in the live engines.
     """
     rng = random.Random(seed)
     rows = _random_ledger(rng, 80)
@@ -369,11 +399,13 @@ def _drive(cfg: Config, seed: int) -> int:
     as_of = START + timedelta(days=130)
     covered = 0
     all_frozen = 0
-    replayed = replay(rows, seeds, cfg=cfg, as_of=as_of)
+    replayed, replay_frozen = _counting_replay(rows, seeds, cfg, as_of)
     covered += _loads(replayed, cfg)
-    checkpoint = replay(rows, seeds, cfg=cfg, as_of=START + timedelta(days=60))
+    checkpoint, hits = _counting_replay(rows, seeds, cfg, START + timedelta(days=60))
+    replay_frozen += hits
     covered += _loads(checkpoint, cfg)
-    resumed = replay(rows, cfg=cfg, as_of=as_of, from_snapshot=_json(checkpoint))
+    resumed, hits = _counting_replay(rows, [], cfg, as_of, from_snapshot=_json(checkpoint))
+    replay_frozen += hits
     covered += _loads(resumed, cfg)
     unique = list({m.match_id: m for m in rows}.values())
     # Live after resuming from the checkpoint, with reseed attempts between rows.
@@ -398,7 +430,7 @@ def _drive(cfg: Config, seed: int) -> int:
     covered += _loads(live, cfg)
     if cfg.category_feeds_parent and cfg.max_doubles_partner_gap is None:
         assert covered > 0
-    return all_frozen
+    return replay_frozen, all_frozen
 
 
 @pytest.mark.parametrize("cfg", CONFIGS, ids=CONFIG_IDS)
@@ -410,8 +442,12 @@ def test_engines_the_code_produces_load(cfg: Config, seed: int) -> None:
 def test_fuzz_reaches_a_category_match_with_every_player_frozen_in_doubles() -> None:
     # The exact rule rests on this case: the doubles update is rejected, so
     # no doubles state moves, and every player's match is on or before its
-    # doubles capture date.
-    assert sum(_drive(Config(), seed) for seed in range(15)) > 0
+    # doubles capture date. The replays' snapshots are resumable, so the
+    # exact rule covers those imported states there; the live ones get only
+    # the upper bound.
+    runs = [_drive(Config(), seed) for seed in range(15)]
+    assert sum(replay_hits for replay_hits, _ in runs) > 0
+    assert sum(live_hits for _, live_hits in runs) > 0
 
 
 def test_live_import_with_frozen_logged_matches_loads_and_is_not_reseeded() -> None:
