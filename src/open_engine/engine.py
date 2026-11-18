@@ -144,12 +144,14 @@ Published behavior notes:
   values, `InvalidMatchError` covers matches, teams, scores and
   `played_at`, `InvalidSeedError` covers external and replay seeds (a
   seed state that breaks the seed rules in `RatingEngine.add_player`,
-  including a field of the wrong type or a rating outside the bounds,
-  raised by `add_player`, `replay`, and `prequential_predictions`, and so
+  including a field of the wrong type, a blank id, or a rating or
+  initial rating outside the bounds, raised by `add_player`, `replay`,
+  and `prequential_predictions`, and so
   by `evaluate`, `fit_scale`, and `fit_win_calibration`; `replay` also
   rejects a seed dated after `as_of`, and `prequential_predictions` one
   dated after its last completed ledger match),
-  `PlayerError` covers player identities (its subclass
+  `PlayerError` covers player identities, including a seed whose
+  account or external identity another player holds (its subclass
   `UnknownPlayerError` covers a read of a player id with no player
   record), `EvaluationError` covers
   evaluation, fits and win probabilities, `LedgerConflictError` covers
@@ -1527,7 +1529,7 @@ def _seed_type_broken(state: RatingState) -> str | None:
     for name in ("partners", "opponents"):
         if not isinstance(getattr(state, name), dict):
             return f"{name} must be a dict"
-    for name in ("rating", "rd"):
+    for name in ("rating", "rd", "initial_rating"):
         if not _is_finite_number(getattr(state, name)):
             return f"{name} must be a finite number"
     imported = state.initial_source_reliability
@@ -1559,6 +1561,8 @@ def _seed_rule_broken(state: RatingState, cfg: Config) -> str | None:
         return "inherited_live_updates must be 0"
     if not cfg.min_rating <= state.rating <= cfg.max_rating:
         return "rating must be between min_rating and max_rating"
+    if not cfg.min_rating <= state.initial_rating <= cfg.max_rating:
+        return "initial_rating must be between min_rating and max_rating"
     if state.initial_source_date is None:
         if state.rd != cfg.new_player_rd:
             return "rd must equal new_player_rd for a provisional seed"
@@ -1588,12 +1592,28 @@ def _check_seed_date(player: Player, latest: date, limit: str) -> None:
             )
 
 
+@dataclass
+class _HeldIdentities:
+    """Accounts and (source, external id) pairs held by players, for seed checks."""
+
+    accounts: set[str] = field(default_factory=set)
+    external_ids: set[tuple[str, str]] = field(default_factory=set)
+
+    def add(self, player: Player) -> None:
+        """Record the player's account and external identities as held."""
+        if player.account_user_id is not None:
+            self.accounts.add(player.account_user_id)
+        self.external_ids.update(player.external_ids.items())
+
+
 def _check_seed_identity(player: object) -> None:
-    """Raise InvalidSeedError unless the seed is a Player with a str id."""
+    """Raise InvalidSeedError unless the seed is a Player with a non-blank str id."""
     if not isinstance(player, Player):
         raise InvalidSeedError(f"Seed must be a Player, not {type(player).__name__}")
     if not isinstance(player.id, str):
         raise InvalidSeedError(f"Seed player id must be a str, not {type(player.id).__name__}")
+    if not _is_id(player.id):
+        raise InvalidSeedError("Seed player id must not be blank")
 
 
 def _validate_seed(player: Player, cfg: Config) -> None:
@@ -1607,6 +1627,12 @@ def _validate_seed(player: Player, cfg: Config) -> None:
         raise InvalidSeedError(f"Seed for {player.id}: external_ids must map str to str")
     if player.account_user_id is not None and not isinstance(player.account_user_id, str):
         raise InvalidSeedError(f"Seed for {player.id}: account_user_id must be a str or None")
+    if player.account_user_id is not None and not _is_id(player.account_user_id):
+        raise InvalidSeedError(f"Seed for {player.id}: account_user_id must not be blank")
+    if not all(_is_id(k) and _is_id(v) for k, v in player.external_ids.items()):
+        raise InvalidSeedError(
+            f"Seed for {player.id}: external_ids must not have a blank source or id"
+        )
     for key in player.ratings:
         if not isinstance(key, RatingFormat):
             raise InvalidSeedError(
@@ -2496,8 +2522,9 @@ class RatingEngine:
         also an RD of at least category_seed_rd and an rd_as_of that is set
         and no later than the parent state's. Identities are only type checked
         (account_user_id a str or null, external_ids str to str), since
-        the engine's own methods can build shared or blank ones and they
-        do not affect ratings. A resumable snapshot also holds no
+        they do not affect ratings. The engine's seed and link methods
+        do not create shared or blank ones, but a snapshot holding them
+        still loads. A resumable snapshot also holds no
         date after calculated_as_of and no nonzero inherited_live_updates,
         and its replay_info counts equal the
         number of ledger digests and processed match ids. These checks
@@ -2532,7 +2559,7 @@ class RatingEngine:
         only in uncounted rows, or in rows after a replay's as_of, has no
         player record.
         """
-        if not player_id or not player_id.strip():
+        if not _is_id(player_id):
             raise PlayerError("player_id is required")
         if player_id not in self.players:
             raise UnknownPlayerError(f"Unknown player: {player_id}")
@@ -2550,16 +2577,19 @@ class RatingEngine:
         Add a copy of a player record as a seed.
 
         Seed rules, checked for the seed and every rating state:
-        - The seed is a Player with a str id, its ratings are a dict, every
-          key is a RatingFormat, and every value is a RatingState. Its
-          external_ids are a dict of str to str, and its account_user_id is
-          a str or None.
-        - rating, rd, and an imported reliability are ints or finite floats
-          (not bool), the counts are ints, partners and opponents are
-          dicts, and dates are dates.
+        - The seed is a Player with a str id that is not blank or
+          whitespace only, its ratings are a dict, every key is a
+          RatingFormat, and every value is a RatingState. Its external_ids
+          are a dict of str to str with no blank or whitespace-only source
+          or id, and its account_user_id is None or a str that is not blank
+          or whitespace only.
+        - rating, rd, initial_rating, and an imported reliability are ints
+          or finite floats (not bool), the counts are ints, partners and
+          opponents are dicts, and dates are dates.
         - No matches, last_played, partners, opponents, or live updates, and
           inherited_live_updates is 0.
-        - rating is within Config.min_rating and Config.max_rating.
+        - rating and initial_rating are within Config.min_rating and
+          Config.max_rating.
         - A provisional state (no initial_source_date) has RD new_player_rd,
           no rd_as_of, and no imported reliability.
         - An imported state, or a category state derived from one, has RD
@@ -2572,25 +2602,54 @@ class RatingEngine:
         its as_of, and prequential_predictions one dated after its last match.
 
         Raises InvalidSeedError for a seed that breaks these rules (a seed
-        that is not a Player, or has a non-str id, is checked before the
-        duplicate id) and PlayerError if the id exists. Nothing changes when
-        either is raised.
+        that is not a Player, or has a non-str or blank id, is checked
+        before the duplicate id), and PlayerError if the id exists, or if
+        another player already holds the seed's account_user_id or one of
+        its (source, external id) pairs, with the messages link_account and
+        attach_external_id use. Nothing changes when either is raised.
+        """
+        self._add_seed(player, self._held_identities())
+
+    def _held_identities(self) -> _HeldIdentities:
+        """The accounts and (source, external id) pairs the engine's players hold."""
+        held = _HeldIdentities()
+        for p in self.players.values():
+            held.add(p)
+        return held
+
+    def _add_seed(self, player: Player, held: _HeldIdentities) -> None:
+        """
+        add_player, with the identities already held passed in.
+
+        held must hold every identity of the engine's players; it gains the
+        seed's identities once the seed is added. A batch of seeds builds it
+        once, so each seed's uniqueness check is a set lookup instead of a
+        scan of every player.
         """
         _check_seed_identity(player)
         if player.id in self.players:
             raise PlayerError(f"Player already exists: {player.id}")
         _validate_seed(player, self.cfg)
+        # The same uniqueness rules, with the same messages, as link_account
+        # and attach_external_id.
+        account = player.account_user_id
+        if account is not None and account in held.accounts:
+            raise PlayerError("This account is already linked to another player profile")
+        for source in sorted(player.external_ids):
+            if (source, player.external_ids[source]) in held.external_ids:
+                raise PlayerError("This external identity is already linked to another player")
         self._put_player(clone_player(player))
+        held.add(player)
 
     @staticmethod
     def _check_player_id(player_id: str) -> None:
         """Raise PlayerError for a blank player id."""
-        if not player_id or not player_id.strip():
+        if not _is_id(player_id):
             raise PlayerError("player_id is required")
 
     def _check_account(self, player_id: str, account_user_id: str) -> None:
         """Raise PlayerError unless the account can link to player_id. Changes nothing."""
-        if not account_user_id:
+        if not _is_id(account_user_id):
             raise PlayerError("account_user_id is required")
         self._check_player_id(player_id)
         player = self.players.get(player_id)
@@ -2604,7 +2663,7 @@ class RatingEngine:
 
     def _check_external_id(self, player_id: str, source: str, external_player_id: str) -> None:
         """Raise PlayerError unless the identity can link to player_id. Changes nothing."""
-        if not source or not external_player_id:
+        if not _is_id(source) or not _is_id(external_player_id):
             raise PlayerError("source and external_player_id are required")
         self._check_player_id(player_id)
         player = self.players.get(player_id)
@@ -2621,9 +2680,10 @@ class RatingEngine:
         """
         Claim an existing external-only player profile for an OPEN account.
 
-        Raises PlayerError for a blank player id, an empty account, or when
-        the player or the account is already linked elsewhere. Every check runs before
-        anything changes, so a failed call creates no player.
+        Raises PlayerError for a blank player id, a blank or whitespace-only
+        account, or when the player or the account is already linked
+        elsewhere. Every check runs before anything changes, so a failed
+        call creates no player.
         """
         self._check_account(player_id, account_user_id)
         player = self._player_or_new(player_id)
@@ -2634,10 +2694,11 @@ class RatingEngine:
         """
         Link an external identity to a player. Each identity links to one player.
 
-        Raises PlayerError for a blank player id, an empty source or external
-        id, when the player already has a different id from that source, or when the
-        identity is linked to another player. Every check runs before
-        anything changes, so a failed call creates no player.
+        Raises PlayerError for a blank player id, a blank or whitespace-only
+        source or external id, when the player already has a different id
+        from that source, or when the identity is linked to another player.
+        Every check runs before anything changes, so a failed call creates
+        no player.
         """
         self._check_external_id(player_id, source, external_player_id)
         player = self._player_or_new(player_id)
@@ -3203,7 +3264,9 @@ def replay(
 
     Raises InvalidSeedError for a seed state that breaks the seed rules (see
     add_player) or whose initial_source_date is after as_of, and PlayerError
-    when two seeds share a player id.
+    when two seeds share a player id, an account_user_id, or a (source,
+    external id) pair. On resume, a seed that shares an identity with a
+    checkpoint player raises PlayerError too.
 
     from_snapshot resumes from a checkpoint: the to_snapshot() output (or
     json.loads of its text) of an earlier replay under the same cfg. The
@@ -3320,8 +3383,9 @@ def _replay(
     """
     engine = RatingEngine(cfg) if start is None else start
     named_before = frozenset(engine._ledger_player_ids)
+    held = engine._held_identities()
     for player in seed_players:
-        engine.add_player(player)
+        engine._add_seed(player, held)
         if player.id in named_before:
             raise SnapshotError(
                 f"Cannot resume: the seed for {player.id} names a player in rows the "
@@ -3509,9 +3573,11 @@ def prequential_predictions(
     Every seed is validated up front, in both modes, by the seed rules (see
     RatingEngine.add_player), and a seed whose initial_source_date is after
     the last completed ledger match raises InvalidSeedError. A ledger with
-    no completed match has no seed date check and gives no predictions. A repeated seed id raises
-    PlayerError, as add_player does. A seed captured mid-ledger is accepted:
-    scheduled replays before its date freeze it as usual.
+    no completed match has no seed date check and gives no predictions. A
+    repeated seed id, or two seeds that share an account_user_id or a
+    (source, external id) pair, raise PlayerError, as add_player does. A
+    seed captured mid-ledger is accepted: scheduled replays before its date
+    freeze it as usual.
     """
     if mode not in ("live", "scheduled"):
         raise EvaluationError(f"mode must be 'live' or 'scheduled', not {mode!r}")
@@ -3521,14 +3587,13 @@ def prequential_predictions(
     # never set the seed date limit or the default anchor.
     completed = [m for m in ordered if m.status is MatchStatus.COMPLETED]
     seeds = list(seed_players)
-    seen: set[str] = set()
+    # add_player on a scratch engine applies every seed check, against the
+    # earlier seeds too, in the same order and with the same messages, so
+    # both modes reject the same seeds before any rating work.
+    scratch = RatingEngine(cfg)
+    held = scratch._held_identities()
     for player in seeds:
-        # Same order and messages as add_player, so both modes agree.
-        _check_seed_identity(player)
-        if player.id in seen:
-            raise PlayerError(f"Player already exists: {player.id}")
-        seen.add(player.id)
-        _validate_seed(player, cfg)
+        scratch._add_seed(player, held)
         if completed:
             _check_seed_date(player, completed[-1].played_on, "the last completed ledger match")
     predictions: list[PrequentialPrediction] = []
@@ -3547,8 +3612,9 @@ def prequential_predictions(
 
     if mode == "live":
         engine = RatingEngine(cfg)
+        held = engine._held_identities()
         for player in seeds:
-            engine.add_player(player)
+            engine._add_seed(player, held)
         for match in ordered:
             step(engine, match)
         return predictions
