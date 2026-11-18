@@ -5175,7 +5175,9 @@ def fit_scale(
     tolerance is finite and greater than 0, and 2 * low, 2 * high, and
     (high - low) * 14 are finite. A score_from or anchor that is not None and
     not a plain date raises EvaluationError naming the argument, as
-    prequential_predictions does, for an empty ledger too.
+    prequential_predictions does, for an empty ledger too, unless another
+    argument fails first: the trial config is built before the dates are
+    checked, so for example a low of 0 or less raises ConfigError.
     """
     _check_search_bounds(low, high, tolerance)
     cfg = cfg or Config()
