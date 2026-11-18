@@ -331,14 +331,16 @@ Published behavior notes:
   collapses into the first. So a corrected resubmission needs a new
   match_id, live and in the ledger. That is safe only after a rejection
   that comes from the row itself (GAME_FORMAT_NOT_ACCEPTED,
-  SELF_REPORTED_UNCONFIRMED, MATCH_NOT_COMPLETED), which replay repeats
-  in any order: for example a self-reported match resubmitted after
-  confirmation, or a match corrected to an accepted game format. The
-  other rejections (SELF_REPORTED_REPEAT_LIMIT, BEFORE_IMPORTED_BASELINE,
-  SINGLES_RATING_GAP, DOUBLES_PARTNER_GAP, POSSIBLE_DUPLICATE) depend on
-  the engine's state when the row arrives, so a row rejected live can
-  count in replay's ledger order. Do not resubmit such a row under a new
-  match_id: replay could count the match twice. A live reservation
+  SELF_REPORTED_UNCONFIRMED, MATCH_NOT_COMPLETED), since replay never
+  counts such a row, in any order: for example a self-reported match
+  resubmitted after confirmation, or a match corrected to an accepted
+  game format. SELF_REPORTED_REPEAT_LIMIT, BEFORE_IMPORTED_BASELINE,
+  SINGLES_RATING_GAP, and DOUBLES_PARTNER_GAP depend on the engine's
+  state when the row arrives, so a row rejected live can count in
+  replay's ledger order. Do not resubmit such a row under a new
+  match_id: replay could count the match twice. Do not resubmit a
+  POSSIBLE_DUPLICATE either: a match with its content already counted,
+  so a copy with the same content is rejected again. A live reservation
   clears the snapshot's resumable mark. A match with
   the same content as an earlier counted match under another match_id is
   flagged or, by config, rejected (see the note on likely duplicates).
@@ -402,9 +404,10 @@ Production notes:
   rejection that comes from the row itself (GAME_FORMAT_NOT_ACCEPTED,
   SELF_REPORTED_UNCONFIRMED, MATCH_NOT_COMPLETED). Do not resubmit a row
   rejected for engine state (SELF_REPORTED_REPEAT_LIMIT,
-  BEFORE_IMPORTED_BASELINE, SINGLES_RATING_GAP, DOUBLES_PARTNER_GAP,
-  POSSIBLE_DUPLICATE): replay can count that row in ledger order, and a
-  copy under a new match_id could then count too.
+  BEFORE_IMPORTED_BASELINE, SINGLES_RATING_GAP, DOUBLES_PARTNER_GAP):
+  replay can count that row in ledger order, and a copy under a new
+  match_id could then count too. A POSSIBLE_DUPLICATE has nothing to
+  resubmit: a match with its content already counted.
 - Require verified identity and authorized evidence before importing an
   external rating. An external refresh can never overwrite an OPEN-earned
   rating once OPEN matches have been processed.
@@ -3460,9 +3463,9 @@ class RatingEngine:
         MatchResult.possible_duplicate_of, to the match_id first counted
         with it, sorted by digest), possible_duplicates (sorted by
         match_id: each match flagged or rejected as a possible duplicate,
-        to the match_id it repeats; an entry never clears), ledger_digests (match_id to the
-        SHA-256 digest of every row any replay behind this engine
-        considered, cumulative across resumes),
+        to the match_id it repeats; an entry never clears),
+        ledger_digests (match_id to the SHA-256 digest of every row any
+        replay behind this engine considered, cumulative across resumes),
         ledger_player_ids (sorted ids of every player named in those rows,
         counted or not), and resumable (true only while the engine is
         exactly what a replay produced). The README lists the schema in
@@ -3975,8 +3978,9 @@ class RatingEngine:
         reason: it is not marked processed and moves no rating, count, or
         content key, but every later call for a match with that id that
         does not raise returns DUPLICATE_MATCH_ID, as replay never counts a
-        second row with one id. A resubmission (for example a self-reported
-        match after confirmation) needs a new match_id. A match rejected as
+        second row with one id. A corrected resubmission (for example a
+        self-reported match after confirmation) needs a new match_id; see
+        the module notes for which rejections allow one. A match rejected as
         a possible duplicate is also recorded in possible_duplicates. Either
         change clears the snapshot's resumable mark. A match whose status
         is not MatchStatus.COMPLETED is never counted: after the match_id
