@@ -3302,6 +3302,11 @@ def _check_verified_against_log(
                     f"{prefix} must be at least the self-reported doubles matches logged "
                     f"for this player ({own})"
                 )
+            if exact and feeds and cfg.max_doubles_partner_gap is None and unverified != upper:
+                raise SnapshotError(
+                    f"{prefix} must equal the self-reported doubles and category matches "
+                    f"logged for this player ({upper})"
+                )
 
 
 def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
