@@ -52,7 +52,7 @@ In `record`, right after the `as_of` type check, raise `InvalidMatchError("as_of
 - `src/open_engine/engine.py` docstrings of `Match`, `RejectionReason`, and `prequential_predictions` also said a non-completed match "changes nothing"; they now name the reservation.
 - Existing tests that assert the old behavior (a completed row counting after a non-completed row with the same id, or version 4): update them to the new rule. Search `tests/test_match_status.py`, `tests/test_match_status_review.py`, and any test that hard-codes `snapshot_version` 4 or a snapshot dict.
 - `README.md`: match status section (line ~181), snapshot schema (version 5, new key, its rules, "A version 1 to 4 snapshot does not load").
-- `CHANGELOG.md`: Fixed entries for #72 and #73 under Unreleased; correct the #22 "Added" entry and the snapshot entry's "schema version 4" so they describe the current behavior.
+- `CHANGELOG.md`: #72 as a Breaking entry under Changed, next to the #24 `as_of` entry, since calls that returned a result now raise; #73 as a Breaking entry under Security, after #15, since it closes a path for one party to change other players' ratings live; correct the #22 "Added" entry and the snapshot entry's "schema version 4" so they describe the current behavior.
 
 ## Order of work
 

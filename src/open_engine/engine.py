@@ -229,8 +229,8 @@ Published behavior notes:
   already processed, or reserved by a match that was not completed,
   returns a result that is not counted, with
   `RejectionReason.DUPLICATE_MATCH_ID`, instead of raising, unless its
-  as_of is invalid (not a plain date, or earlier than played_on), which
-  raises InvalidMatchError first. A match with
+  `as_of` is invalid (not a plain date, or earlier than `played_on`),
+  which raises `InvalidMatchError` first. A match with
   the same content as an earlier counted match under another match_id is
   flagged or, by config, rejected (see the note on likely duplicates).
 - Match status: `Match.status` is a MatchStatus, and `games` is a tuple
@@ -2420,8 +2420,9 @@ class RatingEngine:
         self.players: dict[str, Player] = {}
         self.processed_match_ids: set[str] = set()
         # match_id of each match record rejected as not completed. A later
-        # match with one of these ids is a duplicate, as in replay, where a
-        # second row with the id is a conflict or collapses into the first.
+        # record with one of these ids that does not raise is a duplicate,
+        # as in replay, where a second row with the id is a conflict or
+        # collapses into the first.
         # Never in processed_match_ids.
         self._reserved_match_ids: set[str] = set()
         self.self_reported_log: dict[MatchupKey, list[date]] = {}
