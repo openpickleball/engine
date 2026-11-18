@@ -2514,7 +2514,7 @@ class _HeldIdentities:
 
 
 def _check_seed_identity(player: object) -> None:
-    """Raise InvalidSeedError unless the seed is a Player with a non-blank plain str id."""
+    """Raise InvalidSeedError unless the seed is exactly a Player with a non-blank str id."""
     # Exactly Player: a subclass can return a different id on a later read.
     if type(player) is not Player:
         raise InvalidSeedError(f"Seed must be a Player, not {type(player).__name__}")
@@ -3892,8 +3892,8 @@ class RatingEngine:
         its as_of, and prequential_predictions one dated after its last match.
 
         Raises InvalidSeedError for a seed that breaks these rules (a seed
-        that is not a Player, or has a blank id or one that is not a str
-        (a str subclass included), is checked
+        that is not exactly a Player (a subclass included), or has a blank
+        id or one that is not a str (a str subclass included), is checked
         before the duplicate id), and PlayerError if the id exists, or if
         another player already holds the seed's account_user_id or one of
         its (source, external id) pairs, with the messages link_account and
@@ -4038,8 +4038,8 @@ class RatingEngine:
         rejects the seed.
 
         rating_format must be a RatingFormat (a str is not converted),
-        snapshot must be an ExternalRatingSnapshot, and the snapshot is
-        checked before anything changes: captured_on is a date (not a
+        snapshot must be exactly an ExternalRatingSnapshot (not a
+        subclass), and the snapshot is checked before anything changes: captured_on is a date (not a
         datetime), source is a str that is not blank or whitespace only,
         external_player_id is None or a str that is not blank or
         whitespace only, evidence_reference is None or a str (each of
