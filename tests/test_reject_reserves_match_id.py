@@ -266,3 +266,37 @@ def test_a_resubmission_with_a_new_match_id_counts(reason: RejectionReason) -> N
     )
     _, reasons = _live([*rows, resubmission])
     assert reasons[-1] is None
+
+
+@pytest.mark.parametrize("reason", REJECTED_LIVE, ids=lambda r: r.value)
+def test_a_live_rejection_clears_resumable(reason: RejectionReason) -> None:
+    base = sorted(LEDGER, key=ledger_order)
+    original = next(m for m in base if m.match_id == RESUBMISSIONS[reason].match_id)
+    rest = [m for m in base if m.match_id != original.match_id]
+    engine = replay(rest, _seeds(), cfg=CFG, as_of=AS_OF)
+    assert engine.to_snapshot()["resumable"] is True
+    assert engine.record(original).reason is reason
+    snapshot = engine.to_snapshot()
+    assert snapshot["resumable"] is False
+    assert original.match_id in snapshot["reserved_match_ids"]  # type: ignore[operator]
+
+
+def test_live_and_replayed_snapshots_load() -> None:
+    base = sorted([*LEDGER, IDENTICAL_COPY], key=ledger_order)
+    live, _ = _live(base + sorted(RESUBMISSIONS.values(), key=ledger_order))
+    replayed = replay([*LEDGER, IDENTICAL_COPY], _seeds(), cfg=CFG, as_of=AS_OF)
+    rejected = sorted(
+        {m.match_id for m in LEDGER} - {"syn-orig", "syn-sr1", "syn-dup"},
+    )
+    for engine in (live, replayed):
+        snapshot = engine.to_snapshot()
+        assert snapshot["reserved_match_ids"] == rejected
+        assert RatingEngine.from_snapshot(snapshot, CFG).to_snapshot() == snapshot
+    resumed = replay(
+        [*LEDGER, IDENTICAL_COPY],
+        cfg=CFG,
+        as_of=AS_OF,
+        from_snapshot=replayed.to_snapshot(),
+        whole_ledger=True,
+    )
+    assert resumed.to_snapshot() == replayed.to_snapshot()

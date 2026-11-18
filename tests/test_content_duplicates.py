@@ -360,7 +360,7 @@ def snapshot() -> Snap:
 
 
 def test_snapshot_carries_content_keys(snapshot: Snap) -> None:
-    assert snapshot["snapshot_version"] == 6
+    assert snapshot["snapshot_version"] == 7
     key = _content_key(ON, list(TEAM_A), list(TEAM_B), [[11, 7]])
     assert snapshot["content_keys"] == {key: "syn-m1"}
 
@@ -394,7 +394,7 @@ def test_live_duplicate_after_loading_is_rejected_under_reject() -> None:
 
 def test_version_1_snapshot_is_refused(snapshot: Snap) -> None:
     snapshot["snapshot_version"] = 1
-    with pytest.raises(SnapshotError, match="snapshot_version must be 6"):
+    with pytest.raises(SnapshotError, match="snapshot_version must be 7"):
         RatingEngine.from_snapshot(snapshot)
 
 
