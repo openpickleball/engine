@@ -249,8 +249,9 @@ Published behavior notes:
   evaluation, fits and win probabilities, `LedgerConflictError` covers
   conflicting ledger rows, `SnapshotError` covers snapshots that cannot
   be loaded or resumed from, and `ReferenceDateError` covers a
-  `player_summary` call with no date to measure at or with an as_of that
-  is not a plain date.
+  `player_summary` call with no date to measure at, and a
+  `player_summary` or `replay` call with an as_of that is not a plain
+  date.
 - Snapshots and checkpoints: `RatingEngine.to_snapshot()` gives the whole
   engine state as JSON-safe data (schema version 6) with sorted keys and
   lists, and `RatingEngine.from_snapshot` loads it back after validating
@@ -4103,6 +4104,10 @@ def replay(
     unplayed imported or provisional states that follow the seed rules (see
     RatingEngine.add_player), dated on or before as_of.
 
+    Raises ReferenceDateError for an as_of that is not a plain date (a str,
+    a datetime, None, or any other type). It checks this first, before
+    whole_ledger, from_snapshot, the ledger rows, and the seeds.
+
     Raises InvalidSeedError for a seed state that breaks the seed rules (see
     add_player) or whose initial_source_date is after as_of, and PlayerError
     when two seeds share a player id, an account_user_id, or a (source,
@@ -4153,6 +4158,8 @@ def replay(
     whole_ledger, it cannot see a seed withdrawn or corrected after the
     checkpoint. Those need a full replay.
     """
+    if not _is_plain_date(as_of):
+        raise ReferenceDateError("replay as_of must be a date, not a str, datetime, or other type")
     if not isinstance(whole_ledger, bool):
         raise SnapshotError(f"whole_ledger must be a bool, not {type(whole_ledger).__name__}")
     if whole_ledger and from_snapshot is None:
