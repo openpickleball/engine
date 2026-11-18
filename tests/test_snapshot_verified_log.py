@@ -381,3 +381,54 @@ def test_relabeled_category_fed_update_of_a_resumable_import_does_not_load() -> 
         ),
     ):
         RatingEngine.from_snapshot(snap)
+
+
+def _feed_rows() -> list[Match]:
+    return [
+        _sr("syn-m1", ("syn-a", "syn-b"), ("syn-c", "syn-d"), date(2026, 1, 5), D),
+        _sr("syn-m2", ("syn-a", "syn-e"), ("syn-f", "syn-g"), date(2026, 1, 6), MX),
+    ]
+
+
+@pytest.mark.parametrize("resumable", [True, False])
+def test_doubles_count_under_a_partner_gap_is_still_a_range(resumable: bool) -> None:
+    # With max_doubles_partner_gap set, the snapshot cannot tell which
+    # category matches reached doubles, so only the range applies.
+    cfg = Config(max_doubles_partner_gap=1.0)
+    snap = _json(replay(_feed_rows(), cfg=cfg, as_of=date(2026, 1, 10)))
+    state = _state(snap, "syn-a", "doubles")
+    assert (state["matches_played"], state["verified_matches_played"]) == (2, 0)
+    state["verified_matches_played"] = 1
+    snap["resumable"] = resumable
+    RatingEngine.from_snapshot(snap, cfg)
+
+
+def test_live_imported_doubles_count_below_the_bound_still_loads() -> None:
+    engine = RatingEngine()
+    engine.add_player(_imported("syn-a", D, 4.0, date(2026, 1, 1)))
+    for match in _feed_rows():
+        assert engine.record(match).counted
+    snap = _json(engine)
+    assert snap["resumable"] is False
+    state = _state(snap, "syn-a", "doubles")
+    assert (state["matches_played"], state["verified_matches_played"]) == (2, 0)
+    state["verified_matches_played"] = 1
+    RatingEngine.from_snapshot(snap)
+
+
+def test_gap_rejected_doubles_update_loads() -> None:
+    cfg = Config(max_doubles_partner_gap=0.5)
+    # syn-e is far from syn-a in doubles but not in mixed doubles.
+    seeder = RatingEngine()
+    for fmt, rating in ((D, 5.5), (MX, 3.5)):
+        seeder.seed_external_rating(
+            "syn-e", fmt, ExternalRatingSnapshot("ext", rating, date(2026, 1, 1))
+        )
+    seeds = [seeder.players["syn-e"]]
+    rows = _feed_rows()
+    engine = replay(rows, seeds, cfg=cfg, as_of=date(2026, 1, 10))
+    state = engine.players["syn-a"].ratings[D]
+    # The mixed match counted, but its doubles update was rejected for the gap.
+    assert (state.matches_played, state.verified_matches_played) == (1, 0)
+    assert engine.players["syn-a"].ratings[MX].matches_played == 1
+    RatingEngine.from_snapshot(_json(engine), cfg)
