@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 from datetime import UTC, date, datetime, timedelta
+from enum import Enum
 from typing import Any
 
 import pytest
@@ -210,5 +211,29 @@ def test_both_teams_as_lists_are_rejected():
     with pytest.raises(InvalidMatchError, match="^team_a must be a tuple, not list$"):
         row.validate()
     with pytest.raises(InvalidMatchError, match="^team_a must be a tuple, not list$"):
+        engine.record(row)
+    assert engine.to_snapshot() == before
+
+
+class _StrKind(str, Enum):  # noqa: UP042 (a plain str mixin, as callers may define)
+    T = "tournament"
+
+
+@pytest.mark.parametrize(
+    ("value", "type_name"),
+    [
+        pytest.param(None, "NoneType", id="none"),
+        pytest.param(RatingFormat.DOUBLES, "RatingFormat", id="other-enum-member"),
+        pytest.param(_StrKind.T, "_StrKind", id="str-mixin-equal-value"),
+    ],
+)
+def test_match_type_that_is_not_a_member_is_rejected(value: object, type_name: str):
+    message = f"^match_type must be a MatchType, not {type_name}$"
+    row = dataclasses.replace(BASE, match_type=value)
+    with pytest.raises(InvalidMatchError, match=message):
+        row.validate()
+    engine = RatingEngine()
+    before = engine.to_snapshot()
+    with pytest.raises(InvalidMatchError, match=message):
         engine.record(row)
     assert engine.to_snapshot() == before
