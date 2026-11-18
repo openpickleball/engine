@@ -19,9 +19,9 @@ from typing import Any
 
 import pytest
 
+import open_engine.engine as engine_module
 from open_engine import (
     InvalidMatchError,
-    LedgerConflictError,
     Match,
     MatchType,
     RatingEngine,
@@ -279,7 +279,7 @@ def _shadowed_validate() -> Match:
 def test_record_ignores_an_instance_validate() -> None:
     engine = RatingEngine()
     before = _state(engine)
-    with pytest.raises(InvalidMatchError, match="match_id is required"):
+    with pytest.raises(InvalidMatchError, match="not Match fields"):
         engine.record(_shadowed_validate())
     assert _state(engine) == before
 
@@ -287,9 +287,9 @@ def test_record_ignores_an_instance_validate() -> None:
 @pytest.mark.parametrize("mode", ["live", "scheduled"])
 def test_ledger_entry_points_ignore_an_instance_validate(mode: str) -> None:
     ledger = [_plain("syn-m0", day=1), _shadowed_validate()]
-    with pytest.raises(InvalidMatchError, match="match_id is required"):
+    with pytest.raises(InvalidMatchError, match="not Match fields"):
         replay(ledger, as_of=AS_OF)
-    with pytest.raises(InvalidMatchError, match="match_id is required"):
+    with pytest.raises(InvalidMatchError, match="not Match fields"):
         prequential_predictions(ledger, mode=mode)  # type: ignore[arg-type]
 
 
@@ -300,10 +300,13 @@ def test_repeated_rows_compare_every_field_even_when_fields_are_shadowed() -> No
     for match in (a, b):
         shown = {k: v for k, v in Match.__dataclass_fields__.items() if k != "games"}
         match.__dict__["__dataclass_fields__"] = shown
-    with pytest.raises(LedgerConflictError, match="syn-m1"):
+    with pytest.raises(InvalidMatchError, match="not Match fields"):
         replay([a, b], as_of=AS_OF)
-    with pytest.raises(LedgerConflictError, match="syn-m1"):
+    with pytest.raises(InvalidMatchError, match="not Match fields"):
         replay([b, a], as_of=AS_OF)
+    # The row key and digest read the field list from the class as well.
+    assert engine_module._canonical(a) != engine_module._canonical(b)
+    assert engine_module._match_digest(a) != engine_module._match_digest(b)
 
 
 def test_ledger_order_rejects_a_match_subclass() -> None:

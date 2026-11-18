@@ -1526,6 +1526,8 @@ class Match:
     subclass before they change any state or call its validate, and
     Match.validate raises it for a subclass that does not override it. A
     subclass could return one value to validation and another to rating.
+    The same calls raise it for a Match whose instance __dict__ holds
+    anything but its own fields, which could hide a method validate calls.
 
     match_id, the team player ids, and each member of confirmed_by must be a
     non-blank str, exactly a str (not a subclass); validate raises
@@ -1580,7 +1582,7 @@ class Match:
             raise InvalidMatchError(
                 f"status must be a MatchStatus, not {type(self.status).__name__}"
             )
-        self._validate_field_types()
+        Match._validate_field_types(self)
         completed = self.status is MatchStatus.COMPLETED
         expected_size = self.rating_format.team_size
         if len(self.team_a) != expected_size or len(self.team_b) != expected_size:
@@ -1689,19 +1691,29 @@ def _require_plain_match(match: object) -> None:
 
     A subclass can override a field with a property that changes between
     reads, or override validate, and so pass validation with one value and
-    be rated with another.
+    be rated with another. An exact Match must also hold nothing in its
+    instance __dict__ but its own fields: another entry there could hide a
+    method validate calls, such as validate or _validate_field_types, or
+    the field list (__dataclass_fields__).
     """
     if type(match) is not Match:
         raise InvalidMatchError(f"match must be a Match, not {type(match).__name__}")
+    held = vars(match)
+    if len(held) != len(_MATCH_FIELD_NAMES) or not all(
+        type(name) is str and name in _MATCH_FIELD_NAMES for name in held
+    ):
+        raise InvalidMatchError("match has attributes that are not Match fields")
+
+
+_MATCH_FIELD_NAMES = frozenset(f.name for f in fields(Match))
 
 
 def _validate_match(match: Match) -> None:
     """
     Check that match is a Match itself, then validate it; InvalidMatchError if not.
 
-    The type check comes first, so a subclass's own validate never runs, and
-    Match.validate is called from the class, so a validate stored in the
-    instance's __dict__ never runs either.
+    The type check comes first, so a subclass's own validate never runs and
+    an instance __dict__ that holds anything but the fields raises.
     """
     _require_plain_match(match)
     Match.validate(match)

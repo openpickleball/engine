@@ -16,7 +16,7 @@ Decision (recorded on #109): exact types.
 6. `games` must be exactly `tuple` or `list`, each game exactly `tuple` or `list`, and each score exactly `int` (a list subclass can override `__iter__` and give validation one sequence and rating another).
 7. `Match.validate` itself raises `InvalidMatchError` for a subclass instance that does not override it.
 8. Plain `Match` objects behave exactly as before (full suite unchanged).
-9. (Added after review.) `ledger_order`, a public function that takes a `Match`, raises `InvalidMatchError` for a subclass. The entry points call `Match.validate(match)` from the class, so a `validate` in an exact `Match`'s instance `__dict__` never runs. `_canonical` and `_match_digest` read `fields(Match)` and `fields(type(value))`, so an instance that shadows `__dataclass_fields__` cannot merge differing rows.
+9. (Added after review.) `ledger_order`, a public function that takes a `Match`, raises `InvalidMatchError` for a subclass. An exact `Match` whose instance `__dict__` holds anything but its fields raises `InvalidMatchError` (this closes a shadowed `validate`, `_validate_field_types`, or `__dataclass_fields__`), and `validate` calls `Match._validate_field_types` from the class. `_canonical` and `_match_digest` read `fields(Match)` and `fields(type(value))`, so an instance that shadows `__dataclass_fields__` cannot merge differing rows.
 
 ## Files that change
 
