@@ -2306,6 +2306,10 @@ def _snap_replay_info(
         # replay had, and an int would change its type.
         if type(value) is not float or not math.isfinite(value):
             raise SnapshotError(f"{created_path}.{fmt.value} must be a finite float")
+        if value == 0.0 and math.copysign(1.0, value) < 0:
+            # Totals start at 0.0 and every term adds 0.0, so replay never
+            # writes -0.0, and a resume from it would write different text.
+            raise SnapshotError(f"{created_path}.{fmt.value} must not be a negative zero")
         if counted == 0 and value != 0.0:
             raise SnapshotError(f"{created_path}.{fmt.value} must be 0.0 when matches_counted is 0")
         created[fmt] = value
