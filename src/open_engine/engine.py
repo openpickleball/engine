@@ -3874,6 +3874,25 @@ def _report_from_predictions(
     return report, mse
 
 
+_SEARCH_STEPS = 14  # coarse grid intervals in fit_scale and fit_win_calibration
+
+
+def _check_search_bounds(low: float, high: float, tolerance: float) -> None:
+    """Raise EvaluationError for a search range or tolerance the fits cannot use."""
+    if not (math.isfinite(low) and math.isfinite(high)):
+        raise EvaluationError("low and high must be finite")
+    # The search adds two points of the range (midpoints) and multiplies the
+    # width by the grid step count before dividing. Both must stay finite.
+    if not (math.isfinite(2 * low) and math.isfinite(2 * high)):
+        raise EvaluationError("2 * low and 2 * high must be finite")
+    if not math.isfinite((high - low) * _SEARCH_STEPS):
+        raise EvaluationError(f"(high - low) * {_SEARCH_STEPS} must be finite")
+    if not low < high:
+        raise EvaluationError("low must be less than high")
+    if not (math.isfinite(tolerance) and tolerance > 0):
+        raise EvaluationError("tolerance must be finite and greater than 0")
+
+
 @dataclass(frozen=True)
 class ScaleFit:
     """
@@ -3913,7 +3932,11 @@ def fit_scale(
 
     Coarse grid first, then golden-section search around the best grid point.
     Publish the returned ScaleFit alongside the config that adopts it.
+    Raises EvaluationError, before any prediction work, unless low < high,
+    tolerance is finite and greater than 0, and 2 * low, 2 * high, and
+    (high - low) * 14 are finite.
     """
+    _check_search_bounds(low, high, tolerance)
     cfg = cfg or Config()
     ledger = list(matches)
     seeds = list(seed_players)
@@ -3936,7 +3959,7 @@ def fit_scale(
             cache[key] = _report_from_predictions(predictions, trial, scoring)
         return cache[key]
 
-    steps = 14
+    steps = _SEARCH_STEPS
     grid = [low + (high - low) * i / steps for i in range(steps + 1)]
     best = min(grid, key=lambda s: run(s)[1])
     step = (high - low) / steps
@@ -3945,12 +3968,15 @@ def fit_scale(
     ratio = (math.sqrt(5) - 1) / 2
     c, d = b - ratio * (b - a), a + ratio * (b - a)
     while b - a > tolerance:
+        width = b - a
         if run(c)[1] <= run(d)[1]:
             b, d = d, c
             c = b - ratio * (b - a)
         else:
             a, c = c, d
             d = a + ratio * (b - a)
+        if b - a >= width:
+            break  # the bracket hit float spacing above a tiny tolerance
     fitted_scale = round((a + b) / 2, 3)
 
     default_scale = cfg.scale_by_scoring[scoring]
@@ -4003,8 +4029,10 @@ def fit_win_calibration(
     Uses the raw win probabilities computed with cfg's scale, so fit the scale
     first. Predictions without a modeled win probability (win_by not 1 or 2)
     are skipped. Same search as fit_scale: coarse grid, then golden section.
-    Raises EvaluationError when no prediction remains.
+    Raises EvaluationError when no prediction remains, and, before any
+    prediction work, for the same low, high, and tolerance as fit_scale.
     """
+    _check_search_bounds(low, high, tolerance)
     predictions = prequential_predictions(
         matches,
         seed_players,
@@ -4032,7 +4060,7 @@ def fit_win_calibration(
             ) / len(data)
         return cache[key]
 
-    steps = 14
+    steps = _SEARCH_STEPS
     grid = [low + (high - low) * i / steps for i in range(steps + 1)]
     best = min(grid, key=brier)
     step = (high - low) / steps
@@ -4041,12 +4069,15 @@ def fit_win_calibration(
     ratio = (math.sqrt(5) - 1) / 2
     c, d = hi - ratio * (hi - lo), lo + ratio * (hi - lo)
     while hi - lo > tolerance:
+        width = hi - lo
         if brier(c) <= brier(d):
             hi, d = d, c
             c = hi - ratio * (hi - lo)
         else:
             lo, c = c, d
             d = lo + ratio * (hi - lo)
+        if hi - lo >= width:
+            break  # the bracket hit float spacing above a tiny tolerance
     fitted = round((lo + hi) / 2, 3)
 
     return WinCalibrationFit(

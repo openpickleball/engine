@@ -9,6 +9,7 @@ import pytest
 import open_engine.engine as engine_module
 from open_engine import (
     Config,
+    EvaluationError,
     ExternalRatingSnapshot,
     GameFormat,
     Match,
@@ -311,3 +312,73 @@ def test_fit_scale_picks_lower_unrounded_mse_when_rounded_values_tie(monkeypatch
     fit = fit_scale([], cfg=cfg, scoring=ScoringType.RALLY)
     assert abs(fit.scale - 5.0) <= 0.05
     assert not fit.at_bound
+
+
+BAD_TOLERANCE = "tolerance must be finite and greater than 0"
+
+SEARCH_ARGUMENT_CASES = [
+    pytest.param({"low": 3.0, "high": 0.5}, "low must be less than high", id="low-above-high"),
+    pytest.param({"low": 2.0, "high": 2.0}, "low must be less than high", id="low-equals-high"),
+    pytest.param({"low": math.nan}, "low and high must be finite", id="low-nan"),
+    pytest.param({"high": math.inf}, "low and high must be finite", id="high-inf"),
+    pytest.param({"low": -1e308, "high": 1e308}, "must be finite", id="width-overflow"),
+    pytest.param({"low": 1e308, "high": 1.7e308}, "must be finite", id="sum-overflow"),
+    pytest.param({"low": -1.7e308, "high": -1.0}, "must be finite", id="double-low-overflow"),
+    pytest.param({"low": 1.0, "high": 1.7e308}, "must be finite", id="double-high-overflow"),
+    pytest.param({"low": 1.0, "high": 1.5e307}, "must be finite", id="grid-overflow"),
+    pytest.param({"low": -math.inf}, "low and high must be finite", id="low-minus-inf"),
+    pytest.param({"tolerance": 0.0}, BAD_TOLERANCE, id="tol-zero"),
+    pytest.param({"tolerance": -1.0}, BAD_TOLERANCE, id="tol-neg"),
+    pytest.param({"tolerance": math.nan}, BAD_TOLERANCE, id="tol-nan"),
+    pytest.param({"tolerance": math.inf}, BAD_TOLERANCE, id="tol-inf"),
+]
+
+
+def _no_prediction_work(*args: object, **kwargs: object) -> list[PrequentialPrediction]:
+    raise AssertionError("the search arguments must be checked before any prediction work")
+
+
+@pytest.mark.parametrize(("kwargs", "message"), SEARCH_ARGUMENT_CASES)
+def test_fit_scale_rejects_bad_search_arguments(
+    monkeypatch: pytest.MonkeyPatch, kwargs: dict[str, float], message: str
+) -> None:
+    # tolerance <= 0 could hang the golden-section loop, and low >= high
+    # could return a fit from a meaningless search range.
+    monkeypatch.setattr(engine_module, "prequential_predictions", _no_prediction_work)
+    with pytest.raises(EvaluationError, match=message):
+        fit_scale([], scoring=ScoringType.RALLY, **kwargs)
+
+
+@pytest.mark.parametrize(("kwargs", "message"), SEARCH_ARGUMENT_CASES)
+def test_fit_win_calibration_rejects_bad_search_arguments(
+    monkeypatch: pytest.MonkeyPatch, kwargs: dict[str, float], message: str
+) -> None:
+    monkeypatch.setattr(engine_module, "prequential_predictions", _no_prediction_work)
+    with pytest.raises(EvaluationError, match=message):
+        fit_win_calibration([], **kwargs)
+
+
+def test_fit_scale_ends_when_tolerance_is_below_float_spacing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A positive tolerance below the float spacing near the optimum could
+    # hang: the bracket can stop shrinking before it gets that narrow.
+    monkeypatch.setattr(engine_module, "prequential_predictions", lambda *a, **k: [])
+
+    def fake_report(predictions: object, cfg: Config, scoring: ScoringType) -> tuple[None, float]:
+        return None, (cfg.scale_by_scoring[scoring] - 3.1234567) ** 2
+
+    monkeypatch.setattr(engine_module, "_report_from_predictions", fake_report)
+    fit = fit_scale([], scoring=ScoringType.RALLY, tolerance=1e-17)
+    assert fit.scale == 3.123
+
+
+def test_fit_win_calibration_ends_when_tolerance_is_below_float_spacing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_predictions(monkeypatch, _synthetic_predictions([0.6], [True]))
+    monkeypatch.setattr(
+        engine_module, "calibrate_win_probability", lambda raw, a: a - 1.3712345 + 1.0
+    )
+    fit = fit_win_calibration([], tolerance=1e-17)
+    assert fit.a == 1.371
