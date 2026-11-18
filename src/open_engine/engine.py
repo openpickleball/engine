@@ -709,14 +709,22 @@ def _is_config_number(value: object) -> bool:
     True for an int (not bool) or a float that is finite as a float.
 
     Unlike _is_finite_number, an int too large to convert to a float is not
-    a number here: math.isfinite raises OverflowError on it.
+    a number here. An int is judged by its own value, not by what a
+    subclass's __float__ says.
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
     try:
-        return math.isfinite(value)
+        return math.isfinite(_as_float(value))
     except OverflowError:
         return False
+
+
+def _as_float(value: float) -> float:
+    """value as a plain float, from its own value, never a subclass's __float__."""
+    if isinstance(value, int):
+        return int.__float__(value)
+    return float.__float__(value)
 
 
 def _is_config_whole(value: object) -> bool:
@@ -1076,8 +1084,8 @@ class Config:
         # player_k returns at fraction 1.0, which can round above k_max. The
         # product is in floats, as the engine computes it: an all-int product
         # is exact, and math.isfinite raises on one too large for a float.
-        largest_k = float(self.k_min + (self.k_max - self.k_min) * 1.0)
-        largest_weight = float(max(self.match_weights.values())) * float(
+        largest_k = _as_float(self.k_min + (self.k_max - self.k_min) * 1.0)
+        largest_weight = _as_float(max(self.match_weights.values())) * _as_float(
             self.max_information_multiplier
         )
         if not math.isfinite(largest_k * largest_weight):

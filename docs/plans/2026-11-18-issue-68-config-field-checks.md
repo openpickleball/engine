@@ -157,6 +157,8 @@ Second review round:
   key after the set-equality check. Their `except ValueError` ("has an unknown key") stays:
   it is reachable with a str subclass that equals the enum member but not its plain str
   value, and a test covers it.
+- Ints are judged and converted by their own value (`int.__float__`, `float.__float__`),
+  never a subclass's `__float__`, in the number check and the K product.
 - `_MAX_DAYS` is what `timedelta` holds. A window that reaches back before `date.min` from a
   match or reference date still raises `OverflowError`; issue #92 tracks it. The stress test
   uses 365-day windows for that reason.
