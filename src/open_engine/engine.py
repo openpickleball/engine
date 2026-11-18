@@ -5276,7 +5276,8 @@ def fit_win_calibration(
     prediction work, for the same low, high, and tolerance as fit_scale.
     A score_from or anchor that is not None and not a plain date raises
     EvaluationError naming the argument, as prequential_predictions does,
-    for an empty ledger too.
+    for an empty ledger too, unless the low, high, and tolerance checks
+    fail first.
     """
     _check_search_bounds(low, high, tolerance)
     predictions = prequential_predictions(
