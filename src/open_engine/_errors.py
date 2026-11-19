@@ -34,7 +34,12 @@ class InvalidSeedError(OpenEngineError):
 
 
 class PlayerError(OpenEngineError):
-    """A player identity, account link, or external identity is not valid."""
+    """
+    A player identity, account link, or external identity is not valid.
+
+    RatingEngine.state and player_summary also raise it for a rating_format
+    that is not a RatingFormat member.
+    """
 
 
 class UnknownPlayerError(PlayerError):
@@ -42,7 +47,14 @@ class UnknownPlayerError(PlayerError):
 
 
 class EvaluationError(OpenEngineError):
-    """An evaluation, calibration fit, or win probability cannot be computed."""
+    """
+    An evaluation, calibration fit, or win probability cannot be computed.
+
+    It covers argument types too: reliability for a state or field of the
+    wrong type, and expected_point_share, the win probability functions,
+    and calibrate_win_probability for a number that is not exactly an int
+    or float finite as a float.
+    """
 
 
 class SnapshotError(OpenEngineError):

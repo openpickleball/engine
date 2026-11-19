@@ -14,18 +14,26 @@ inactivity-based uncertainty, rolling partner/opponent diversity, scale
 calibration, and deterministic historical replay.
 
 Published behavior notes:
-- Every public entry point takes exact input types (issues #116, #118,
-  #119). A subclass, or an object whose __class__ only claims the type,
+- Every public entry point takes exact input types for each argument it
+  checks (issues #116, #118, #119), with three carve-outs: Config(...)
+  numbers, mappings, and allowed_game_formats, seed state numbers,
+  ExternalRatingSnapshot numbers, and snapshot numbers are read once and
+  converted to plain values (issue #107); matches and seed_players may be
+  any iterable, read once into a list; and output dataclasses are not
+  inputs. A subclass, or an object whose __class__ only claims the type,
   raises the entry point's OpenEngineError subclass before any state
   changes: a subclass can give a check one value and rating another, or
   run caller code while it is read. A plain date in these notes means
-  exactly a date: a datetime or a date subclass is not one. Numbers are
+  exactly a date: a datetime or a date subclass is not one. An enum
+  argument must be one of its enum's members, by identity: an object of
+  the enum's own type that is not a member is rejected. Numbers are
   exactly int or float (a bool is rejected where a number is expected),
   enums exactly their class (a str equal to a member's value is
   rejected), flags exactly bool, a Config exactly a Config, and a
   GameFormat exactly a GameFormat, each holding nothing in its instance
   __dict__ but its own fields. Match.played_at, when set, must be exactly
-  a datetime whose tzinfo is exactly datetime.timezone, so a
+  a datetime whose tzinfo is exactly datetime.timezone, with an offset
+  that is exactly a timedelta, so a
   zoneinfo.ZoneInfo raises InvalidMatchError: the engine reads only the
   UTC instant and offset, so convert with
   played_at.astimezone(timezone(played_at.utcoffset())), which keeps both
@@ -1993,7 +2001,13 @@ _UTC_MIN = datetime.min.replace(tzinfo=UTC)
 
 
 def _utc_instant(played_at: datetime) -> datetime:
-    """The UTC instant of an aware played_at; InvalidMatchError when there is none."""
+    """
+    The UTC instant of an aware played_at; InvalidMatchError when there is none.
+
+    Called only after Match._validate_field_types, so the tzinfo is None or
+    exactly a datetime.timezone holding exactly a timedelta, and neither
+    utcoffset nor astimezone runs caller code.
+    """
     if played_at.tzinfo is None or played_at.utcoffset() is None:
         raise InvalidMatchError("played_at must be timezone-aware")
     try:
@@ -2057,9 +2071,10 @@ def _canonical(match: Match) -> tuple[object, ...]:
     Every field is paired with its exact type, recursively, so values that
     are equal under == but differ in type (3 and 3.0, a str and an Enum
     member) do not match. played_at is compared by its UTC instant and its
-    UTC offset instead: Match equality ignores the offset, treats the two
-    readings of a repeated wall time (a DST fold) as equal, and treats rows
-    with distinct zone objects inside a fold as unequal.
+    UTC offset instead, since Match equality ignores the offset. A
+    validated played_at has exactly a datetime.timezone whose offset is
+    exactly a timedelta, so reading both runs no caller code, and rows with
+    distinct but equal timezone objects match.
     """
     others = tuple(
         (f.name, _strict(getattr(match, f.name))) for f in fields(Match) if f.name != "played_at"
@@ -2730,7 +2745,8 @@ def _content_score(score: int) -> int | str:
     """
     A validated game score in the content key's JSON form.
 
-    int() folds an int subclass into a plain int. A score below 10**600 stays a JSON
+    A validated score is exactly an int (issue #109), so int() returns it
+    unchanged. A score below 10**600 stays a JSON
     number; a larger one is hex text, which has no digit limit and never
     equals a number.
     """
@@ -2752,8 +2768,8 @@ def _content_key(match: Match) -> str:
     played_at, sequence, confirmed_by), since two reports of one match
     often disagree on labels. The digest is over JSON text, so it never
     depends on set order or the hash seed. Scores go through
-    _content_score, so an int subclass equals its int and a huge score never
-    hits the int to text digit limit.
+    _content_score, so a huge score never hits the int to text digit
+    limit.
     """
     team_a = sorted(match.team_a)
     team_b = sorted(match.team_b)
@@ -4656,6 +4672,8 @@ class RatingEngine:
 
         cfg must be the Config the snapshot was taken under (default
         Config()): its version and fingerprint must equal the snapshot's.
+        cfg must be None or exactly a Config with no attributes beyond its
+        fields, or it raises ConfigError before the snapshot is read.
         The whole snapshot is validated before anything is built: exactly
         a dict for every object and exactly a list or tuple for every list
         (another container type, a dict subclass included, is rejected),

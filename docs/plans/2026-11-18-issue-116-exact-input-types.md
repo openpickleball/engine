@@ -151,6 +151,16 @@ Output dataclasses (`MatchResult`, `PlayerSummary`, `ReplayInfo`, `EvaluationRep
 - `#118`'s reproduction no longer gives equal fingerprints on c23ab5a (#120 made the fingerprint see the `_Big` value), so its test checks only the `ConfigError`.
 - `tests/test_engine.py`: `LOOSE_PAIRS` keeps a valid loosely equal pair (`confirmed_by` as a `frozenset` and a `set`), and the `_Int` `points_to` pair moves to `INVALID_LOOSE_PAIRS`.
 - `ledger_order` checks the types `Match._validate_field_types` checks: every field but `games` and the ids inside the teams and `confirmed_by`.
+- Review findings, fixed after the first pass (red tests in `tests/test_exact_input_review.py`):
+  - `played_at`'s offset must be exactly a `timedelta`: an exact `timezone` can hold a `timedelta` subclass.
+  - Enum checks accept only a member by identity, since an object of the enum's own type can be built without being a member. `Config` rejects such mapping keys and `allowed_game_formats` entries; plain str keys still convert.
+  - `GameFormat.validate_game` checks the format's field types, not only its shape.
+  - Snapshot objects, `Config.from_dict` data, and seed ratings keys are checked for exact str or member keys before any hashing.
+  - Number checks also need the value to be finite as a float (an int too large for a float, NaN, or infinity raises `EvaluationError`), except the fits' bounds, where an infinite float keeps its existing "must be finite" message; a `best_of` too large to compute raises `EvaluationError`.
+  - `predict_win_probability` checks `best_of` next to `game_format`, before any prediction work.
+  - `reliability` needs exact str keys in `partners` and `opponents`.
+  - Rejection messages name a wrong-typed value's type instead of its repr. `tests/test_exact_identity_types_review.py::test_from_snapshot_rejects_a_format_key_subclass` pinned a str subclass key's repr and now expects the type name.
+  - `fit_scale` checks `mode`, `scoring`, `burn_in_matches`, `score_from`, and `anchor` before it builds a trial config, so `fit_scale(low=0, mode="bad")` now raises `EvaluationError`, not `ConfigError`.
 
 ## Proof
 
