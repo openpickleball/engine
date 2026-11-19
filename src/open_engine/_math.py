@@ -37,11 +37,11 @@ _SHARE_EXPONENT_LIMIT = 12.0
 _RELIABILITY_BASE_WEIGHT = 0.60
 _RELIABILITY_VARIETY_WEIGHT = 0.40
 
-# _compute marks a player clamped when the applied rating differs from the
-# unclamped one (old rating + raw delta) by more than this. An unclamped
-# rating equals that sum exactly, so only a clamp can differ. A clamp that
-# cuts off 1e-12 or less is not listed in clamped: that is far below the 5
-# places a delta is reported to.
+# _compute marks a player clamped when the rating range cut their change:
+# the applied rating differs from the unclamped one (old rating + raw
+# delta) by more than this. An unclamped rating equals that sum exactly,
+# so only a clamp can differ. A clamp that cuts off 1e-12 or less is not
+# listed in clamped: that is far below the 5 places a delta is reported to.
 _CLAMP_TOLERANCE = 1e-12
 
 # Decimal places of reported numbers. Ratings and states keep full
@@ -49,6 +49,14 @@ _CLAMP_TOLERANCE = 1e-12
 # MatchResult deltas, expected_a, actual_a, surprise, effective_weight,
 # and imbalance, and the evaluation pairs that mirror them (_scored_pairs).
 _RESULT_PLACES = 5
+# _compute also marks a player clamped when float rounding of the new
+# rating dropped at least this much of their change: the applied change
+# (new rating minus old rating) differs from the raw delta by half a unit
+# in the last reported place, so the loss can show in deltas and imbalance
+# (issue #129). A smaller loss is ordinary rounding and is not listed: an
+# absolute tolerance near 1e-12 would list some players at any rating of
+# 2**14 or more in magnitude.
+_VISIBLE_LOSS = 0.5 * 10**-_RESULT_PLACES
 # PlayerSummary.rating.
 _SUMMARY_RATING_PLACES = 3
 # PlayerSummary.rd.

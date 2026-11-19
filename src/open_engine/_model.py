@@ -423,6 +423,11 @@ class MatchResult:
 
     reason is None when the match counted. deltas lists the rating changes.
     frozen and clamped list the players whose change was not fully applied.
+    A player is clamped when the new rating, after the range clamp, differs
+    from the rounded sum old rating + raw delta by more than 1e-12, or when
+    the applied change differs from the raw delta by at least 5e-6 (half a
+    unit in the fifth place). A loss that meets neither rule is not
+    listed, including a range cut that float rounding of that sum absorbs first.
     imbalance is the mean team A delta plus the mean team B delta, from the
     unrounded changes, rounded to 5 places. parent holds the overall doubles
     update for a category match, with its own imbalance.
@@ -446,7 +451,7 @@ class MatchResult:
     effective_weight: float = 0.0
     deltas: dict[str, float] = field(default_factory=dict)
     frozen: tuple[str, ...] = ()  # predates the player's imported baseline
-    clamped: tuple[str, ...] = ()  # hit the rating floor or ceiling
+    clamped: tuple[str, ...] = ()  # range cut, or rounding lost >= 5e-6
     imbalance: float = 0.0  # mean team A delta plus mean team B delta
     late: bool = False  # dated before what a player's rating here reflects
     parent: MatchResult | None = None  # overall doubles update for categories
@@ -532,7 +537,9 @@ class ReplayInfo:
     its category update to its own format and, when category_feeds_parent
     is on and its overall doubles update counts, that update to doubles.
     Each player moves by their own K, so it can be nonzero when K differs
-    between the teams or a player is clamped or frozen, and colluding
+    between the teams, a player is clamped or frozen, or float rounding
+    leaves a residue (at any rating, since the total is never rounded),
+    and colluding
     accounts can grow it on purpose. It is
     stored as a read-only mapping with a key for every RatingFormat in
     definition order (0.0 where nothing counted). Building a ReplayInfo
