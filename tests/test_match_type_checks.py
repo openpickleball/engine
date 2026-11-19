@@ -31,7 +31,7 @@ BASE = Match("syn-m1", ("syn-b", "syn-c"), ("syn-d", "syn-e"), ((11, 5),), ON, R
 
 
 class _Int(int):
-    """An int subclass, accepted like int."""
+    """An int subclass, rejected since issue #116: it could override comparison."""
 
 
 BAD: list[Any] = [
@@ -42,6 +42,11 @@ BAD: list[Any] = [
     pytest.param("best_of", "3", "best_of must be an int, not str", id="best_of-str"),
     pytest.param("best_of", True, "best_of must be an int, not bool", id="best_of-bool"),
     pytest.param("best_of", 1.0, "best_of must be an int, not float", id="best_of-float"),
+    # Since issue #116 an int subclass is rejected: it could override comparison.
+    pytest.param(
+        "sequence", _Int(2), "sequence must be an int, not _Int", id="sequence-int-subclass"
+    ),
+    pytest.param("best_of", _Int(1), "best_of must be an int, not _Int", id="best_of-int-subclass"),
     pytest.param(
         "rating_format",
         "doubles",
@@ -177,9 +182,7 @@ GOOD: list[Any] = [
     ),
     pytest.param({"confirmed_by": {"syn-b", "syn-d"}}, id="confirmed_by-set"),
     pytest.param({"sequence": 2}, id="sequence-int"),
-    pytest.param({"sequence": _Int(2)}, id="sequence-int-subclass"),
     pytest.param({"best_of": 3, "games": ((11, 5), (11, 5))}, id="best_of-int"),
-    pytest.param({"best_of": _Int(3), "games": ((11, 5), (11, 5))}, id="best_of-int-subclass"),
     pytest.param({"played_at": AT}, id="played_at-aware"),
     pytest.param({"game_format": GameFormat()}, id="game_format-member"),
 ]

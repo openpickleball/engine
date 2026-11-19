@@ -515,14 +515,22 @@ class NoOffset(tzinfo):
 
 
 @pytest.mark.parametrize(
-    "played_at",
-    [datetime(2026, 10, 29, 19), datetime(2026, 10, 29, 19, tzinfo=NoOffset())],
+    ("played_at", "message"),
+    [
+        (datetime(2026, 10, 29, 19), "timezone-aware"),
+        # Any tzinfo other than datetime.timezone runs its own code, so it is
+        # rejected before its offset is read (issue #116).
+        (
+            datetime(2026, 10, 29, 19, tzinfo=NoOffset()),
+            "tzinfo must be exactly datetime.timezone, not NoOffset",
+        ),
+    ],
     ids=["no_tzinfo", "no_offset"],
 )
 @pytest.mark.parametrize("check", [Match.validate, ledger_order], ids=["validate", "ledger_order"])
-def test_naive_played_at_rejected(played_at: datetime, check):
+def test_naive_played_at_rejected(played_at: datetime, message: str, check):
     m = match("naive", ("a", "b"), ("c", "d"), played_at=played_at)
-    with pytest.raises(ValueError, match="timezone-aware"):
+    with pytest.raises(open_engine.InvalidMatchError, match=message):
         check(m)
 
 
@@ -583,6 +591,11 @@ def new_york(cache: bool = True) -> ZoneInfo:
         pytest.skip("tzdata for America/New_York is not installed")
 
 
+def fixed_offset(played_at: datetime) -> datetime:
+    """The migration conversion: the same instant and offset, as a datetime.timezone."""
+    return played_at.astimezone(timezone(played_at.utcoffset()))
+
+
 def outcome(rows: list[Match]) -> object:
     """What replay gives: a snapshot, or the error type and message."""
     try:
@@ -614,20 +627,39 @@ def test_invalid_row_after_as_of_raises():
         replay([late], as_of=LEDGER_AS_OF)
 
 
+def test_zoneinfo_played_at_rejected():
+    # A ZoneInfo runs its own code to give the offset (issue #116).
+    m = match(
+        "m",
+        ("a", "b"),
+        ("c", "d"),
+        on=FOLD_DAY,
+        played_at=datetime(2026, 11, 1, 1, 30, tzinfo=new_york()),
+    )
+    with pytest.raises(open_engine.InvalidMatchError, match="not ZoneInfo"):
+        replay([m], as_of=LEDGER_AS_OF)
+
+
 def test_fold_duplicates_conflict_in_both_orders():
     # 01:30 happens twice on FOLD_DAY: fold=0 is 05:30Z, fold=1 is 06:30Z.
+    # Converted to fixed offsets, they keep their instants and offsets.
     zone = new_york()
     kw = {"on": FOLD_DAY, "games": ((11, 3),)}
     first = match(
-        "m", ("p1", "p2"), ("p3", "p4"), played_at=datetime(2026, 11, 1, 1, 30, tzinfo=zone), **kw
+        "m",
+        ("p1", "p2"),
+        ("p3", "p4"),
+        played_at=fixed_offset(datetime(2026, 11, 1, 1, 30, tzinfo=zone)),
+        **kw,
     )
     second = match(
         "m",
         ("p1", "p2"),
         ("p3", "p4"),
-        played_at=datetime(2026, 11, 1, 1, 30, tzinfo=zone, fold=1),
+        played_at=fixed_offset(datetime(2026, 11, 1, 1, 30, tzinfo=zone, fold=1)),
         **kw,
     )
+    assert first.played_at != second.played_at
     between = match(
         "t",
         ("p1", "p3"),
@@ -649,10 +681,11 @@ def test_identical_fold_rows_with_distinct_zone_objects_collapse():
             ("a", "b"),
             ("c", "d"),
             on=FOLD_DAY,
-            played_at=datetime(2026, 11, 1, 1, 30, tzinfo=new_york(cache=False)),
+            played_at=fixed_offset(datetime(2026, 11, 1, 1, 30, tzinfo=new_york(cache=False))),
         )
         for _ in range(2)
     ]
+    assert rows[0].played_at.tzinfo is not rows[1].played_at.tzinfo
     for order in (rows, list(reversed(rows))):
         engine = replay(order, as_of=LEDGER_AS_OF)
         assert engine.replay_info is not None
@@ -679,14 +712,14 @@ TWO_GAMES = ((11, 5), (11, 5))
 
 
 class _Int(int):
-    """An int subclass: equal to the int under ==, valid, but of another type."""
+    """An int subclass: equal to the int under ==, but of another type."""
 
 
 LOOSE_PAIRS = [
     pytest.param(
-        {"game_format": GameFormat(points_to=11)},
-        {"game_format": GameFormat(points_to=_Int(11))},
-        id="points_to",
+        {"confirmed_by": frozenset({"a", "c"})},
+        {"confirmed_by": {"a", "c"}},
+        id="confirmed_by",
     ),
 ]
 
@@ -711,6 +744,13 @@ INVALID_LOOSE_PAIRS = [
         {"game_format": GameFormat(points_to=11.0)},
         "points_to must be an int, not float",
         id="points_to",
+    ),
+    # Since issue #116 an int subclass is rejected too.
+    pytest.param(
+        {"game_format": GameFormat(points_to=11)},
+        {"game_format": GameFormat(points_to=_Int(11))},
+        "points_to must be an int, not _Int",
+        id="points_to_subclass",
     ),
 ]
 
