@@ -405,9 +405,9 @@ class Config:
         # types (an enum member, a plain int), so the fingerprint never
         # depends on how an equal key prints or whether JSON can hold it.
         # One read of each caller's mapping, as (key, plain value) pairs;
-        # every later mapping check and the stored copy read these pairs,
-        # never the caller's mapping, and no game length key is hashed
-        # before it is converted.
+        # every later mapping check reads these pairs or the copies built
+        # from them, never the caller's mapping, and no game length key is
+        # hashed before it is converted.
         pairs: dict[str, list[tuple[object, object]]] = {}
         for name in _CONFIG_MAPPING_FIELDS:
             value = getattr(self, name)
