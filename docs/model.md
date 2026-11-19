@@ -313,7 +313,7 @@ P   = 1 / (1 + exp(-a * ln(p_c / (1 - p_c))))
 **Prequential predictions** (`prequential_predictions`, `_prequential`, `_predict_match`). Each match is predicted from ratings that have not seen it, then recorded. A match is predicted when it is completed, every player's state in the format (stored, or the starting state `record` would use) has an `initial_source_date` or at least `burn_in_matches` counted matches, its scoring matches `scoring` when given, and it is on or after `score_from` when given. A prediction is kept only when `record` then counts the match. This eligibility rule is separate from `PlayerSummary.established`.
 
 - `"live"` mode records every match in ledger order in one engine.
-- `"scheduled"` mode mirrors production. Replay dates are `anchor + k * cfg.replay_interval_days`. `_prequential_windows` assigns each match to window k, the latest replay date strictly before its own date. `_prequential` then predicts each window's matches from a replay to that date and records them live in ledger order.
+- `"scheduled"` mode mirrors production. Replay dates are `anchor + k * cfg.replay_interval_days`. `_prequential_windows` assigns each match to window k, the latest replay date strictly before its own date. `_prequential` then, for each window with a match on or after `score_from` (every window when it is not set), predicts that window's matches from a replay to that date and records them live in ledger order; an earlier window is skipped, and its rows enter only the later replays.
 
 **Evaluation report** (`evaluate`, `_scored_pairs`, `_report_from_predictions`). Each prediction gives a pair, both rounded to 5 places as in `MatchResult`:
 
