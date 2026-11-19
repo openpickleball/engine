@@ -538,7 +538,8 @@ class ReplayInfo:
     is on and its overall doubles update counts, that update to doubles.
     Each player moves by their own K, so it can be nonzero when K differs
     between the teams, a player is clamped or frozen, or float rounding
-    leaves a residue at very large ratings or steps, and colluding
+    leaves a residue (at any rating, since the total is never rounded),
+    and colluding
     accounts can grow it on purpose. It is
     stored as a read-only mapping with a key for every RatingFormat in
     definition order (0.0 where nothing counted). Building a ReplayInfo

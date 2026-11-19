@@ -54,7 +54,7 @@ _RESULT_PLACES = 5
 # (new rating minus old rating) differs from the raw delta by half a unit
 # in the last reported place, so the loss can show in deltas and imbalance
 # (issue #129). A smaller loss is ordinary rounding and is not listed: an
-# absolute tolerance near 1e-12 would list players at every rating of
+# absolute tolerance near 1e-12 would list some players at any rating of
 # 2**14 or more in magnitude.
 _VISIBLE_LOSS = 0.5 * 10**-_RESULT_PLACES
 # PlayerSummary.rating.
