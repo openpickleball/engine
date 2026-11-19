@@ -17,7 +17,7 @@ from datetime import date
 
 import pytest
 
-import open_engine.engine as engine_module
+import open_engine._ledger as ledger_module
 from open_engine import LedgerConflictError, Match, RatingFormat, replay
 
 S = RatingFormat.SINGLES
@@ -26,7 +26,7 @@ BASE = Match("syn-d1", ("syn-a",), ("syn-b",), ((11, 1),), ON, S)
 
 
 def _canonical_equal(a: Match, b: Match) -> bool:
-    return engine_module._canonical(a) == engine_module._canonical(b)
+    return ledger_module._canonical(a) == ledger_module._canonical(b)
 
 
 DIFFERENT = [
@@ -51,7 +51,7 @@ def test_rows_that_differ_inside_a_list_or_set_are_separated(a: Match, b: Match)
     a.validate()
     b.validate()
     assert not _canonical_equal(a, b)
-    assert engine_module._match_digest(a) != engine_module._match_digest(b)
+    assert ledger_module._match_digest(a) != ledger_module._match_digest(b)
 
 
 @pytest.mark.parametrize(("a", "b"), DIFFERENT)
@@ -77,7 +77,7 @@ SAME = [
 @pytest.mark.parametrize(("a", "b"), SAME)
 def test_equal_lists_and_sets_join(a: Match, b: Match) -> None:
     assert _canonical_equal(a, b)
-    assert engine_module._match_digest(a) == engine_module._match_digest(b)
+    assert ledger_module._match_digest(a) == ledger_module._match_digest(b)
     assert replay([a, b], as_of=ON).replay_info is not None
 
 
@@ -100,7 +100,7 @@ def test_resume_accepts_the_same_list_row() -> None:
 DIGEST_SCRIPT = """
 from datetime import date
 from open_engine import Match, MatchType, RatingFormat
-from open_engine.engine import _match_digest
+from open_engine._ledger import _match_digest
 ids = ("syn-a", "syn-b", "syn-c", "syn-d")
 m = Match("syn-d1", ids[:2], ids[2:], ((11, 1),), date(2025, 2, 1),
           RatingFormat.DOUBLES, match_type=MatchType.SELF_REPORTED,

@@ -209,7 +209,7 @@ def test_scheduled_window_near_date_min_does_not_see_its_own_match() -> None:
 
 @pytest.mark.parametrize("days", [0, 1, 30, 400, MAX_DAYS])
 def test_days_before_clamps_at_date_min(days: int) -> None:
-    from open_engine.engine import _days_before
+    from open_engine._validation import _days_before
 
     assert _days_before(date.min, days) == date.min
     assert _days_before(date.min + timedelta(days=days), days) == date.min
@@ -217,7 +217,7 @@ def test_days_before_clamps_at_date_min(days: int) -> None:
 
 
 def test_days_before_matches_timedelta_where_it_does_not_overflow() -> None:
-    from open_engine.engine import _days_before
+    from open_engine._validation import _days_before
 
     rng = random.Random(92)
     for _ in range(2000):
@@ -290,7 +290,7 @@ def test_scheduled_anchor_far_after_the_ledger_is_one_window() -> None:
 
 
 def test_days_before_moving_forward_stops_at_date_max() -> None:
-    from open_engine.engine import _days_before
+    from open_engine._validation import _days_before
 
     assert _days_before(date.max - timedelta(days=3), -10) == date.max
     assert _days_before(date.min, -10) == date.min + timedelta(days=10)

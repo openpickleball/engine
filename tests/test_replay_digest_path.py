@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+import open_engine._ledger as ledger_module
+import open_engine._replay as replay_module
 import open_engine.engine as engine_module
 from open_engine import Match, RatingFormat, prequential_predictions, replay
 
@@ -38,7 +40,8 @@ def test_prequential_predictions_compute_no_digests(
     monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
     expected = prequential_predictions(LEDGER, mode=mode, burn_in_matches=0)  # type: ignore[arg-type]
-    monkeypatch.setattr(engine_module, "_match_digest", _no_digest)
+    monkeypatch.setattr(ledger_module, "_match_digest", _no_digest)
+    monkeypatch.setattr(replay_module, "_match_digest", _no_digest)
     got = prequential_predictions(LEDGER, mode=mode, burn_in_matches=0)  # type: ignore[arg-type]
     assert got == expected
     assert got
@@ -49,8 +52,18 @@ def test_replay_still_records_digests() -> None:
     assert set(engine._ledger_digests) == {m.match_id for m in LEDGER}
 
 
-def test_engine_has_no_assert_statements() -> None:
+PACKAGE_SOURCES = sorted(Path(engine_module.__file__).parent.glob("*.py"))
+
+
+def test_the_assert_scan_covers_the_engine_code() -> None:
+    # The resume and snapshot code lives in the private modules, not engine.py.
+    names = {path.name for path in PACKAGE_SOURCES}
+    assert {"engine.py", "winprob.py", "_engine.py", "_replay.py", "_snapshot.py"} <= names
+
+
+@pytest.mark.parametrize("path", PACKAGE_SOURCES, ids=lambda path: path.name)
+def test_engine_has_no_assert_statements(path: Path) -> None:
     # assert vanishes under python -O, so no check may rely on it.
-    tree = ast.parse(Path(engine_module.__file__).read_text(encoding="utf-8"))
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     lines = [node.lineno for node in ast.walk(tree) if isinstance(node, ast.Assert)]
     assert lines == []

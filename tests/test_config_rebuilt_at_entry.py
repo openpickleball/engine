@@ -17,7 +17,7 @@ from typing import cast
 
 import pytest
 
-import open_engine.engine as engine_module
+import open_engine._config as config_module
 from open_engine import (
     Config,
     ConfigError,
@@ -34,7 +34,8 @@ from open_engine import (
     reliability,
     replay,
 )
-from open_engine.engine import ALL_GAME_FORMATS, _FrozenMapping
+from open_engine._config import _FrozenMapping
+from open_engine.engine import ALL_GAME_FORMATS
 from test_exact_input_plain_unchanged import _ledger, _seeds
 
 D = RatingFormat.DOUBLES
@@ -473,14 +474,14 @@ def test_each_public_call_rebuilds_once(
     plain_points: dict[str, Callable[[Config | None], object]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original = engine_module._rebuilt_config
+    original = config_module._rebuilt_config
     seen: list[Config] = []
 
     def counted(cfg: Config) -> Config:
         seen.append(cfg)
         return original(cfg)
 
-    monkeypatch.setattr(engine_module, "_rebuilt_config", counted)
+    monkeypatch.setattr(config_module, "_rebuilt_config", counted)
     cfg = Config()
     plain_points[name](cfg)
     assert seen == [cfg]
@@ -493,14 +494,14 @@ def test_a_none_config_is_not_rebuilt(
     plain_points: dict[str, Callable[[Config | None], object]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original = engine_module._rebuilt_config
+    original = config_module._rebuilt_config
     seen: list[Config] = []
 
     def counted(cfg: Config) -> Config:
         seen.append(cfg)
         return original(cfg)
 
-    monkeypatch.setattr(engine_module, "_rebuilt_config", counted)
+    monkeypatch.setattr(config_module, "_rebuilt_config", counted)
     plain_points[name](None)
     assert seen == []
 

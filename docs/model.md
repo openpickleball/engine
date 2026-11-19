@@ -2,7 +2,7 @@
 
 > **Status:** This engine is a demonstration. Its methods have not been validated on real match data, its outputs are not OPEN ratings, and its API may change without notice. No OPEN rating is live. Each default parameter value is an uncalibrated placeholder, a declared choice, or a label that changes no rating, as the [parameter table](#parameters) marks it.
 
-This page states every equation the engine uses to move a rating, to report reliability, and to predict and evaluate matches. It follows a match through the engine in the order the code processes it. Each equation names the function in `src/open_engine/engine.py` or `src/open_engine/winprob.py` that computes it, so you can check one against the other.
+This page states every equation the engine uses to move a rating, to report reliability, and to predict and evaluate matches. It follows a match through the engine in the order the code processes it. Each equation names the function in `src/open_engine/` that computes it (most are in `_math.py`, `_engine.py`, `_evaluation.py`, and `winprob.py`), so you can check one against the other.
 
 The engine's edge cases (input types, ledger order, late matches, duplicates, snapshots, and the rest) are in the published behavior notes in [`docs/behavior.md`](behavior.md). This page does not repeat them. Where a rule here has an edge case, it links to the note.
 
@@ -382,7 +382,7 @@ Every `Config` field the math reads, with its default. Status says what the defa
 
 `version` names the release and is in the fingerprint. The valid range of each field is in [Config validation](behavior.md#config-validation).
 
-The engine also has fixed constants in `engine.py`, each with a comment saying why it has its value: the expected-share exponent clamp (12), the reliability blend (0.60 and 0.40), the clamp detection tolerance (1e-12), and the reported decimal places (5 for `MatchResult` numbers, 3 for `PlayerSummary.rating`, 4 for `PlayerSummary.rd`, 1 for reliability). The win probability clip (1e-6) is `PROBABILITY_CLIP` in `winprob.py`. They are not `Config` fields, so the fingerprint does not record them. A change to one changes the engine itself, so it needs a release and a changelog entry.
+The engine also has fixed constants in `_math.py`, each with a comment saying why it has its value: the expected-share exponent clamp (12), the reliability blend (0.60 and 0.40), the clamp detection tolerance (1e-12), and the reported decimal places (5 for `MatchResult` numbers, 3 for `PlayerSummary.rating`, 4 for `PlayerSummary.rd`, 1 for reliability). The win probability clip (1e-6) is `PROBABILITY_CLIP` in `winprob.py`. They are not `Config` fields, so the fingerprint does not record them. A change to one changes the engine itself, so it needs a release and a changelog entry.
 
 ## What the model does not do
 

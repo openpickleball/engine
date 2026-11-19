@@ -32,7 +32,7 @@ from open_engine import (
     prequential_predictions,
     replay,
 )
-from open_engine.engine import (
+from open_engine._config import (
     _CONFIG_MAPPING_FIELDS,
     _CONFIG_NUMBER_FIELDS,
     _CONFIG_OPTIONAL_NUMBER_FIELDS,

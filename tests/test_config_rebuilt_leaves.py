@@ -15,7 +15,7 @@ from datetime import date
 
 import pytest
 
-import open_engine.engine as engine_module
+import open_engine._config as config_module
 from open_engine import (
     Config,
     ConfigError,
@@ -310,12 +310,12 @@ def test_player_summary_does_not_rebuild_the_config(monkeypatch: pytest.MonkeyPa
     engine.record(MATCH)
     before = engine.player_summary("syn-a", D, AS_OF)
     seen: list[Config] = []
-    original = engine_module._rebuilt_config
+    original = config_module._rebuilt_config
 
     def counted(cfg: Config) -> Config:
         seen.append(cfg)
         return original(cfg)
 
-    monkeypatch.setattr(engine_module, "_rebuilt_config", counted)
+    monkeypatch.setattr(config_module, "_rebuilt_config", counted)
     assert engine.player_summary("syn-a", D, AS_OF) == before
     assert seen == []

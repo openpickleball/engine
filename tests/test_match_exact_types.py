@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-import open_engine.engine as engine_module
+import open_engine._ledger as ledger_module
 from open_engine import (
     InvalidMatchError,
     Match,
@@ -305,8 +305,8 @@ def test_repeated_rows_compare_every_field_even_when_fields_are_shadowed() -> No
     with pytest.raises(InvalidMatchError, match="not Match fields"):
         replay([b, a], as_of=AS_OF)
     # The row key and digest read the field list from the class as well.
-    assert engine_module._canonical(a) != engine_module._canonical(b)
-    assert engine_module._match_digest(a) != engine_module._match_digest(b)
+    assert ledger_module._canonical(a) != ledger_module._canonical(b)
+    assert ledger_module._match_digest(a) != ledger_module._match_digest(b)
 
 
 def test_ledger_order_rejects_a_match_subclass() -> None:
