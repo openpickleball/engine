@@ -6,7 +6,7 @@ This page states every equation the engine uses to move a rating, to report reli
 
 The engine's edge cases (input types, ledger order, late matches, duplicates, snapshots, and the rest) are in the published behavior notes in the [`engine.py` module docstring](../src/open_engine/engine.py). This page does not repeat them. Where a rule here has an edge case, it links to the note.
 
-In short: a rating is a performance-based Elo rating. Each match compares the share of points a team won with the share its rating predicted. Each player moves by their own K, which grows with their rating uncertainty (RD). RD grows while a player is inactive and shrinks with each match. Reliability, a 0 to 100 label, combines RD with the variety of a player's partners and opponents.
+In short: a rating is a performance-based Elo rating. Each match compares the share of points a team won with the share its rating predicted. Each player moves by their own K, which grows with their rating uncertainty (RD). Once a state has an `rd_as_of` (from its first counted match or an imported capture date), RD can grow with inactivity, up to `rd_max`. It can shrink with each counted match, down to `rd_min`. A frozen player's RD does not change. Reliability, a 0 to 100 label, combines RD with the variety of a player's partners and opponents.
 
 ## Contents
 
@@ -41,13 +41,13 @@ Each player has a separate `RatingState` in each rating format: singles, overall
 | --- | --- |
 | `rating` | The rating, between `cfg.min_rating` and `cfg.max_rating`. |
 | `rd` | Rating deviation, OPEN's internal uncertainty, between `cfg.rd_min` and `cfg.rd_max`. |
-| `rd_as_of` | The date inactivity is measured from. A match sets it to the match date, and an imported seed to its capture date. A category state derived from overall doubles keeps the doubles `rd_as_of`, though its RD is raised to at least `cfg.category_seed_rd`. `None` for a new player. |
+| `rd_as_of` | The date inactivity is measured from. A counted match moves it forward to the match date, never back, so a late live match leaves it as it was. A frozen player's state is not changed. An imported seed sets it to its capture date. A category state derived from overall doubles keeps the doubles `rd_as_of`, though its RD is raised to at least `cfg.category_seed_rd`. `None` for a new player. |
 | `initial_source_date` | The capture date of an imported rating, else `None`. Matches on or before it are frozen for this player. |
 | `matches_played`, `verified_matches_played` | Counted matches, and counted tournament, league, and recreational verified matches. |
 | `last_played` | The date of the player's latest counted match in this format. |
 | `partners`, `opponents` | The latest date this player played with or against each other player. |
 
-A counted match moves the rating. Before the state's first counted match, a new seed can also replace it: `seed_external_rating(..., replace_unplayed_seed=True)` replaces an unplayed seed, and under `cfg.category_feeds_parent` a new overall doubles seed replaces each stored, unplayed category state derived from doubles (`initial_source` `open_parent:doubles`). After a counted match, no seed replaces it.
+A counted match can move the rating. A frozen player gets 0.0, and a player at a rating bound can stay put. A new seed can also replace an unplayed state: `seed_external_rating(..., replace_unplayed_seed=True)` can replace an unplayed seed, and under `cfg.category_feeds_parent` a new overall doubles seed replaces each stored, unplayed category state derived from doubles (`initial_source` `open_parent:doubles`). `seed_external_rating` refuses in several cases, including a derived `open_parent:` state, a format where a counted match included the player (even frozen, so `matches_played` can still be 0), and a format with a rejected update a seed could change. Its docstring lists the full rules.
 
 ## Starting states
 
@@ -317,7 +317,7 @@ error    = actual - expected
 mse  = mean(error**2)        mae = mean(abs(error))        bias = mean(error)
 ```
 
-`mse`, `mae`, and `bias` are reported to 6 places. The calibration table has ten bins, `lower = index / 10` for index 0 to 9. A pair is in a bin when `lower <= expected < lower + 0.1`, and the last bin also takes `expected == 1.0`. Each bin gives its lower bound, mean expected, mean actual (4 places), and count. The edges are floats, so a pair exactly on a boundary can be counted in two bins: `0.2 + 0.1` is `0.30000000000000004`, so `expected == 0.3` is in both the 0.2 and the 0.3 bin.
+`mse`, `mae`, and `bias` are reported to 6 places. The calibration table has ten bins, `lower = index / 10` for index 0 to 9. A pair is in a bin when `lower <= expected < lower + 0.1`, and the last bin also takes `expected == 1.0`. Only bins with at least one pair are listed. Each listed bin gives its lower bound, mean expected, mean actual (4 places), and count. The edges are floats, so a pair exactly on a boundary can be counted in two bins: `0.2 + 0.1` is `0.30000000000000004`, so `expected == 0.3` is in both the 0.2 and the 0.3 bin.
 
 **Scale fit** (`fit_scale`). For one scoring type, the scale that minimizes the unrounded prequential MSE on `[low, high]`. Each trial scale reruns the whole prequential pass, since the ratings depend on the scale. The search evaluates a grid of 15 points (14 intervals), then a golden-section search within one grid step of the best point until the bracket is no wider than `tolerance`, or stops shrinking at float spacing. The result is the bracket midpoint rounded to 3 places. Trial scales that round to the same 6 places share one result.
 
@@ -329,7 +329,7 @@ brier(a) = mean((calibrated(P_match, a) - won)**2)        won = 1 or 0
 
 `a` is evaluated rounded to 6 places. The predictions are made once, with the config's scale, so fit the scale first. The search is the same as for the scale, with the same two stopping rules, and the result is rounded to 3 places.
 
-**Identification.** A fit within `tolerance` of `low` or `high` has `at_bound` set. `ScaleFit.profile` lists every scale `fit_scale` ran, as its 6-place cache key, with its unrounded MSE, sorted by scale. That includes the grid, the search, and the runs at the fitted scale and at the config's default scale, which can lie outside `[low, high]`. A fit at a bound, or with a flat profile, is not identified: the data do not pin down the value. Fits on real match data run outside this repository.
+**Identification.** A fit within `tolerance` of `low` or `high` has `at_bound` set. `ScaleFit.profile` lists every scale `fit_scale` ran, as its 6-place cache key, with its unrounded MSE, sorted by scale. That includes the grid, the search, and the runs at the fitted scale and at the config's default scale. Either of those two can lie outside `[low, high]`: the default scale is whatever the config holds, and the fitted scale is rounded to 3 places, which can move it slightly past a bound. A fit at a bound, or with a flat profile, is not identified: the data do not pin down the value. Fits on real match data run outside this repository.
 
 ## Parameters
 
