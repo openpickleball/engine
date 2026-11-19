@@ -53,6 +53,7 @@ Not done here: shortening the README's long sections (a follow-up issue can make
 ## Proof
 
 - Criteria 2, 3, 9: `tests/test_docstrings.py`, red before the rewrite and green after.
+- Criterion 9 uses the fallback. Telling whether a public function "can raise" an `OpenEngineError` needs a call graph through `self` methods and module helpers, and an over-approximation would demand a `Raises:` section on calls that never raise (`Config.fingerprint`). So `tests/test_docstrings.py` checks that every public docstring has a summary line under 100 characters followed by a blank line and stays within 30 lines, and keeps the reliable half of the first variant: every public function or method with parameters has an `Args:` section. `Raises:` sections are still written where they apply, but no test checks them.
 - Criterion 6: a scratch script (not committed) splits the saved old docstrings into sentences, normalizes whitespace, and searches for each in the new `docs/behavior.md`, `docs/model.md`, and new `engine.py` docstrings. Its list of unmatched sentences goes in the PR body with where each one's content now lives.
 - Criterion 8: the gate (`ruff check .`, `ruff format --check .`, `mypy src`, `pytest`); `git diff origin/main -- src` reviewed to contain docstring and comment lines only (an AST comparison of `origin/main` and the branch with docstrings stripped must be equal).
 - Criterion 1, 4, 5, 7: review and verify phases.
