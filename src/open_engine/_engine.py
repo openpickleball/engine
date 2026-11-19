@@ -1146,21 +1146,9 @@ class RatingEngine:
         states_b = [work[pid] for pid in match.team_b]
         rating_a = math.fsum(s.rating for s in states_a) / len(states_a)
         rating_b = math.fsum(s.rating for s in states_b) / len(states_b)
-
-        if (
-            rating_format is RatingFormat.SINGLES
-            and cfg.max_singles_rating_gap is not None
-            and abs(rating_a - rating_b) > cfg.max_singles_rating_gap
-        ):
-            return MatchResult(False, rating_format, RejectionReason.SINGLES_RATING_GAP), None, 0.0
-        if cfg.max_doubles_partner_gap is not None and rating_format.team_size == 2:
-            for team_states in (states_a, states_b):
-                if abs(team_states[0].rating - team_states[1].rating) > cfg.max_doubles_partner_gap:
-                    return (
-                        MatchResult(False, rating_format, RejectionReason.DOUBLES_PARTNER_GAP),
-                        None,
-                        0.0,
-                    )
+        rejected = self._gap_rejection(rating_format, states_a, states_b, rating_a, rating_b)
+        if rejected is not None:
+            return rejected
 
         for pid in ids:
             if pid not in frozen:
@@ -1175,6 +1163,74 @@ class RatingEngine:
             cfg.match_weights[match.match_type] * repeat_factor * information_multiplier(match, cfg)
         )
 
+        deltas, applied, clamped = self._update_players(
+            match, work, frozen, effective_weight, surprise
+        )
+
+        result = self._build_result(
+            match,
+            rating_format,
+            expected,
+            actual,
+            surprise,
+            effective_weight,
+            deltas,
+            applied,
+            frozen,
+            clamped,
+            late,
+        )
+        moved = {pid: work[pid] for pid in ids if pid not in frozen}
+        return result, moved, math.fsum(applied.values()) + 0.0
+
+    def _gap_rejection(
+        self,
+        rating_format: RatingFormat,
+        states_a: list[RatingState],
+        states_b: list[RatingState],
+        rating_a: float,
+        rating_b: float,
+    ) -> tuple[MatchResult, None, float] | None:
+        """
+        _compute's rejection by an eligibility filter, or None when both pass.
+
+        In order: in singles, the team rating gap against
+        max_singles_rating_gap; in a doubles format, each team's partner gap
+        (team A first) against max_doubles_partner_gap.
+        """
+        cfg = self.cfg
+        if (
+            rating_format is RatingFormat.SINGLES
+            and cfg.max_singles_rating_gap is not None
+            and abs(rating_a - rating_b) > cfg.max_singles_rating_gap
+        ):
+            return MatchResult(False, rating_format, RejectionReason.SINGLES_RATING_GAP), None, 0.0
+        if cfg.max_doubles_partner_gap is not None and rating_format.team_size == 2:
+            for team_states in (states_a, states_b):
+                if abs(team_states[0].rating - team_states[1].rating) > cfg.max_doubles_partner_gap:
+                    return (
+                        MatchResult(False, rating_format, RejectionReason.DOUBLES_PARTNER_GAP),
+                        None,
+                        0.0,
+                    )
+        return None
+
+    def _update_players(
+        self,
+        match: Match,
+        work: dict[str, RatingState],
+        frozen: set[str],
+        effective_weight: float,
+        surprise: float,
+    ) -> tuple[dict[str, float], dict[str, float], list[str]]:
+        """
+        Apply _apply_update to each player who is not frozen, on the working states.
+
+        Team A's players first, then team B's, each in team order. A frozen
+        player's change is 0.0. Returns each player's change rounded to 5
+        places, each unrounded change, and the clamped players in update
+        order.
+        """
         # Each player moves by their own K, so team-average movement is not
         # always zero-sum; imbalance reports the net.
         deltas: dict[str, float] = {}
@@ -1188,33 +1244,80 @@ class RatingEngine:
                 if pid in frozen:
                     deltas[pid] = applied[pid] = 0.0
                     continue
-                state = work[pid]
-                raw_delta = sign * player_k(state, cfg) * effective_weight * surprise
-                old_rating = state.rating
-                state.rating = max(cfg.min_rating, min(cfg.max_rating, old_rating + raw_delta))
-                if (
-                    abs(state.rating - (old_rating + raw_delta)) > _CLAMP_TOLERANCE
-                    or abs((state.rating - old_rating) - raw_delta) >= _VISIBLE_LOSS
-                ):
-                    clamped.append(pid)
-                state.rd = max(
-                    cfg.rd_min,
-                    state.rd * (1.0 - cfg.rd_shrink_per_match * effective_weight),
+                applied[pid] = self._apply_update(
+                    work[pid],
+                    pid,
+                    match,
+                    team_ids,
+                    opponent_ids,
+                    sign,
+                    effective_weight,
+                    surprise,
+                    clamped,
                 )
-                # Dates never move back, so a late match does not rerun
-                # inactivity or drop a recent partner from the window.
-                state.rd_as_of = _latest(state.rd_as_of, match.played_on)
-                state.matches_played += 1
-                if match.match_type in _VERIFIED_MATCH_TYPES:
-                    state.verified_matches_played += 1
-                state.last_played = _latest(state.last_played, match.played_on)
-                _seen(
-                    state.partners, (other for other in team_ids if other != pid), match.played_on
-                )
-                _seen(state.opponents, opponent_ids, match.played_on)
-                applied[pid] = state.rating - old_rating
                 deltas[pid] = round(applied[pid], _RESULT_PLACES)
+        return deltas, applied, clamped
 
+    def _apply_update(
+        self,
+        state: RatingState,
+        pid: str,
+        match: Match,
+        team_ids: tuple[str, ...],
+        opponent_ids: tuple[str, ...],
+        sign: float,
+        effective_weight: float,
+        surprise: float,
+        clamped: list[str],
+    ) -> float:
+        """
+        Apply the update rule to one player's working state; return the unrounded change.
+
+        The rule in docs/model.md, "The update". The caller has already
+        grown state.rd for inactivity and skips frozen players. In order: K
+        from that RD, the raw step, the clamp to the rating range, the
+        clamped rule (pid is appended to clamped), the RD shrink, the date
+        and count updates, and the partner and opponent marks.
+        """
+        cfg = self.cfg
+        raw_delta = sign * player_k(state, cfg) * effective_weight * surprise
+        old_rating = state.rating
+        state.rating = max(cfg.min_rating, min(cfg.max_rating, old_rating + raw_delta))
+        if (
+            abs(state.rating - (old_rating + raw_delta)) > _CLAMP_TOLERANCE
+            or abs((state.rating - old_rating) - raw_delta) >= _VISIBLE_LOSS
+        ):
+            clamped.append(pid)
+        state.rd = max(
+            cfg.rd_min,
+            state.rd * (1.0 - cfg.rd_shrink_per_match * effective_weight),
+        )
+        # Dates never move back, so a late match does not rerun
+        # inactivity or drop a recent partner from the window.
+        state.rd_as_of = _latest(state.rd_as_of, match.played_on)
+        state.matches_played += 1
+        if match.match_type in _VERIFIED_MATCH_TYPES:
+            state.verified_matches_played += 1
+        state.last_played = _latest(state.last_played, match.played_on)
+        _seen(state.partners, (other for other in team_ids if other != pid), match.played_on)
+        _seen(state.opponents, opponent_ids, match.played_on)
+        return state.rating - old_rating
+
+    def _build_result(
+        self,
+        match: Match,
+        rating_format: RatingFormat,
+        expected: float,
+        actual: float,
+        surprise: float,
+        effective_weight: float,
+        deltas: dict[str, float],
+        applied: dict[str, float],
+        frozen: set[str],
+        clamped: list[str],
+        late: bool,
+    ) -> MatchResult:
+        """The counted MatchResult of _compute, with imbalance from the unrounded changes."""
         # From the unrounded changes, so rounding residue never shows. Adding
         # 0.0 turns a negative zero into 0.0.
         imbalance = (
@@ -1239,8 +1342,7 @@ class RatingEngine:
             imbalance=imbalance,
             late=late,
         )
-        moved = {pid: work[pid] for pid in ids if pid not in frozen}
-        return result, moved, math.fsum(applied.values()) + 0.0
+        return result
 
     # -- reporting -------------------------------------------------------------
 
