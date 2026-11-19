@@ -53,8 +53,10 @@ def _defining_module(cls: type) -> ModuleType:
     raise LookupError(cls.__name__)
 
 
-@pytest.mark.parametrize("cls", PUBLIC_CLASSES, ids=_name)
-def test_public_classes_report_the_module_they_always_had(cls: type) -> None:
+# _FrozenMapping too: a pickle names the module it reports, and a module
+# earlier versions lack would make the pickle fail to load there.
+@pytest.mark.parametrize("cls", PICKLED_CLASSES, ids=_name)
+def test_pickled_classes_report_the_module_they_always_had(cls: type) -> None:
     assert cls.__module__ == _reported_module(cls)
 
 
