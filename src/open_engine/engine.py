@@ -1177,7 +1177,8 @@ class Config:
             if value is not None and not _is_config_number(value):
                 raise ConfigError(must_be(name, "None or a finite number"))
         for name in _CONFIG_BOOL_FIELDS:
-            if not isinstance(getattr(self, name), bool):
+            # Exactly bool: an object whose __class__ claims bool passes isinstance.
+            if type(getattr(self, name)) is not bool:
                 raise ConfigError(must_be(name, "a bool"))
 
         # Then the mapping and format fields: types, keys, and read-only
@@ -1448,8 +1449,12 @@ class Config:
         names every parameter. Raises ConfigError for a missing or unknown
         key, a value that cannot be converted, or a value Config rejects.
         """
-        if not isinstance(data, Mapping):
-            raise ConfigError("Config data must be a mapping")
+        # Exactly dict: a mapping type runs its own code on every read, so
+        # the checks below and Config could read different values.
+        if type(data) is not dict:
+            raise ConfigError(
+                f"Config data must be a mapping, exactly a dict, not {type(data).__name__}"
+            )
         # The fields of Config itself, as to_dict() gives them.
         names = [f.name for f in fields(Config)]
         missing = sorted(set(names) - set(data))
@@ -1469,7 +1474,7 @@ class Config:
         values["game_length_weights"] = _int_keyed(values["game_length_weights"])
         values["allowed_game_formats"] = _game_formats(values["allowed_game_formats"])
         try:
-            return cls(**values)  # type: ignore[arg-type]
+            return cls(**values)
         except TypeError as exc:
             raise ConfigError(f"Config data has a value of the wrong type: {exc}") from exc
 
@@ -2472,7 +2477,19 @@ class ReplayInfo:
 
 
 def expected_point_share(team_a_rating: float, team_b_rating: float, scale: float) -> float:
-    """Expected fraction of total points won by team A."""
+    """
+    Expected fraction of total points won by team A.
+
+    Raises EvaluationError unless each argument is exactly an int or a
+    float (not a bool or a subclass).
+    """
+    for name, value in (
+        ("team_a_rating", team_a_rating),
+        ("team_b_rating", team_b_rating),
+        ("scale", scale),
+    ):
+        if not _is_exact_number(value):
+            raise EvaluationError(f"{name} must be an int or float, not {type(value).__name__}")
     exponent = (team_b_rating - team_a_rating) / scale
     exponent = max(-12.0, min(12.0, exponent))
     return 1.0 / (1.0 + float(10.0**exponent))
@@ -2545,6 +2562,23 @@ def _seen(interactions: dict[str, date], ids: Iterable[str], on: date) -> None:
         interactions[other] = _latest(interactions.get(other), on)
 
 
+def _check_reliability_state(state: object) -> None:
+    """Raise EvaluationError unless state and the fields reliability reads have exact types."""
+    if type(state) is not RatingState:
+        raise EvaluationError(f"state must be a RatingState, not {type(state).__name__}")
+    if not _is_exact_number(state.rd):
+        raise EvaluationError(f"rd must be an int or float, not {type(state.rd).__name__}")
+    if state.rd_as_of is not None and not _is_plain_date(state.rd_as_of):
+        raise EvaluationError(
+            f"rd_as_of must be a date or None, not {type(state.rd_as_of).__name__}"
+        )
+    for name, seen in (("partners", state.partners), ("opponents", state.opponents)):
+        if type(seen) is not dict:
+            raise EvaluationError(f"{name} must be a dict, not {type(seen).__name__}")
+        if not all(_is_plain_date(on) for on in seen.values()):
+            raise EvaluationError(f"{name} must map ids to dates")
+
+
 def reliability(state: RatingState, cfg: Config, as_of: date) -> float:
     """
     OPEN-earned reliability (0-100). Never a conversion of an external score.
@@ -2552,7 +2586,17 @@ def reliability(state: RatingState, cfg: Config, as_of: date) -> float:
     Combines rating certainty (from RD, inflated for inactivity) with rolling
     partner/opponent variety. as_of is the date inactivity and variety are
     measured at.
+
+    Raises EvaluationError unless state is exactly a RatingState whose rd
+    is exactly an int or float, rd_as_of None or exactly a date, and
+    partners and opponents exactly dicts whose values are exactly dates;
+    ConfigError unless cfg is exactly a Config with only its fields; and
+    ReferenceDateError unless as_of is exactly a date.
     """
+    _check_reliability_state(state)
+    _require_config(cfg)
+    if not _is_plain_date(as_of):
+        raise ReferenceDateError(f"reliability as_of must be a date, not {type(as_of).__name__}")
     rd = inflated_rd(state, as_of, cfg)
     certainty = 1.0 - (rd - cfg.rd_min) / (cfg.rd_max - cfg.rd_min)
     variety_count = _rolling_unique_count(
@@ -2941,7 +2985,7 @@ def _validate_seed(player: Player, cfg: Config) -> None:
             f"{_RESERVED_SOURCE_PREFIX}"
         )
     for key in player.ratings:
-        if not isinstance(key, RatingFormat):
+        if type(key) is not RatingFormat:
             raise InvalidSeedError(
                 f"Seed for {player.id}: ratings key {key!r} is not a RatingFormat"
             )
@@ -3123,8 +3167,8 @@ def _log_form(log: dict[MatchupKey, list[date]]) -> list[dict[object, object]]:
 
 
 def _snap_object(value: object, path: str, keys: frozenset[str]) -> Mapping[object, object]:
-    """value as a mapping with exactly keys; SnapshotError otherwise."""
-    if not isinstance(value, Mapping):
+    """value as exactly a dict with exactly keys; SnapshotError otherwise."""
+    if type(value) is not dict:
         raise SnapshotError(f"{path} must be an object")
     missing = sorted(keys - set(value))
     if missing:
@@ -3136,7 +3180,8 @@ def _snap_object(value: object, path: str, keys: frozenset[str]) -> Mapping[obje
 
 
 def _snap_list(value: object, path: str) -> Sequence[object]:
-    if not isinstance(value, (list, tuple)):
+    """value as exactly a list or tuple; SnapshotError otherwise."""
+    if type(value) is not list and type(value) is not tuple:
         raise SnapshotError(f"{path} must be a list")
     return value
 
@@ -3202,7 +3247,7 @@ def _snap_format(value: object, path: str) -> RatingFormat:
 
 
 def _snap_date_map(value: object, path: str) -> dict[str, date]:
-    if not isinstance(value, Mapping):
+    if type(value) is not dict:
         raise SnapshotError(f"{path} must be an object")
     result: dict[str, date] = {}
     for key, on in value.items():
@@ -3313,7 +3358,7 @@ def _snap_player(value: object, path: str, cfg: Config) -> Player:
     raw = _snap_object(value, path, _PLAYER_KEYS)
     player_id = _snap_id(raw["id"], f"{path}.id")
     external_raw = raw["external_ids"]
-    if not isinstance(external_raw, Mapping):
+    if type(external_raw) is not dict:
         raise SnapshotError(f"{path}.external_ids must map str to str")
     external_ids: dict[str, str] = {}
     for source, external_id in external_raw.items():
@@ -3330,7 +3375,7 @@ def _snap_player(value: object, path: str, cfg: Config) -> Player:
     if account_user_id is not None and not _is_id(account_user_id):
         raise SnapshotError(f"{path}.account_user_id must be null or a non-blank str")
     ratings = raw["ratings"]
-    if not isinstance(ratings, Mapping):
+    if type(ratings) is not dict:
         raise SnapshotError(f"{path}.ratings must be an object")
     states: dict[RatingFormat, RatingState] = {}
     for key, state in ratings.items():
@@ -3576,7 +3621,7 @@ def _snap_log_entry(value: object, path: str) -> tuple[MatchupKey, list[date]]:
     for index, team in enumerate(teams):
         team_path = f"{path}.teams[{index}]"
         message = f"{team_path} must be a team of {fmt.team_size} player id(s)"
-        if not isinstance(team, (list, tuple)) or len(team) != fmt.team_size:
+        if (type(team) is not list and type(team) is not tuple) or len(team) != fmt.team_size:
             raise SnapshotError(message)
         if not all(_is_id(pid) for pid in team):
             raise SnapshotError(message)
@@ -3587,7 +3632,7 @@ def _snap_log_entry(value: object, path: str) -> tuple[MatchupKey, list[date]]:
     if members[0] & members[1]:
         raise SnapshotError(f"{path}.teams has a player in both teams")
     dates = raw["dates"]
-    if not isinstance(dates, (list, tuple)) or not dates:
+    if (type(dates) is not list and type(dates) is not tuple) or not dates:
         raise SnapshotError(f"{path}.dates must be a non-empty list")
     return (
         (fmt, frozenset(members)),
@@ -3665,7 +3710,7 @@ def _snap_content_keys(value: object, processed: set[str]) -> dict[str, str]:
     Each key is 64 lowercase hex characters, each id a processed match, and
     no id appears twice, since a match has one content key.
     """
-    if not isinstance(value, Mapping):
+    if type(value) is not dict:
         raise SnapshotError("snapshot.content_keys must be an object")
     keys: dict[str, str] = {}
     owners: set[str] = set()
@@ -3703,7 +3748,7 @@ def _snap_possible_duplicates(
     ledger digests of a resumable snapshot, else None: a replay records a
     copy only for a row it considered, so each copy must be one of them.
     """
-    if not isinstance(value, Mapping):
+    if type(value) is not dict:
         raise SnapshotError("snapshot.possible_duplicates must be an object")
     duplicates: dict[str, str] = {}
     for key, twin in value.items():
@@ -3815,7 +3860,7 @@ def _snap_seed_sensitive_rejections(
     ledger_player_ids is that set in a resumable snapshot, else None: a
     replay names only players in rows it considered.
     """
-    if not isinstance(value, Mapping):
+    if type(value) is not dict:
         raise SnapshotError("snapshot.seed_sensitive_rejections must be an object")
     rejections: dict[str, tuple[RatingFormat, tuple[str, ...]]] = {}
     for key, entry in value.items():
@@ -4163,7 +4208,9 @@ def _check_verified_against_log(
 
 def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
     """Validate a snapshot against cfg and read it. Raises SnapshotError naming the bad value."""
-    if not isinstance(snapshot, Mapping):
+    # Exactly dict and list at every level: json.loads and to_snapshot give
+    # them, and another container type runs its own code on every read.
+    if type(snapshot) is not dict:
         raise SnapshotError("snapshot must be an object")
     if "snapshot_version" in snapshot:
         version = snapshot["snapshot_version"]
@@ -4221,11 +4268,11 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
 
     content_keys = _snap_content_keys(raw["content_keys"], processed)
     resumable = raw["resumable"]
-    if not isinstance(resumable, bool):
+    if type(resumable) is not bool:
         raise SnapshotError("snapshot.resumable must be a bool")
     _check_verified_against_log(players, player_paths, log, cfg, resumable)
     digests_raw = raw["ledger_digests"]
-    if not isinstance(digests_raw, Mapping):
+    if type(digests_raw) is not dict:
         raise SnapshotError("snapshot.ledger_digests must be an object")
     digests: dict[str, str] = {}
     for key, digest in digests_raw.items():
@@ -4294,6 +4341,14 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
 # ---------------------------------------------------------------------------
 # Rating engine
 # ---------------------------------------------------------------------------
+
+
+def _check_lookup_format(rating_format: object) -> None:
+    """Raise PlayerError unless rating_format is exactly a RatingFormat (a str is rejected)."""
+    if type(rating_format) is not RatingFormat:
+        raise PlayerError(
+            f"rating_format must be a RatingFormat, not {type(rating_format).__name__}"
+        )
 
 
 class RatingEngine:
@@ -4959,8 +5014,12 @@ class RatingEngine:
         cfg = self.cfg
         # The same type rules the seed check applies, so every state seeded
         # here is one add_player and replay accept.
-        if not isinstance(rating_format, RatingFormat):
+        if type(rating_format) is not RatingFormat:
             raise InvalidSeedError("rating_format must be a RatingFormat")
+        if type(replace_unplayed_seed) is not bool:
+            raise InvalidSeedError(
+                f"replace_unplayed_seed must be a bool, not {type(replace_unplayed_seed).__name__}"
+            )
         # Exactly ExternalRatingSnapshot: a subclass can return different
         # values on later reads than the ones checked here.
         if type(snapshot) is not ExternalRatingSnapshot:
@@ -5150,7 +5209,7 @@ class RatingEngine:
         blank or not exactly a str (a subclass is rejected). Both are
         checked before anything changes, so a failed call creates no player.
         """
-        if not isinstance(rating_format, RatingFormat):
+        if type(rating_format) is not RatingFormat:
             raise InvalidSeedError("rating_format must be a RatingFormat")
         player = self._player_or_new(player_id)
         if rating_format not in player.ratings:
@@ -5218,6 +5277,7 @@ class RatingEngine:
         blank or not exactly a str (a subclass is rejected).
         """
         player = self.player(player_id)
+        _check_lookup_format(rating_format)
         if rating_format in player.ratings:
             return player.ratings[rating_format]
         return self._new_state(player_id, rating_format)
@@ -5231,8 +5291,17 @@ class RatingEngine:
         rating_format: RatingFormat,
         scoring: ScoringType = ScoringType.SIDE_OUT,
     ) -> float:
-        """Expected share of points won by team A, from current team-average ratings."""
+        """
+        Expected share of points won by team A, from current team-average ratings.
+
+        Raises InvalidMatchError unless team_a and team_b are each exactly a
+        tuple or list of distinct non-blank str ids of the format's team
+        size, rating_format is exactly a RatingFormat, and scoring exactly
+        a ScoringType (a str is rejected).
+        """
         self._validate_teams(team_a, team_b, rating_format)
+        if type(scoring) is not ScoringType:
+            raise InvalidMatchError(f"scoring must be a ScoringType, not {type(scoring).__name__}")
         ratings_a = [self._peek_state(pid, rating_format).rating for pid in team_a]
         ratings_b = [self._peek_state(pid, rating_format).rating for pid in team_b]
         return expected_point_share(
@@ -5252,9 +5321,12 @@ class RatingEngine:
         """
         Calibrated probability that team A wins the match.
 
-        Raises ConfigError when game_format is not valid (GameFormat.validate).
+        Raises ConfigError when game_format is not valid (GameFormat.validate:
+        it must be exactly a GameFormat), InvalidMatchError for the teams
+        and rating_format as predict_point_share does, and EvaluationError
+        unless best_of is exactly an int that is positive and odd.
         """
-        game_format.validate()
+        GameFormat.validate(game_format)
         share = self.predict_point_share(team_a, team_b, rating_format, game_format.scoring)
         raw = match_win_probability(share, game_format, best_of)
         return calibrate_win_probability(
@@ -5264,6 +5336,17 @@ class RatingEngine:
     def _validate_teams(
         self, team_a: Sequence[str], team_b: Sequence[str], rating_format: RatingFormat
     ) -> None:
+        for name, team in (("team_a", team_a), ("team_b", team_b)):
+            # Exactly tuple or list: a subclass can report one length and
+            # iterate other ids.
+            if type(team) not in (tuple, list):
+                raise InvalidMatchError(
+                    f"{name} must be a tuple or list, not {type(team).__name__}"
+                )
+        if type(rating_format) is not RatingFormat:
+            raise InvalidMatchError(
+                f"rating_format must be a RatingFormat, not {type(rating_format).__name__}"
+            )
         size = rating_format.team_size
         if len(team_a) != size or len(team_b) != size:
             raise InvalidMatchError(f"{rating_format.value} requires {size} player(s) per team")

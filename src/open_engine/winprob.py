@@ -23,6 +23,19 @@ if TYPE_CHECKING:
 PROBABILITY_CLIP = 1e-6
 
 
+def _check_number(name: str, value: object) -> None:
+    """Raise EvaluationError unless value is exactly an int or a float (not a bool or subclass)."""
+    if type(value) is not int and type(value) is not float:
+        raise EvaluationError(f"{name} must be an int or float, not {type(value).__name__}")
+
+
+def _check_format(game_format: object) -> None:
+    """GameFormat.validate through the class: ConfigError unless exactly a valid GameFormat."""
+    from .engine import GameFormat
+
+    GameFormat.validate(game_format)  # type: ignore[arg-type]
+
+
 def _first_to(p: float, n: int) -> float:
     """Probability of winning n points before the opponent does (no win-by rule)."""
     q = 1 - p
@@ -68,10 +81,12 @@ def game_win_probability(p: float, game_format: GameFormat) -> float:
     """Probability that team A wins a game when it wins each point with probability p.
 
     Exact closed form when the format has no cap, score-state DP when it does.
-    Raises ConfigError for an invalid format and EvaluationError when win_by is
-    not 1 or 2.
+    Raises EvaluationError unless p is exactly an int or a float, ConfigError
+    for an invalid format (it must be exactly a GameFormat; see
+    GameFormat.validate), and EvaluationError when win_by is not 1 or 2.
     """
-    game_format.validate()
+    _check_number("p", p)
+    _check_format(game_format)
     win_by = game_format.win_by
     if win_by not in (1, 2):
         raise EvaluationError("win_by must be 1 or 2")
@@ -87,8 +102,15 @@ def game_win_probability(p: float, game_format: GameFormat) -> float:
 
 
 def match_win_probability(p: float, game_format: GameFormat, best_of: int) -> float:
-    """Probability of winning a best-of-N match from a per-point win probability."""
-    if not isinstance(best_of, int) or isinstance(best_of, bool) or best_of < 1 or best_of % 2 == 0:
+    """
+    Probability of winning a best-of-N match from a per-point win probability.
+
+    Raises EvaluationError unless p is exactly an int or a float and
+    best_of is exactly an int that is positive and odd (a bool or an int
+    subclass is rejected), and ConfigError for an invalid game_format.
+    """
+    _check_number("p", p)
+    if type(best_of) is not int or best_of < 1 or best_of % 2 == 0:
         raise EvaluationError(f"best_of must be an odd integer >= 1, got {best_of!r}")
     g = game_win_probability(p, game_format)
     w = best_of // 2 + 1
@@ -96,7 +118,13 @@ def match_win_probability(p: float, game_format: GameFormat, best_of: int) -> fl
 
 
 def calibrate_win_probability(p: float, a: float) -> float:
-    """Apply sigmoid(a * logit(p)) to a win probability clipped to [1e-6, 1 - 1e-6]."""
+    """
+    Apply sigmoid(a * logit(p)) to a win probability clipped to [1e-6, 1 - 1e-6].
+
+    Raises EvaluationError unless p and a are each exactly an int or a float.
+    """
+    _check_number("p", p)
+    _check_number("a", a)
     q = min(max(p, PROBABILITY_CLIP), 1 - PROBABILITY_CLIP)
     z = a * math.log(q / (1 - q))
     if z >= 0:
