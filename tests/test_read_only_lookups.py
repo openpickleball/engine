@@ -134,7 +134,9 @@ def test_a_blank_id_raises_player_error_not_unknown_player_error(player_id: str)
 
 
 @pytest.mark.parametrize("fmt", [MX, S], ids=["category with played parent", "no parent"])
-def test_a_missing_format_reports_the_state_a_seed_would_create(fmt: RatingFormat) -> None:
+def test_a_missing_format_reports_the_state_seed_provisional_rating_returns(
+    fmt: RatingFormat,
+) -> None:
     engine = _engine()
     seeded = copy.deepcopy(engine)
     returned = seeded.seed_provisional_rating("syn-a", fmt)

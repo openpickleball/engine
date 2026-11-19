@@ -99,7 +99,7 @@ def _assert_refused(
     assert eng.to_snapshot() == before
 
 
-def test_a_state_derived_from_open_doubles_is_not_replaced() -> None:
+def test_a_stored_derived_state_from_a_seed_or_earlier_release_is_not_replaced() -> None:
     # The issue's repro: three counted doubles matches, then a derived
     # mixed doubles state, then an import for mixed doubles. Since issue
     # #112 the engine stores no such state, but one stored by an earlier

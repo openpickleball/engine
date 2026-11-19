@@ -8,6 +8,7 @@ back from JSON. All ids are synthetic.
 
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Callable
 from dataclasses import replace
@@ -111,8 +112,8 @@ def test_same_pair_in_two_formats_round_trips() -> None:
 def test_category_state_derived_from_imported_seed_round_trips() -> None:
     seeded = _seeded()
     # The engine stores no category starting state (issue #112); a seed can.
-    seed = seeded.players["syn-a"]
-    seed.ratings[MX] = seeded.state("syn-a", MX)
+    seed = copy.deepcopy(seeded.players["syn-a"])
+    seed.ratings[MX] = copy.deepcopy(seeded.state("syn-a", MX))
     eng = RatingEngine(CFG)
     eng.add_player(seed)
     derived = eng.players["syn-a"].ratings[MX]

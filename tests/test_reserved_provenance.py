@@ -485,7 +485,7 @@ def test_issue_reproduction_is_rejected() -> None:
     assert eng.players == {}
 
 
-def test_reseed_of_an_engine_derived_state_is_still_refused() -> None:
+def test_reseed_of_a_seeded_derived_state_is_still_refused() -> None:
     eng = RatingEngine(CFG)
     eng.add_player(derived_seed("syn-a", ExternalRatingSnapshot("ext", 4.0, CAPTURED), MX, CFG))
     assert MX in eng.players["syn-a"].ratings
