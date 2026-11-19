@@ -198,7 +198,14 @@ rating_new = clamp(rating + raw_delta, cfg.min_rating, cfg.max_rating)
 rd_new     = max(cfg.rd_min, rd' * (1 - cfg.rd_shrink_per_match * weight))
 ```
 
-The player is listed in `MatchResult.clamped` when the applied change, `rating_new - rating` in floating point, differs from `raw_delta` by more than 1e-12. That happens when the clamp cuts the change, or when the rating or the change is so large that float rounding of `rating_new` drops part of the change, which needs a rating range far wider than the default. The RD update starts from the inflated `rd'`, not the stored `rd`, and never goes below `cfg.rd_min`. The update also sets:
+The player is listed in `MatchResult.clamped` when either holds:
+
+```
+abs(rating_new - (rating + raw_delta)) > 1e-12      the clamp cut the change
+abs((rating_new - rating) - raw_delta) >= 5e-6      rounding dropped part of it
+```
+
+Both are evaluated in floating point. The first is the range check; an unclamped `rating_new` equals the rounded sum exactly. The second catches a change that float rounding of `rating_new` drops, at half a unit in the fifth place, where the loss can show in the reported delta and imbalance (`_VISIBLE_LOSS`). A smaller rounding loss is not listed. Rounding drops that much only at very large magnitudes: with the old and new rating both below 2**34 (about 1.7e10) in magnitude it cannot, and in a measured sweep with steps up to 1 the first such loss came at ratings of 2**36 (about 6.9e10). The RD update starts from the inflated `rd'`, not the stored `rd`, and never goes below `cfg.rd_min`. The update also sets:
 
 ```
 rd_as_of     = max(rd_as_of, played_on)        played_on when rd_as_of is None
@@ -219,7 +226,7 @@ applied_i = rating_new_i - rating_i            0.0 for a frozen player
 imbalance = mean(applied_i on team A) + mean(applied_i on team B)
 ```
 
-The mean divides by the full team size, frozen players included. `MatchResult.imbalance` is this value rounded to 5 places. A match adds `team_size * imbalance`, with the unrounded imbalance, to the pool's total rating. `ReplayInfo.net_rating_created` totals it per rating format: `_replay` takes `math.fsum` of the unrounded `applied_i` of each counted update and adds those sums with `+=` in ledger order. In exact arithmetic the changes cancel when the two teams have the same mean K and no player is clamped or frozen. Unequal K, a clamped player, or a frozen player can make imbalance nonzero. A change that float rounding drops against a very large rating lists the player in `clamped`, so it is not a separate case. With nothing clamped or frozen and the same mean K, only float rounding of the steps themselves is left, and it reaches the fifth place only for steps far larger than the default config gives. The [K and imbalance notes](behavior.md#k-and-imbalance) cover the rest, including why the backend should monitor the total.
+The mean divides by the full team size, frozen players included. `MatchResult.imbalance` is this value rounded to 5 places. A match adds `team_size * imbalance`, with the unrounded imbalance, to the pool's total rating. `ReplayInfo.net_rating_created` totals it per rating format: `_replay` takes `math.fsum` of the unrounded `applied_i` of each counted update and adds those sums with `+=` in ledger order. In exact arithmetic the changes cancel when the two teams have the same mean K and no player is clamped or frozen. Unequal K, a clamped player, or a frozen player can make imbalance nonzero. A rounding loss of 5e-6 or more lists the player in `clamped`. With nothing clamped or frozen and the same mean K, float rounding is left: unlisted losses under 5e-6 each can add up to plus or minus 1e-5 at ratings near 2**36 in magnitude, and rounding of the steps themselves can show at the fifth place for steps far larger than the default config gives. The [K and imbalance notes](behavior.md#k-and-imbalance) cover the rest, including why the backend should monitor the total.
 
 `MatchResult` reports `expected_a = E`, `actual_a = S`, `surprise`, `effective_weight = weight`, and each player's delta, each rounded to 5 places. The stored rating keeps full precision.
 
@@ -382,7 +389,7 @@ Every `Config` field the math reads, with its default. Status says what the defa
 
 `version` names the release and is in the fingerprint. The valid range of each field is in [Config validation](behavior.md#config-validation).
 
-The engine also has fixed constants in `_math.py`, each with a comment saying why it has its value: the expected-share exponent clamp (12), the reliability blend (0.60 and 0.40), the clamp detection tolerance (1e-12), and the reported decimal places (5 for `MatchResult` numbers, 3 for `PlayerSummary.rating`, 4 for `PlayerSummary.rd`, 1 for reliability). The win probability clip (1e-6) is `PROBABILITY_CLIP` in `winprob.py`. They are not `Config` fields, so the fingerprint does not record them. A change to one changes the engine itself, so it needs a release and a changelog entry.
+The engine also has fixed constants in `_math.py`, each with a comment saying why it has its value: the expected-share exponent clamp (12), the reliability blend (0.60 and 0.40), the clamp detection tolerance (1e-12), the visible rounding loss (5e-6), and the reported decimal places (5 for `MatchResult` numbers, 3 for `PlayerSummary.rating`, 4 for `PlayerSummary.rd`, 1 for reliability). The win probability clip (1e-6) is `PROBABILITY_CLIP` in `winprob.py`. They are not `Config` fields, so the fingerprint does not record them. A change to one changes the engine itself, so it needs a release and a changelog entry.
 
 ## What the model does not do
 

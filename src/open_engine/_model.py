@@ -423,8 +423,9 @@ class MatchResult:
 
     reason is None when the match counted. deltas lists the rating changes.
     frozen and clamped list the players whose change was not fully applied.
-    A player is clamped when the rating range, or float rounding of a very
-    large rating or change, dropped more than 1e-12 of their change.
+    A player is clamped when the rating range cut more than 1e-12 off their
+    change, or float rounding of the new rating dropped at least 5e-6 of it
+    (half a unit in the fifth place). A smaller rounding loss is not listed.
     imbalance is the mean team A delta plus the mean team B delta, from the
     unrounded changes, rounded to 5 places. parent holds the overall doubles
     update for a category match, with its own imbalance.
@@ -448,7 +449,7 @@ class MatchResult:
     effective_weight: float = 0.0
     deltas: dict[str, float] = field(default_factory=dict)
     frozen: tuple[str, ...] = ()  # predates the player's imported baseline
-    clamped: tuple[str, ...] = ()  # range or float precision cut the change
+    clamped: tuple[str, ...] = ()  # range cut, or rounding lost >= 5e-6
     imbalance: float = 0.0  # mean team A delta plus mean team B delta
     late: bool = False  # dated before what a player's rating here reflects
     parent: MatchResult | None = None  # overall doubles update for categories
@@ -534,7 +535,8 @@ class ReplayInfo:
     its category update to its own format and, when category_feeds_parent
     is on and its overall doubles update counts, that update to doubles.
     Each player moves by their own K, so it can be nonzero when K differs
-    between the teams or a player is clamped or frozen, and colluding
+    between the teams, a player is clamped or frozen, or float rounding
+    leaves a residue at very large ratings or steps, and colluding
     accounts can grow it on purpose. It is
     stored as a read-only mapping with a key for every RatingFormat in
     definition order (0.0 where nothing counted). Building a ReplayInfo
