@@ -71,3 +71,7 @@ Departure from criterion 3: a tampered `allowed_game_formats` (set after constru
 3. README and `docs/behavior.md` state the scoring type and points rule.
 
 Measured after the folded fixes (corpus under seeds 0 to 4, set corpus under 0 to 6, against `main` over 5 and 39 seeds): nothing varies on the branch. Inputs stable on `main` that change: 7 in the #128 corpus, all a game length of 0 or less ("No game_length_weight for games to 0" to "points must be at least 1"); 102 in the set corpus: 45 game lengths of 0 or less, 25 a `str` subclass scoring type ("No game_length_weight for games to 17" to the pairs message), and 32 the tampered sets above. Every other outcome, valid results and fingerprints included, is the same as on `main`.
+
+## Verifier note
+
+The verifier found more seed-stable inputs that change than the departure above lists: sets that also hold seed-hashed members next to an empty-string non-member (its entry always landed last on `main`, over 1,000 seeds), and sets with objects that hash by identity, whose order depends on memory layout, not the seed. Each still raises `ConfigError`, and nothing valid changes. The changelog now states the rule generally: a set with more than one bad entry whose message happened not to vary on `main` can get a different message, once.
