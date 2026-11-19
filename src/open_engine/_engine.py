@@ -1089,6 +1089,30 @@ class RatingEngine:
             else:
                 self._note_seed_sensitive(match, primary.parent)
 
+        self._apply_counted(
+            match, primary_updates, parent_format, parent_updates, live, matchup, content_key, twin
+        )
+        return primary, net
+
+    def _apply_counted(
+        self,
+        match: Match,
+        primary_updates: dict[str, RatingState],
+        parent_format: RatingFormat | None,
+        parent_updates: dict[str, RatingState] | None,
+        live: bool,
+        matchup: MatchupKey | None,
+        content_key: str,
+        twin: str | None,
+    ) -> None:
+        """
+        _consider's commit of a counted match, after every update is computed.
+
+        In order: the match's own format's states, the parent format's
+        states when that update counted, the self-reported log, the content
+        key (kept for the first match with it), the possible duplicate, and
+        the processed match_id.
+        """
         self._commit(match.rating_format, primary_updates, live)
         if parent_updates and parent_format is not None:
             self._commit(parent_format, parent_updates, live)
@@ -1098,7 +1122,6 @@ class RatingEngine:
         if twin is not None:
             self.possible_duplicates[match.match_id] = twin
         self.processed_match_ids.add(match.match_id)
-        return primary, net
 
     def _self_reported_factor(
         self, match: Match
