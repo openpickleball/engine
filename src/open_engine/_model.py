@@ -580,18 +580,3 @@ class ReplayInfo:
             values[fmt] = value
         ordered = {fmt: values.get(fmt, 0.0) for fmt in RatingFormat}
         object.__setattr__(self, "net_rating_created", _FrozenMapping(ordered))
-
-
-# Public classes keep open_engine.engine, which re-exports them, as their
-# __module__. _json_form tags each value in a match digest with its type's
-# module and name, and snapshots store those digests, so a new module name
-# would change every digest and stop resume from older snapshots (#127).
-ExternalRatingSnapshot.__module__ = "open_engine.engine"
-RatingState.__module__ = "open_engine.engine"
-Player.__module__ = "open_engine.engine"
-Match.__module__ = "open_engine.engine"
-RejectionReason.__module__ = "open_engine.engine"
-MatchResult.__module__ = "open_engine.engine"
-NetworkConnectivity.__module__ = "open_engine.engine"
-PlayerSummary.__module__ = "open_engine.engine"
-ReplayInfo.__module__ = "open_engine.engine"

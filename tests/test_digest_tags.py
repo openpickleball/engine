@@ -52,6 +52,11 @@ def test_digest_does_not_read_the_module_a_class_reports(
 ) -> None:
     ROW.validate()
     before = ledger_module._match_digest(ROW)
+    # On Python 3.13 and later, setting a class's __module__ deletes its
+    # __firstlineno__, which inspect.getsource reads. Registered first, so
+    # undone last, this restores it after __module__ is restored.
+    if "__firstlineno__" in vars(cls):
+        monkeypatch.setattr(cls, "__firstlineno__", vars(cls)["__firstlineno__"])
     monkeypatch.setattr(cls, "__module__", "somewhere.else")
     assert ledger_module._match_digest(ROW) == before
 

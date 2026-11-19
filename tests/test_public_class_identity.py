@@ -1,14 +1,18 @@
-"""Public classes resolve as they did before the module split (issue #127).
+"""Public classes report the module that defines them (issue #133).
 
-A public class reports open_engine.engine as its module, so type hints,
-pickles, and match digests find it there. All ids are synthetic.
+Match digests take their type tags from a fixed table, so a class no
+longer pins open_engine.engine as its module. Pickles made before still
+name open_engine.engine.<Class>, which re-exports every public class and
+_FrozenMapping, so they still load. All ids are synthetic.
 """
 
 from __future__ import annotations
 
 import ast
 import importlib
+import inspect
 import pickle
+import re
 import sys
 import typing
 from datetime import date
@@ -18,7 +22,7 @@ from types import ModuleType
 import pytest
 
 import open_engine
-from open_engine import Config, OpenEngineError, RatingEngine, ScoringType, replay
+from open_engine import Config, RatingEngine, ScoringType, replay
 from open_engine._config import _FrozenMapping
 from test_exact_input_plain_unchanged import _ledger, _seeds
 
@@ -37,13 +41,6 @@ def _name(cls: type) -> str:
     return cls.__qualname__
 
 
-def _reported_module(cls: type) -> str:
-    """The module a class has always reported: the error classes live in _errors."""
-    if issubclass(cls, OpenEngineError):
-        return "open_engine._errors"
-    return "open_engine.engine"
-
-
 def _defining_module(cls: type) -> ModuleType:
     """The package module whose source defines cls at top level."""
     for path in sorted(SRC.glob("*.py")):
@@ -53,11 +50,15 @@ def _defining_module(cls: type) -> ModuleType:
     raise LookupError(cls.__name__)
 
 
-# _FrozenMapping too: a pickle names the module it reports, and a module
-# earlier versions lack would make the pickle fail to load there.
 @pytest.mark.parametrize("cls", PICKLED_CLASSES, ids=_name)
-def test_pickled_classes_report_the_module_they_always_had(cls: type) -> None:
-    assert cls.__module__ == _reported_module(cls)
+def test_a_class_reports_the_module_that_defines_it(cls: type) -> None:
+    assert cls.__module__ == _defining_module(cls).__name__
+
+
+@pytest.mark.parametrize("cls", PICKLED_CLASSES, ids=_name)
+def test_get_source_finds_the_class(cls: type) -> None:
+    assert inspect.getsourcefile(cls) == _defining_module(cls).__file__
+    assert re.search(rf"^class {cls.__name__}\b", inspect.getsource(cls), re.MULTILINE)
 
 
 @pytest.mark.parametrize("cls", PUBLIC_CLASSES, ids=_name)
@@ -72,9 +73,10 @@ def test_a_pickle_finds_the_class_where_it_reports(cls: type) -> None:
 
 
 @pytest.mark.parametrize("cls", PICKLED_CLASSES, ids=_name)
-def test_a_pickle_made_before_the_split_finds_the_class(cls: type) -> None:
-    # Before the split every class but the errors was open_engine.engine.<name>.
-    stream = f"c{_reported_module(cls)}\n{cls.__qualname__}\n.".encode()
+def test_a_pickle_made_before_issue_133_finds_the_class(cls: type) -> None:
+    # Before #133 every class but the errors reported open_engine.engine,
+    # and engine.py re-exports the errors too.
+    stream = f"copen_engine.engine\n{cls.__qualname__}\n.".encode()
     assert pickle.loads(stream) is cls
 
 

@@ -1343,10 +1343,3 @@ def _load_snapshot(engine: RatingEngine, snapshot: object) -> None:
     engine._ledger_player_ids = state.ledger_player_ids
     engine._seed_sensitive_rejections = state.seed_sensitive_rejections
     engine._resumable = state.resumable
-
-
-# Public classes keep open_engine.engine, which re-exports them, as their
-# __module__. _json_form tags each value in a match digest with its type's
-# module and name, and snapshots store those digests, so a new module name
-# would change every digest and stop resume from older snapshots (#127).
-RatingEngine.__module__ = "open_engine.engine"
