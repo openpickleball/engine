@@ -76,14 +76,14 @@ summary = engine.player_summary("alice", RatingFormat.DOUBLES, as_of=date(2026, 
 print(summary.rating, summary.reliability, summary.imported_reliability)
 ```
 
-`result.reason` is `None` when the match counted and a `RejectionReason` when it did not. Authoritative ratings come from `replay(ledger, as_of=...)`. Live updates between replays are provisional. See [`examples/`](examples) for a fuller example.
+`result.reason` is `None` when the match counted and a `RejectionReason` when it did not. Authoritative ratings come from `replay(ledger, as_of=...)`. Live updates between replays are provisional. See [`examples/`](https://github.com/openpickleball/engine/tree/main/examples) for a fuller example.
 
 The rules behind each step are in [`docs/behavior.md`](https://github.com/openpickleball/engine/blob/main/docs/behavior.md). The main ones to know before you try the engine:
 
 - **Late matches.** Live recording applies matches in arrival order. Check `result.late` and, for a category match, `result.parent.late`. Schedule a replay when either is `True`: only a replay gives play order. See [Late live matches](https://github.com/openpickleball/engine/blob/main/docs/behavior.md#late-live-matches).
-- **Match ids.** A `match_id` names one match. So a corrected resubmission needs a new `match_id`, and the rejected row stays in the ledger as it was. See [Match ids, rejections, and resubmission](https://github.com/openpickleball/engine/blob/main/docs/behavior.md#match-ids-rejections-and-resubmission).
+- **Match ids.** A `match_id` names one match. So a corrected resubmission needs a new `match_id`, and the rejected row stays in the ledger as it was. Resubmit only after a rejection that comes from the match itself: `GAME_FORMAT_NOT_ACCEPTED`, `SELF_REPORTED_UNCONFIRMED`, or `MATCH_NOT_COMPLETED`. See [Match ids, rejections, and resubmission](https://github.com/openpickleball/engine/blob/main/docs/behavior.md#match-ids-rejections-and-resubmission).
 - **Possible duplicates.** Check `result.possible_duplicate_of` too. It names an earlier counted match with the same date, the same two teams, and the same game scores, under another `match_id`, so the same match may have been reported twice. See [Likely duplicates](https://github.com/openpickleball/engine/blob/main/docs/behavior.md#likely-duplicates).
-- **Player summaries.** `player_summary` returns a `PlayerSummary`. Its `reliability` is always OPEN-earned. An imported reliability is shown separately, in `imported_reliability`. `established` says whether the rating has reached the reliability threshold and enough verified matches, and `connectivity` says whether the player's pool connects to the wider network. See [Player summaries](https://github.com/openpickleball/engine/blob/main/docs/behavior.md#player-summaries), [Established](https://github.com/openpickleball/engine/blob/main/docs/behavior.md#established), and [Network connectivity](https://github.com/openpickleball/engine/blob/main/docs/behavior.md#network-connectivity).
+- **Player summaries.** `player_summary` returns a `PlayerSummary`. On a live engine that was never replayed, pass `as_of` or it raises `ReferenceDateError`. Its `reliability` is always OPEN-earned. An imported reliability is shown separately, in `imported_reliability`. `established` says whether the rating has reached the reliability threshold and enough verified matches, and `connectivity` says whether the player's pool connects to the wider network. See [Player summaries](https://github.com/openpickleball/engine/blob/main/docs/behavior.md#player-summaries), [Established](https://github.com/openpickleball/engine/blob/main/docs/behavior.md#established), and [Network connectivity](https://github.com/openpickleball/engine/blob/main/docs/behavior.md#network-connectivity).
 - **Calibration.** Fit the expectation scale with `fit_scale` and the win probability calibration with `fit_win_calibration`, and check whether a fit is identified. See [Calibration fits](https://github.com/openpickleball/engine/blob/main/docs/behavior.md#calibration-fits).
 - **Backend.** The engine is not a persistence layer, and it cannot check who sent a match. A service that runs it must meet the [Backend requirements](https://github.com/openpickleball/engine/blob/main/docs/behavior.md#backend-requirements), for example rejecting a match dated after the day it was submitted.
 
@@ -142,7 +142,7 @@ Exact input types: every public function and method takes exactly the types it n
 Errors (every class is a `ValueError`). [Errors](https://github.com/openpickleball/engine/blob/main/docs/behavior.md#errors) lists what raises each one.
 
 - `OpenEngineError`: base class for every error the engine raises on purpose.
-- `ConfigError`: a `Config` value is not valid, a `cfg` is not `None` or exactly a `Config`, or a `GameFormat` checked outside a match is not valid.
+- `ConfigError`: a `Config` value is not valid, a `cfg` is not `None` or exactly a `Config` holding only its fields (`reliability` takes no `None`), or a `GameFormat` checked outside a match is not valid.
 - `InvalidMatchError`: a match, its teams, its scores, its `played_at`, or its `GameFormat` is not valid.
 - `InvalidSeedError`: an external or replay seed cannot initialize a rating.
 - `PlayerError`: a player identity, account link, or external identity is not valid.
@@ -175,7 +175,7 @@ A match moves ratings by how the result compared with the expectation. By defaul
 
 ## Test data
 
-Use only made-up or properly de-identified data. Do not put real player names, contact details, or match histories in this repository, including in test fixtures and screenshots. See [`tests/fixtures/README.md`](tests/fixtures/README.md).
+Use only made-up or properly de-identified data. Do not put real player names, contact details, or match histories in this repository, including in test fixtures and screenshots. See [`tests/fixtures/README.md`](https://github.com/openpickleball/engine/blob/main/tests/fixtures/README.md).
 
 ## Contributing
 
@@ -183,4 +183,4 @@ See the [contributing guide](https://github.com/openpickleball/.github/blob/main
 
 ## License
 
-This repository is licensed under [AGPL-3.0-or-later](LICENSE). See [how OPEN is licensed](https://github.com/openpickleball/.github/blob/main/LICENSING.md).
+This repository is licensed under [AGPL-3.0-or-later](https://github.com/openpickleball/engine/blob/main/LICENSE). See [how OPEN is licensed](https://github.com/openpickleball/.github/blob/main/LICENSING.md).
