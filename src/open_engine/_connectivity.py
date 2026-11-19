@@ -73,23 +73,22 @@ def _contact_graph(
     return graph
 
 
-def _network_connectivity(
-    players: Mapping[str, Player], rating_format: RatingFormat, reference: date, cfg: Config
-) -> tuple[dict[str, NetworkConnectivity], int]:
+def _link_contacts(
+    graph: dict[str, dict[str, date]],
+    ids: list[str],
+    network: _UnionFind,
+    pools: _UnionFind,
+    cfg: Config,
+    minimum_days: int,
+) -> None:
     """
-    NetworkConnectivity of every player with a state in the format, and the largest group size.
+    _network_connectivity's linking pass: join contacts into groups and tied players into pools.
 
-    Every loop runs over sorted ids, every group is a union-find with its
-    smallest id as root, and sets are read only for their sizes, so the
-    result depends only on the stored states, the config, and the
-    reference date.
+    Over each pair of ids in contact, in sorted order (u before v), it
+    joins them in network, then joins them in pools when they share at
+    least connectivity_min_shared_contacts contacts and each reached those
+    shared contacts on at least minimum_days distinct dates.
     """
-    cutoff = _days_before(reference, cfg.diversity_window_days)
-    graph = _contact_graph(players, rating_format, cutoff)
-    ids = sorted(graph)
-    network = _UnionFind(ids)
-    pools = _UnionFind(ids)
-    minimum_days = cfg.connectivity_min_contact_days
     for u in ids:
         row = graph[u]
         for v in sorted(row):
@@ -107,6 +106,26 @@ def _network_connectivity(
                 len({other[w] for w in shared}) >= minimum_days
             ):
                 pools.union(u, v)
+
+
+def _network_connectivity(
+    players: Mapping[str, Player], rating_format: RatingFormat, reference: date, cfg: Config
+) -> tuple[dict[str, NetworkConnectivity], int]:
+    """
+    NetworkConnectivity of every player with a state in the format, and the largest group size.
+
+    Every loop runs over sorted ids, every group is a union-find with its
+    smallest id as root, and sets are read only for their sizes, so the
+    result depends only on the stored states, the config, and the
+    reference date.
+    """
+    cutoff = _days_before(reference, cfg.diversity_window_days)
+    graph = _contact_graph(players, rating_format, cutoff)
+    ids = sorted(graph)
+    network = _UnionFind(ids)
+    pools = _UnionFind(ids)
+    minimum_days = cfg.connectivity_min_contact_days
+    _link_contacts(graph, ids, network, pools, cfg, minimum_days)
 
     group_sizes = network.sizes()
     largest = max(group_sizes.values(), default=0)
