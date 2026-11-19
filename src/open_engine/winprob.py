@@ -25,13 +25,27 @@ PROBABILITY_CLIP = 1e-6
 
 def _type_name(value: object) -> str:
     """
-    The name of value's type, read without running caller code.
+    The name of value's type, as an exact str, read without running caller code.
 
     type(value).__name__ would run a __name__ property defined on the
     type's metaclass, so the name is read through type's own descriptor.
+    A class's __name__ can be set to a str subclass, so the result is
+    copied into an exact str through str.__str__, which runs none of the
+    subclass's methods.
     """
     name: str = type.__dict__["__name__"].__get__(type(value))
-    return name
+    return str.__str__(name)
+
+
+def _type_is(value: object, *kinds: type) -> bool:
+    """
+    True when value's type is one of kinds, compared by identity.
+
+    type(value) in kinds would compare with ==, which runs an __eq__
+    defined on the type's metaclass.
+    """
+    actual = type(value)
+    return any(actual is kind for kind in kinds)
 
 
 def _check_number(name: str, value: object) -> None:

@@ -518,6 +518,7 @@ from ._errors import UnknownPlayerError as UnknownPlayerError
 from ._version import __version__
 from .winprob import (
     _check_best_of,
+    _type_is,
     _type_name,
     calibrate_win_probability,
     match_win_probability,
@@ -703,7 +704,7 @@ def _safe_shown(value: object) -> str:
     """repr of an exact str, int, float, bool, or None; the type name of anything else."""
     if type(value) is int and value.bit_length() > 64:
         return "a large int"
-    if type(value) in (str, int, float, bool, type(None)):
+    if _type_is(value, str, int, float, bool, type(None)):
         return repr(value)
     return _type_name(value)
 
@@ -1655,9 +1656,9 @@ def _shown(value: object, show: Callable[[object], str] = repr) -> str:
     its type name. An int over the int-to-str limit cannot print.
     """
     plain = (str, int, float, bool, type(None))
-    if type(value) in (list, tuple) and all(type(item) in plain for item in value):  # type: ignore[attr-defined]
+    if _type_is(value, list, tuple) and all(_type_is(item, *plain) for item in value):  # type: ignore[attr-defined]
         show = repr
-    elif type(value) not in plain:
+    elif not _type_is(value, *plain):
         return _type_name(value)
     try:
         return show(value)
@@ -1910,13 +1911,13 @@ class Match:
             raise InvalidMatchError("played_at must fall on played_on")
         if self.sequence < 0:
             raise InvalidMatchError("sequence must be nonnegative")
-        if type(self.games) not in (tuple, list):
+        if not _type_is(self.games, tuple, list):
             raise InvalidMatchError(f"games must be a tuple or list, not {_type_name(self.games)}")
         if completed and not self.games:
             raise InvalidMatchError("At least one game score is required")
         if self.status is MatchStatus.FORFEIT and self.games:
             raise InvalidMatchError("A forfeit cannot have game scores")
-        if not all(type(game) in (tuple, list) and len(game) == 2 for game in self.games):
+        if not all(_type_is(game, tuple, list) and len(game) == 2 for game in self.games):
             raise InvalidMatchError("Each game must be a pair of scores")
         if self.best_of < 1 or self.best_of % 2 == 0:
             raise InvalidMatchError("best_of must be a positive odd number")
@@ -1988,7 +1989,7 @@ class Match:
             ("confirmed_by", self.confirmed_by, (set, frozenset), "a set or frozenset"),
         )
         for name, value, kinds, label in exact:
-            if type(value) not in kinds:
+            if not _type_is(value, *kinds):
                 raise InvalidMatchError(f"{name} must be {label}, not {_type_name(value)}")
         if not _is_plain_date(self.played_on):
             raise InvalidMatchError(
@@ -5574,7 +5575,7 @@ class RatingEngine:
         for name, team in (("team_a", team_a), ("team_b", team_b)):
             # Exactly tuple or list: a subclass can report one length and
             # iterate other ids.
-            if type(team) not in (tuple, list):
+            if not _type_is(team, tuple, list):
                 raise InvalidMatchError(f"{name} must be a tuple or list, not {_type_name(team)}")
         if not _is_member(rating_format, RatingFormat):
             shown = _enum_shown(rating_format, RatingFormat)
