@@ -24,9 +24,29 @@ PROBABILITY_CLIP = 1e-6
 
 
 def _check_number(name: str, value: object) -> None:
-    """Raise EvaluationError unless value is exactly an int or a float (not a bool or subclass)."""
+    """
+    Raise EvaluationError unless value is exactly an int or a float, finite as a float.
+
+    A bool or a subclass is rejected, and so is an int too large for a float
+    or a float that is NaN or infinite, so the arithmetic never overflows.
+    """
     if type(value) is not int and type(value) is not float:
         raise EvaluationError(f"{name} must be an int or float, not {type(value).__name__}")
+    try:
+        finite = math.isfinite(value)
+    except OverflowError:
+        finite = False
+    if not finite:
+        raise EvaluationError(f"{name} must be finite as a float")
+
+
+def _check_best_of(best_of: object) -> None:
+    """Raise EvaluationError unless best_of is exactly an int that is positive and odd."""
+    if type(best_of) is not int:
+        raise EvaluationError(f"best_of must be an odd integer >= 1, got {type(best_of).__name__}")
+    if best_of < 1 or best_of % 2 == 0:
+        shown = repr(best_of) if best_of.bit_length() <= 64 else "a large int"
+        raise EvaluationError(f"best_of must be an odd integer >= 1, got {shown}")
 
 
 def _check_format(game_format: object) -> None:
@@ -110,11 +130,13 @@ def match_win_probability(p: float, game_format: GameFormat, best_of: int) -> fl
     subclass is rejected), and ConfigError for an invalid game_format.
     """
     _check_number("p", p)
-    if type(best_of) is not int or best_of < 1 or best_of % 2 == 0:
-        raise EvaluationError(f"best_of must be an odd integer >= 1, got {best_of!r}")
+    _check_best_of(best_of)
     g = game_win_probability(p, game_format)
     w = best_of // 2 + 1
-    return math.fsum(comb(w - 1 + k, k) * g**w * (1 - g) ** k for k in range(w))
+    try:
+        return math.fsum(comb(w - 1 + k, k) * g**w * (1 - g) ** k for k in range(w))
+    except OverflowError:
+        raise EvaluationError("best_of is too large to compute a win probability") from None
 
 
 def calibrate_win_probability(p: float, a: float) -> float:

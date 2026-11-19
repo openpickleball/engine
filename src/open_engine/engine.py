@@ -492,7 +492,7 @@ import math
 import sys
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass, replace
-from datetime import UTC, date, datetime, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from enum import Enum, StrEnum
 from typing import Literal, TypeGuard, TypeVar, cast
 
@@ -508,7 +508,7 @@ from ._errors import ReferenceDateError as ReferenceDateError
 from ._errors import SnapshotError as SnapshotError
 from ._errors import UnknownPlayerError as UnknownPlayerError
 from ._version import __version__
-from .winprob import calibrate_win_probability, match_win_probability
+from .winprob import _check_best_of, calibrate_win_probability, match_win_probability
 
 # ---------------------------------------------------------------------------
 # Enums and game formats
@@ -640,7 +640,7 @@ class GameFormat:
         an int (a bool or an int subclass is rejected), before any score
         is compared.
         """
-        problem = _game_format_shape_broken(self)
+        problem = _game_format_broken(self)
         if problem is not None:
             raise ConfigError(problem)
         if type(score_a) is not int or type(score_b) is not int:
@@ -665,6 +665,27 @@ class GameFormat:
 
 
 _GAME_FORMAT_FIELD_NAMES = frozenset(f.name for f in fields(GameFormat))
+
+
+def _is_member(value: object, kind: type[Enum]) -> bool:
+    """
+    True only for a member of kind itself, compared by identity.
+
+    An object can have exactly kind's type without being a member
+    (str.__new__(RatingFormat, "singles")). Such an object passes a type
+    check, but RatingFormat.team_size compares by identity and a dict
+    lookup by equality, so the two would disagree about it.
+    """
+    return any(value is member for member in kind)
+
+
+def _safe_shown(value: object) -> str:
+    """repr of an exact str, int, float, bool, or None; the type name of anything else."""
+    if type(value) is int and value.bit_length() > 64:
+        return "a large int"
+    if type(value) in (str, int, float, bool, type(None)):
+        return repr(value)
+    return type(value).__name__
 
 
 def _game_format_shape_broken(fmt: object) -> str | None:
@@ -695,7 +716,7 @@ def _game_format_broken(fmt: object) -> str | None:
     if problem is not None:
         return problem
     checked = cast(GameFormat, fmt)
-    if type(checked.scoring) is not ScoringType:
+    if not _is_member(checked.scoring, ScoringType):
         return f"scoring must be a ScoringType, not {type(checked.scoring).__name__}"
     for name, number in (("points_to", checked.points_to), ("win_by", checked.win_by)):
         if type(number) is not int:
@@ -1251,6 +1272,8 @@ class Config:
                     "allowed_game_formats entries must be (scoring type, whole number) pairs"
                 )
             entry_scoring = tuple.__getitem__(entry, 0)
+            if type(entry_scoring) is ScoringType and not _is_member(entry_scoring, ScoringType):
+                raise ConfigError("allowed_game_formats has a ScoringType that is not a member")
             entry_points = _plain_number(tuple.__getitem__(entry, 1))
             if not (entry_scoring in _SCORING_VALUES and _is_config_whole(entry_points)):
                 raise ConfigError(
@@ -1263,6 +1286,10 @@ class Config:
             ("win_calibration_by_scoring", ScoringType, "scoring type"),
             ("match_weights", MatchType, "match type"),
         ):
+            # A key of the enum's own type that is not a member would be
+            # kept as is by kind(key) and break fingerprint() and hash().
+            if any(type(key) is kind and not _is_member(key, kind) for key, _ in pairs[name]):
+                raise ConfigError(f"{name} has a {kind.__name__} key that is not a member")
             if {key for key, _ in pairs[name]} != set(kind):
                 raise ConfigError(f"{name} needs a value for every {label}")
             try:
@@ -1485,6 +1512,11 @@ class Config:
             raise ConfigError(
                 f"Config data must be a mapping, exactly a dict, not {type(data).__name__}"
             )
+        # Exactly str keys, checked before any set operation or lookup: a
+        # key type's own __hash__ and __eq__ would run in both.
+        odd = sorted({type(key).__name__ for key in data if type(key) is not str})
+        if odd:
+            raise ConfigError(f"Config data has unknown keys: keys of type {', '.join(odd)}")
         # The fields of Config itself, as to_dict() gives them.
         names = [f.name for f in fields(Config)]
         missing = sorted(set(names) - set(data))
@@ -1853,16 +1885,16 @@ class Match:
         """
         if not _is_plain_str(self.match_id):
             raise InvalidMatchError(f"match_id must be a str, not {type(self.match_id).__name__}")
-        if type(self.status) is not MatchStatus:
+        if not _is_member(self.status, MatchStatus):
             raise InvalidMatchError(
                 f"status must be a MatchStatus, not {type(self.status).__name__}"
             )
-        checks: tuple[tuple[str, object, type, str], ...] = (
+        checks: tuple[tuple[str, object, type[Enum], str], ...] = (
             ("rating_format", self.rating_format, RatingFormat, "a RatingFormat"),
             ("match_type", self.match_type, MatchType, "a MatchType"),
         )
         for name, value, kind, label in checks:
-            if type(value) is not kind:
+            if not _is_member(value, kind):
                 raise InvalidMatchError(f"{name} must be {label}, not {type(value).__name__}")
         problem = _game_format_broken(self.game_format)
         if problem is not None:
@@ -1891,6 +1923,14 @@ class Match:
                     "played_at tzinfo must be exactly datetime.timezone, not "
                     f"{type(zone).__name__}; convert with "
                     "played_at.astimezone(timezone(played_at.utcoffset()))"
+                )
+            # An exact timezone keeps the timedelta it was built with, and a
+            # timedelta subclass runs its own methods in the digest and the
+            # duplicate check. timezone.utcoffset runs no caller code.
+            if zone is not None and type(self.played_at.utcoffset()) is not timedelta:
+                raise InvalidMatchError(
+                    "played_at offset must be exactly a timedelta, not "
+                    f"{type(self.played_at.utcoffset()).__name__}"
                 )
         for name, number in (("sequence", self.sequence), ("best_of", self.best_of)):
             if type(number) is not int:
@@ -2532,8 +2572,9 @@ def expected_point_share(team_a_rating: float, team_b_rating: float, scale: floa
         ("team_b_rating", team_b_rating),
         ("scale", scale),
     ):
-        if not _is_exact_number(value):
-            raise EvaluationError(f"{name} must be an int or float, not {type(value).__name__}")
+        problem = _number_broken(name, value)
+        if problem is not None:
+            raise EvaluationError(problem)
     exponent = (team_b_rating - team_a_rating) / scale
     exponent = max(-12.0, min(12.0, exponent))
     return 1.0 / (1.0 + float(10.0**exponent))
@@ -2610,8 +2651,9 @@ def _check_reliability_state(state: object) -> None:
     """Raise EvaluationError unless state and the fields reliability reads have exact types."""
     if type(state) is not RatingState:
         raise EvaluationError(f"state must be a RatingState, not {type(state).__name__}")
-    if not _is_exact_number(state.rd):
-        raise EvaluationError(f"rd must be an int or float, not {type(state.rd).__name__}")
+    problem = _number_broken("rd", state.rd)
+    if problem is not None:
+        raise EvaluationError(problem)
     if state.rd_as_of is not None and not _is_plain_date(state.rd_as_of):
         raise EvaluationError(
             f"rd_as_of must be a date or None, not {type(state.rd_as_of).__name__}"
@@ -2619,8 +2661,8 @@ def _check_reliability_state(state: object) -> None:
     for name, seen in (("partners", state.partners), ("opponents", state.opponents)):
         if type(seen) is not dict:
             raise EvaluationError(f"{name} must be a dict, not {type(seen).__name__}")
-        if not all(_is_plain_date(on) for on in seen.values()):
-            raise EvaluationError(f"{name} must map ids to dates")
+        if not all(_is_plain_str(key) and _is_plain_date(on) for key, on in seen.items()):
+            raise EvaluationError(f"{name} must map str ids to dates")
 
 
 def reliability(state: RatingState, cfg: Config, as_of: date) -> float:
@@ -2755,6 +2797,24 @@ def _is_exact_int(value: object) -> TypeGuard[int]:
 def _is_exact_number(value: object) -> TypeGuard[int | float]:
     """True for exactly an int or a float: not a bool, not a subclass."""
     return type(value) is int or type(value) is float
+
+
+def _number_broken(name: str, value: object) -> str | None:
+    """
+    Why value is not exactly an int or float that is finite as a float, or None.
+
+    An int too large for a float, or a float that is NaN or infinite, is
+    rejected, so the arithmetic that reads it never raises OverflowError.
+    """
+    if not _is_exact_number(value):
+        return f"{name} must be an int or float, not {type(value).__name__}"
+    try:
+        finite = math.isfinite(value)
+    except OverflowError:
+        finite = False
+    if not finite:
+        return f"{name} must be finite as a float"
+    return None
 
 
 def _seed_type_broken(state: RatingState) -> str | None:
@@ -2984,6 +3044,10 @@ def _plain_seed(player: Player) -> Player:
     """
     if type(player.ratings) is not dict:
         return player
+    # Keys that are not RatingFormat members are not hashed here: a key
+    # type's own __hash__ would run. _validate_seed rejects them.
+    if not all(_is_member(key, RatingFormat) for key in player.ratings):
+        return player
     ratings = {
         fmt: _plain_state(state) if type(state) is RatingState else state
         for fmt, state in player.ratings.items()
@@ -3029,9 +3093,9 @@ def _validate_seed(player: Player, cfg: Config) -> None:
             f"{_RESERVED_SOURCE_PREFIX}"
         )
     for key in player.ratings:
-        if type(key) is not RatingFormat:
+        if not _is_member(key, RatingFormat):
             raise InvalidSeedError(
-                f"Seed for {player.id}: ratings key {key!r} is not a RatingFormat"
+                f"Seed for {player.id}: ratings key {_safe_shown(key)} is not a RatingFormat"
             )
     for fmt in sorted(player.ratings):
         state = player.ratings[fmt]
@@ -3214,6 +3278,7 @@ def _snap_object(value: object, path: str, keys: frozenset[str]) -> Mapping[obje
     """value as exactly a dict with exactly keys; SnapshotError otherwise."""
     if type(value) is not dict:
         raise SnapshotError(f"{path} must be an object")
+    _snap_str_keys(value, path)
     missing = sorted(keys - set(value))
     if missing:
         raise SnapshotError(f"{path}: missing key {missing[0]!r}")
@@ -3221,6 +3286,18 @@ def _snap_object(value: object, path: str, keys: frozenset[str]) -> Mapping[obje
     if unknown:
         raise SnapshotError(f"{path}: unknown key {unknown[0]}")
     return value
+
+
+def _snap_str_keys(value: dict[object, object], path: str) -> None:
+    """
+    Raise SnapshotError unless every key is exactly a str.
+
+    Checked before any set operation or lookup on value, since a key type's
+    own __hash__ and __eq__ would run in both.
+    """
+    for key in value:
+        if type(key) is not str:
+            raise SnapshotError(f"{path} has a key that is not a str: {type(key).__name__}")
 
 
 def _snap_list(value: object, path: str) -> Sequence[object]:
@@ -3286,7 +3363,7 @@ def _snap_count(value: object, path: str) -> int:
 
 def _snap_format(value: object, path: str) -> RatingFormat:
     if not _is_plain_str(value) or value not in {fmt.value for fmt in RatingFormat}:
-        raise SnapshotError(f"{path} {value!r} is not a RatingFormat")
+        raise SnapshotError(f"{path} {_safe_shown(value)} is not a RatingFormat")
     return RatingFormat(value)
 
 
@@ -3761,7 +3838,8 @@ def _snap_content_keys(value: object, processed: set[str]) -> dict[str, str]:
     for key, match_id in value.items():
         if not _is_plain_str(key) or len(key) != 64 or not set(key) <= _HEX:
             raise SnapshotError(
-                f"snapshot.content_keys has a key that is not 64 lowercase hex characters: {key!r}"
+                "snapshot.content_keys has a key that is not 64 lowercase hex characters: "
+                f"{_safe_shown(key)}"
             )
         path = f"snapshot.content_keys[{key!r}]"
         match_id = _snap_id(match_id, path)
@@ -4256,11 +4334,12 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
     # them, and another container type runs its own code on every read.
     if type(snapshot) is not dict:
         raise SnapshotError("snapshot must be an object")
+    _snap_str_keys(snapshot, "snapshot")
     if "snapshot_version" in snapshot:
         version = snapshot["snapshot_version"]
         if type(version) is not int or version != SNAPSHOT_VERSION:
             raise SnapshotError(
-                f"snapshot.snapshot_version must be {SNAPSHOT_VERSION}, not {version!r}"
+                f"snapshot.snapshot_version must be {SNAPSHOT_VERSION}, not {_safe_shown(version)}"
             )
     raw = _snap_object(snapshot, "snapshot", _TOP_KEYS)
     _snap_str(raw["engine_version"], "snapshot.engine_version")
@@ -4389,7 +4468,7 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
 
 def _check_lookup_format(rating_format: object) -> None:
     """Raise PlayerError unless rating_format is exactly a RatingFormat (a str is rejected)."""
-    if type(rating_format) is not RatingFormat:
+    if not _is_member(rating_format, RatingFormat):
         raise PlayerError(
             f"rating_format must be a RatingFormat, not {type(rating_format).__name__}"
         )
@@ -5064,7 +5143,7 @@ class RatingEngine:
         cfg = self.cfg
         # The same type rules the seed check applies, so every state seeded
         # here is one add_player and replay accept.
-        if type(rating_format) is not RatingFormat:
+        if not _is_member(rating_format, RatingFormat):
             raise InvalidSeedError("rating_format must be a RatingFormat")
         if type(replace_unplayed_seed) is not bool:
             raise InvalidSeedError(
@@ -5259,7 +5338,7 @@ class RatingEngine:
         blank or not exactly a str (a subclass is rejected). Both are
         checked before anything changes, so a failed call creates no player.
         """
-        if type(rating_format) is not RatingFormat:
+        if not _is_member(rating_format, RatingFormat):
             raise InvalidSeedError("rating_format must be a RatingFormat")
         player = self._player_or_new(player_id)
         if rating_format not in player.ratings:
@@ -5351,7 +5430,7 @@ class RatingEngine:
         a ScoringType (a str is rejected).
         """
         self._validate_teams(team_a, team_b, rating_format)
-        if type(scoring) is not ScoringType:
+        if not _is_member(scoring, ScoringType):
             raise InvalidMatchError(f"scoring must be a ScoringType, not {type(scoring).__name__}")
         ratings_a = [self._peek_state(pid, rating_format).rating for pid in team_a]
         ratings_b = [self._peek_state(pid, rating_format).rating for pid in team_b]
@@ -5378,6 +5457,8 @@ class RatingEngine:
         unless best_of is exactly an int that is positive and odd.
         """
         GameFormat.validate(game_format)
+        # Before any prediction work (issue #119).
+        _check_best_of(best_of)
         share = self.predict_point_share(team_a, team_b, rating_format, game_format.scoring)
         raw = match_win_probability(share, game_format, best_of)
         return calibrate_win_probability(
@@ -5394,7 +5475,7 @@ class RatingEngine:
                 raise InvalidMatchError(
                     f"{name} must be a tuple or list, not {type(team).__name__}"
                 )
-        if type(rating_format) is not RatingFormat:
+        if not _is_member(rating_format, RatingFormat):
             raise InvalidMatchError(
                 f"rating_format must be a RatingFormat, not {type(rating_format).__name__}"
             )
@@ -5787,7 +5868,7 @@ class RatingEngine:
         """
         if as_of is not None and not _is_plain_date(as_of):
             raise ReferenceDateError(
-                "player_summary as_of must be a date, not a str, datetime, or other type"
+                f"player_summary as_of must be exactly a date, not {type(as_of).__name__}"
             )
         reference = as_of if as_of is not None else self.calculated_as_of
         if reference is None:
@@ -5967,7 +6048,7 @@ def replay(
     checkpoint. Those need a full replay.
     """
     if not _is_plain_date(as_of):
-        raise ReferenceDateError("replay as_of must be a date, not a str, datetime, or other type")
+        raise ReferenceDateError(f"replay as_of must be exactly a date, not {type(as_of).__name__}")
     if type(whole_ledger) is not bool:
         raise SnapshotError(f"whole_ledger must be a bool, not {type(whole_ledger).__name__}")
     if whole_ledger and from_snapshot is None:
@@ -6230,8 +6311,8 @@ def _check_evaluation_arguments(
         if value is not None and not _is_plain_date(value):
             raise EvaluationError(f"{name} must be a plain date, not {type(value).__name__}")
     if type(mode) is not str or mode not in ("live", "scheduled"):
-        raise EvaluationError(f"mode must be 'live' or 'scheduled', not {mode!r}")
-    if scoring is not None and type(scoring) is not ScoringType:
+        raise EvaluationError(f"mode must be 'live' or 'scheduled', not {_safe_shown(mode)}")
+    if scoring is not None and not _is_member(scoring, ScoringType):
         raise EvaluationError(
             f"scoring must be a ScoringType or None, not {type(scoring).__name__}"
         )
@@ -6454,7 +6535,7 @@ _SEARCH_STEPS = 14  # coarse grid intervals in fit_scale and fit_win_calibration
 
 def _check_fit_scoring(scoring: object) -> None:
     """Raise EvaluationError unless scoring is exactly a ScoringType (a fit needs one)."""
-    if type(scoring) is not ScoringType:
+    if not _is_member(scoring, ScoringType):
         raise EvaluationError(f"scoring must be a ScoringType, not {type(scoring).__name__}")
 
 
@@ -6468,6 +6549,10 @@ def _check_search_bounds(low: float, high: float, tolerance: float) -> None:
     for name, value in (("low", low), ("high", high), ("tolerance", tolerance)):
         if not _is_exact_number(value):
             raise EvaluationError(f"{name} must be an int or float, not {type(value).__name__}")
+        try:
+            float(value)
+        except OverflowError:
+            raise EvaluationError(f"{name} must be finite as a float") from None
     if not (math.isfinite(low) and math.isfinite(high)):
         raise EvaluationError("low and high must be finite")
     # The search adds two points of the range (midpoints) and multiplies the
