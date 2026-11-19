@@ -5500,7 +5500,8 @@ def replay(
 
     Args:
         matches: The ledger rows, any iterable, read once into a list.
-        seed_players: Seeds that follow the seed rules, dated on or before as_of.
+        seed_players: Seeds that follow the seed rules, dated on or before
+            as_of; any iterable, read once.
         cfg: None or exactly a Config with only its fields.
         as_of: The replay date, a plain date.
         from_snapshot: An earlier replay's to_snapshot() output, to resume from.
@@ -5511,15 +5512,14 @@ def replay(
 
     Raises:
         ReferenceDateError: as_of is not a plain date. It is checked first.
-        SnapshotError: whole_ledger is not exactly a bool, then whole_ledger
-            is True without from_snapshot (both before cfg); later, the
-            snapshot is malformed or taken under another Config, or a resume
-            cannot equal a full replay.
+        SnapshotError: whole_ledger is not exactly a bool, then is True without
+            from_snapshot (both before cfg); later, a malformed snapshot, one
+            under another Config, or a resume that cannot equal a full replay.
         ConfigError: cfg is not valid: its type before matches, seed_players,
-            and from_snapshot are read, its values after.
-        InvalidMatchError, InvalidSeedError, PlayerError: a row or seed is not
-            valid, a seed is dated after as_of, or seeds share an identity
-            (on resume, also with a checkpoint player).
+            and from_snapshot are read; its values after matches and
+            seed_players are read and before from_snapshot is.
+        InvalidMatchError, InvalidSeedError, PlayerError: a bad row or seed, a
+            seed after as_of, or a shared identity, also with a checkpoint player.
         LedgerConflictError: rows with one match_id differ, including, on
             resume, an edited checkpoint row or a later row reusing its id.
 
