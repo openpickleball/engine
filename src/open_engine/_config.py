@@ -472,9 +472,12 @@ class Config:
         as a float), then every whole number is at least 1. Each step checks
         every entry before the next starts, so the message does not depend
         on set order, which can change with the hash seed (issue #145).
-        Every type is judged by type() alone, so no caller code runs.
+        The container is judged by its real type, so a __class__ property
+        never runs, and is read once (a set or frozenset subclass's own
+        __iter__ can run). Every entry and item is judged by type() alone,
+        so no other caller code runs.
         """
-        if not isinstance(self.allowed_game_formats, (set, frozenset)):
+        if not issubclass(type(self.allowed_game_formats), (set, frozenset)):
             raise ConfigError("allowed_game_formats must be a set or frozenset")
         # Each entry is read once, through tuple's own methods, so a tuple
         # subclass cannot show the check one pair and the stored set another.
