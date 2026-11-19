@@ -2017,11 +2017,20 @@ class Match:
             # timedelta subclass runs its own methods in the digest and the
             # duplicate check. timezone.utcoffset and ZoneInfo.utcoffset run
             # no caller code.
-            if zone is not None and type(self.played_at.utcoffset()) is not timedelta:
-                raise InvalidMatchError(
-                    "played_at offset must be exactly a timedelta, not "
-                    f"{_type_name(self.played_at.utcoffset())}"
-                )
+            if zone is not None:
+                # A ZoneInfo's tz data can hold an offset of a day or more,
+                # which datetime refuses with its own ValueError.
+                try:
+                    offset = self.played_at.utcoffset()
+                except ValueError:
+                    raise InvalidMatchError(
+                        "played_at has a UTC offset its zone cannot give: "
+                        "it must be less than a day"
+                    ) from None
+                if type(offset) is not timedelta:
+                    raise InvalidMatchError(
+                        f"played_at offset must be exactly a timedelta, not {_type_name(offset)}"
+                    )
         for name, number in (("sequence", self.sequence), ("best_of", self.best_of)):
             if type(number) is not int:
                 raise InvalidMatchError(f"{name} must be an int, not {_type_name(number)}")
