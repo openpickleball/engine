@@ -1,0 +1,39 @@
+# Plan: Make Config error messages independent of the hash seed (issue #145)
+
+Risk tier: Medium. It changes which message some invalid inputs get (the message becomes fixed instead of hash-dependent), on input validation paths.
+
+Domain skills: superpowers:test-driven-development, invoke. Framework skills: not applicable, a standard-library Python package.
+
+## Acceptance criteria
+
+1. For any input, every error the engine raises has the same class and message under any `PYTHONHASHSEED`. Every valid input gives the same result as on `main`, `Config.fingerprint()` and digests unchanged.
+2. Each check that walks a set or frozenset (or anything built from one) and raises on the first failing member walks it in a fixed order:
+   - members that are already plain, checked values (for example the stored `allowed_game_formats` in `_check_mapping_values`) are walked in sorted order;
+   - members that are a caller's unchecked objects (for example a caller's `allowed_game_formats` in `_store_game_formats`, or the set given to the Config rebuild) are never sorted or compared before their types pass, since that would run caller code (CLAUDE.md, Exact input types). For those, the message must not depend on which member is found first: either it names no member (as today for the type messages), or every member is type-checked first and the reported one is chosen in a fixed order among the plain ones.
+3. A message that changes is one that varied with the hash seed on `main`; record each, old and new, in the plan and the changelog. A message that was already fixed does not change.
+4. Tests: one per changed check, running the input in subprocesses under at least five hash seeds and asserting one message. Committed red first.
+5. `CHANGELOG.md`, `## [Unreleased]`, `### Fixed`.
+
+## Files that change
+
+- `src/open_engine/_config.py` (and any other module the survey finds).
+- New `tests/test_hash_seed_messages.py`.
+- `CHANGELOG.md`.
+
+## Order of work
+
+1. Survey, from `main`: every loop, `any`, `all`, `next`, `min`, `max`, or comprehension over a set, frozenset, or set-derived iterable on a path that can raise; and run a corpus of invalid inputs to every public entry point (reuse the approach from #128: Config single and paired field breaks, `from_dict`, `from_snapshot` mutations, seeds, matches) under five hash seeds in subprocesses, and list every input whose message differs across seeds. Record the list in the plan.
+2. Red tests for each varying case, committed alone.
+3. Fix each per criterion 2.
+4. Rerun the corpus under the five seeds: no differences. Changelog. Full gate.
+
+## Risks
+
+- Sorting caller objects runs caller code. Mitigation: criterion 2; sort only checked plain values.
+- Changing a message that tests or the README name. Mitigation: only messages that varied change, and their text stays the same apart from which member is named.
+
+## Proof
+
+- The corpus run under five hash seeds, before (list of varying inputs) and after (none).
+- The new tests, red on `main`.
+- Measured on `main`: `Config(game_length_weights={11: 1.0})` names 15 or 21 depending on the seed.
