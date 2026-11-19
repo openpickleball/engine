@@ -1037,27 +1037,9 @@ class RatingEngine:
             )
             return rejected, net
 
-        repeat_factor = 1.0
-        matchup = None
-        if match.match_type == MatchType.SELF_REPORTED:
-            if cfg.self_reported_requires_both_teams:
-                confirmed = set(match.confirmed_by)
-                if not (confirmed & set(match.team_a) and confirmed & set(match.team_b)):
-                    unconfirmed = MatchResult(
-                        False, match.rating_format, RejectionReason.SELF_REPORTED_UNCONFIRMED
-                    )
-                    return unconfirmed, net
-            matchup = _matchup_key(match)
-            cutoff = _days_before(match.played_on, cfg.self_reported_repeat_window_days)
-            prior = sum(
-                1 for d in self.self_reported_log.get(matchup, []) if cutoff <= d <= match.played_on
-            )
-            if prior >= cfg.self_reported_max_repeats:
-                limited = MatchResult(
-                    False, match.rating_format, RejectionReason.SELF_REPORTED_REPEAT_LIMIT
-                )
-                return limited, net
-            repeat_factor = cfg.self_reported_repeat_factor**prior
+        refused, repeat_factor, matchup = self._self_reported_factor(match)
+        if refused is not None:
+            return refused, net
 
         primary, primary_updates, primary_net = self._compute(
             match, match.rating_format, repeat_factor
@@ -1090,6 +1072,44 @@ class RatingEngine:
             self.possible_duplicates[match.match_id] = twin
         self.processed_match_ids.add(match.match_id)
         return primary, net
+
+    def _self_reported_factor(
+        self, match: Match
+    ) -> tuple[MatchResult | None, float, MatchupKey | None]:
+        """
+        _consider's self-reported checks: (rejection or None, repeat_factor, matchup).
+
+        For a match that is not self-reported: (None, 1.0, None). For a
+        self-reported one, in order: under self_reported_requires_both_teams,
+        confirmed_by must name a player from each team
+        (SELF_REPORTED_UNCONFIRMED); then the counted self-reported matches
+        between the same two teams in the repeat window must be below
+        self_reported_max_repeats (SELF_REPORTED_REPEAT_LIMIT). Otherwise
+        repeat_factor is self_reported_repeat_factor**prior. Changes nothing.
+        """
+        cfg = self.cfg
+        repeat_factor = 1.0
+        matchup = None
+        if match.match_type == MatchType.SELF_REPORTED:
+            if cfg.self_reported_requires_both_teams:
+                confirmed = set(match.confirmed_by)
+                if not (confirmed & set(match.team_a) and confirmed & set(match.team_b)):
+                    unconfirmed = MatchResult(
+                        False, match.rating_format, RejectionReason.SELF_REPORTED_UNCONFIRMED
+                    )
+                    return unconfirmed, repeat_factor, matchup
+            matchup = _matchup_key(match)
+            cutoff = _days_before(match.played_on, cfg.self_reported_repeat_window_days)
+            prior = sum(
+                1 for d in self.self_reported_log.get(matchup, []) if cutoff <= d <= match.played_on
+            )
+            if prior >= cfg.self_reported_max_repeats:
+                limited = MatchResult(
+                    False, match.rating_format, RejectionReason.SELF_REPORTED_REPEAT_LIMIT
+                )
+                return limited, repeat_factor, matchup
+            repeat_factor = cfg.self_reported_repeat_factor**prior
+        return None, repeat_factor, matchup
 
     def _note_seed_sensitive(self, match: Match, result: MatchResult) -> None:
         """Record a rejected update whose outcome a new seed could change."""

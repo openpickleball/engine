@@ -141,7 +141,7 @@ The default `win_weight` is 0.0, so `S` is the pooled point share. A team can wi
 
 ## Evidence weight
 
-`_compute`, `information_multiplier`, and `_consider`. How much a match counts:
+`_compute`, `information_multiplier`, and `_self_reported_factor`. How much a match counts:
 
 ```
 weight = cfg.match_weights[match_type] * repeat_factor * M
@@ -151,7 +151,7 @@ M      = min(cfg.max_information_multiplier,
 
 `games` is the number of games recorded. Under the default weights, longer games and more games carry more evidence, up to the cap. With `cfg.game_count_bonus` at 0, or game length weights that do not rise with length, they need not.
 
-`repeat_factor` is 1.0 except for a self-reported match (`_consider`):
+`repeat_factor` is 1.0 except for a self-reported match (`_self_reported_factor`, called by `_consider`):
 
 ```
 prior         = earlier counted self-reported matches between the same two teams,
