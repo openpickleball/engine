@@ -18,8 +18,9 @@ class OpenEngineError(ValueError):
 
 class ConfigError(OpenEngineError):
     """
-    A Config value is not valid, or a GameFormat is not valid when it is
-    checked outside a match: by GameFormat.validate, the win probability
+    A Config value is not valid, a cfg is not None or exactly a Config with
+    only its fields, or a GameFormat is not valid when it is checked
+    outside a match: by GameFormat.validate, the win probability
     functions, or RatingEngine.predict_win_probability.
     """
 
@@ -53,8 +54,9 @@ class ReferenceDateError(OpenEngineError):
     No usable reference date to measure inactivity and reliability at.
 
     player_summary raises it when it gets no as_of and the engine was never
-    replayed, or when its as_of is not a plain date. replay raises it when
-    its as_of is not a plain date.
+    replayed, or when its as_of is not a plain date. replay and reliability
+    raise it when their as_of is not a plain date. A plain date is exactly
+    a date: a datetime or a date subclass is not one.
     """
 
 

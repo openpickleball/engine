@@ -143,6 +143,24 @@ Output dataclasses (`MatchResult`, `PlayerSummary`, `ReplayInfo`, `EvaluationRep
 - A `Config` or `GameFormat` built exactly and then rewritten with `object.__setattr__`: not a subclass route; reported as a follow-up issue.
 - `expected_point_share(scale=0)` raising `ZeroDivisionError`: value check, not a type; noted in the PR.
 
+## Departures found during implementation
+
+- Messages: existing messages are kept where existing tests pin them (`game_format must be a GameFormat, not X`, `Config data must be a mapping, exactly a dict, not X`); new checks name the argument (`cfg must be exactly a Config`, `low must be an int or float`).
+- The game format helpers return a message instead of raising a passed-in error class, since `tests/test_api.py` requires every `raise` to name an `OpenEngineError` subclass.
+- `fit_scale` and `fit_win_calibration` reject `scoring=None` with `EvaluationError`. On c23ab5a it raised `ConfigError` (`fit_scale`, from the trial config) or `AttributeError` (`fit_win_calibration`), so no working call changes.
+- `#118`'s reproduction no longer gives equal fingerprints on c23ab5a (#120 made the fingerprint see the `_Big` value), so its test checks only the `ConfigError`.
+- `tests/test_engine.py`: `LOOSE_PAIRS` keeps a valid loosely equal pair (`confirmed_by` as a `frozenset` and a `set`), and the `_Int` `points_to` pair moves to `INVALID_LOOSE_PAIRS`.
+- `ledger_order` checks the types `Match._validate_field_types` checks: every field but `games` and the ids inside the teams and `confirmed_by`.
+
 ## Proof
 
-Filled in during implementation: the red run of each new test file, the pinned values of criterion 6 measured on c23ab5a, and the gate output.
+Red run on the unchanged source (5578d59, tests only): `.venv/bin/pytest -q tests/test_exact_input_types.py tests/test_exact_input_callbacks.py tests/test_exact_input_plain_unchanged.py` gave `410 failed, 25 passed`. The passing tests are the criterion 6 pins and the plain-input checks.
+
+Criterion 6 values, measured on c23ab5a before any source edit with `.venv/bin/python -c` importing the helpers of `tests/test_exact_input_plain_unchanged.py`:
+
+- `Config().fingerprint()`: `17f2981186edf96c`.
+- sha256 of `json.dumps(replay(_ledger(), _seeds(), as_of=date(2026, 6, 1)).to_snapshot(), sort_keys=True)`: `6020a5917012308bbb014760ce197ce4e18fd3ff004a85f3d5631047928ca801`.
+- `evaluate(_ledger(), _seeds(), burn_in_matches=2)`: `matches_scored=42, mse=0.006789, mae=0.071175, bias=0.018455`, bins `(0.4, 0.4777, 0.5268, 9), (0.5, 0.5377, 0.5478, 33)`.
+- `fit_scale(_ledger(), _seeds(), burn_in_matches=2, tolerance=0.05)`: `scale=3.58`, `default_scale=2.9`, fitted `mse=0.007213`, at default `mse=0.007232`, 25 profile points, `at_bound=False`. The full report and profile are pinned in the test.
+
+Gate (after the change): see the PR description.

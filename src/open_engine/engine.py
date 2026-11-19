@@ -14,6 +14,29 @@ inactivity-based uncertainty, rolling partner/opponent diversity, scale
 calibration, and deterministic historical replay.
 
 Published behavior notes:
+- Every public entry point takes exact input types (issues #116, #118,
+  #119). A subclass, or an object whose __class__ only claims the type,
+  raises the entry point's OpenEngineError subclass before any state
+  changes: a subclass can give a check one value and rating another, or
+  run caller code while it is read. A plain date in these notes means
+  exactly a date: a datetime or a date subclass is not one. Numbers are
+  exactly int or float (a bool is rejected where a number is expected),
+  enums exactly their class (a str equal to a member's value is
+  rejected), flags exactly bool, a Config exactly a Config, and a
+  GameFormat exactly a GameFormat, each holding nothing in its instance
+  __dict__ but its own fields. Match.played_at, when set, must be exactly
+  a datetime whose tzinfo is exactly datetime.timezone, so a
+  zoneinfo.ZoneInfo raises InvalidMatchError: the engine reads only the
+  UTC instant and offset, so convert with
+  played_at.astimezone(timezone(played_at.utcoffset())), which keeps both
+  and so the ledger digest. Where an earlier release converts a number
+  to its plain value (Config numbers and mappings, seed state numbers,
+  ExternalRatingSnapshot numbers, and snapshot numbers, issue #107), that
+  conversion stays. replay and the evaluation functions read the matches
+  and seed_players iterables once, into lists, before any row is checked.
+  A snapshot passed in memory must use exactly dict for every object and
+  exactly list or tuple for every list. Config and GameFormat built
+  exactly and then rewritten with object.__setattr__ are not checked.
 - Each player moves by their own K (from their RD after inactivity):
   `sign * K * effective_weight * surprise`. A partner's or opponent's
   uncertainty never changes a player's step. Team average movement is not
@@ -937,15 +960,20 @@ class Config:
     that way, so for an exact Config the range checks, fingerprint(), and
     rating code read that plain value (issue #107). A value whose
     __class__ claims int or float while its real type is neither is
-    rejected. A Config subclass's own methods, such as an overriding
-    __post_init__, run unchecked, so a subclass can still store other
-    values (issue #118). fingerprint(), to_dict(), and from_dict() use the
-    fields of Config itself, not of the instance or a subclass, so a
-    subclass's extra fields do not change the fingerprint. So a built
+    rejected. Config itself can be subclassed, but a subclass's own
+    methods, such as an overriding __post_init__, could store other
+    values, so every entry point that takes a config (RatingEngine,
+    RatingEngine.from_snapshot, replay, prequential_predictions, evaluate,
+    fit_scale, fit_win_calibration, and reliability) raises ConfigError
+    for a subclass, for any other object that is not None (a falsy one
+    included), and for an exact Config whose instance __dict__ holds
+    anything but its fields (issue #118). fingerprint(), to_dict(), and
+    from_dict() use the fields of Config itself, not of the instance or a
+    subclass, so a subclass's extra fields do not change the fingerprint. So a built
     config always gives plain JSON, and fingerprint(), ==, and hash()
     never raise. The rules:
 
-    - version is a str. The three flags are bools.
+    - version is exactly a str. The three flags are exactly bools.
     - Other scalar fields are numbers, except the day counts, the
       repeat, carry, verified match, and connectivity counts, and
       diversity_target, which are whole numbers.
@@ -1445,9 +1473,11 @@ class Config:
         Build a Config from to_dict() output, also after a round trip
         through Python's json module.
 
-        data must have exactly the keys to_dict() gives, so a stored config
-        names every parameter. Raises ConfigError for a missing or unknown
-        key, a value that cannot be converted, or a value Config rejects.
+        data must be exactly a dict (json.loads gives one; another mapping
+        type raises) with exactly the keys to_dict() gives, so a stored
+        config names every parameter. Raises ConfigError for data of
+        another type, a missing or unknown key, a value that cannot be
+        converted, or a value Config rejects.
         """
         # Exactly dict: a mapping type runs its own code on every read, so
         # the checks below and Config could read different values.
@@ -1688,19 +1718,26 @@ class Match:
     non-blank str, exactly a str (not a subclass); validate raises
     InvalidMatchError otherwise.
 
-    validate checks the type of status, rating_format, match_type, team_a,
-    team_b, confirmed_by, game_format, played_at, sequence, and best_of. It
-    raises InvalidMatchError when status is not a MatchStatus, rating_format
-    is not a RatingFormat, or match_type is not a MatchType (a str is
-    rejected, even one equal to a member's value); when a team is not
-    exactly a tuple; when confirmed_by is not exactly a set or frozenset;
-    when game_format is not a GameFormat; when played_at is not a datetime
-    or None; or when sequence or best_of is not an int (a bool or float is
-    rejected). games and each game in it must be exactly a tuple or list,
-    and each score exactly an int (a subclass of any of these is rejected).
-    It also calls game_format.validate, which checks the
-    fields inside the format, and raises InvalidMatchError with the same
-    message for a ConfigError that call raises.
+    validate checks the type of status, rating_format, match_type,
+    game_format, team_a, team_b, confirmed_by, played_on, played_at,
+    sequence, and best_of before it reads any of them, each exactly (a
+    subclass, or an object whose __class__ only claims the type, is
+    rejected; issue #116). It raises InvalidMatchError when status is not
+    exactly a MatchStatus, rating_format a RatingFormat, or match_type a
+    MatchType (a str is rejected, even one equal to a member's value);
+    when game_format is not exactly a GameFormat holding only its fields,
+    each of its exact type; when a team is not exactly a tuple; when
+    confirmed_by is not exactly a set or frozenset; when played_on is not
+    exactly a date; when played_at is not None or exactly a datetime, or
+    its tzinfo is set and not exactly datetime.timezone (a ZoneInfo is
+    rejected: convert with played_at.astimezone(timezone(
+    played_at.utcoffset()))); or when sequence or best_of is not exactly
+    an int (a bool, float, or int subclass is rejected). games and each
+    game in it must be exactly a tuple or list, and each score exactly an
+    int (a subclass of any of these is rejected). It also calls
+    GameFormat.validate on the format, through the class, and raises
+    InvalidMatchError with the same message for a ConfigError that call
+    raises.
     """
 
     match_id: str
@@ -1714,7 +1751,8 @@ class Match:
     game_format: GameFormat = GameFormat()
 
     # Order of play within a day. played_on is the calendar date at the
-    # venue. played_at must be timezone-aware and fall on played_on; send it
+    # venue. played_at must be timezone-aware, with exactly a
+    # datetime.timezone as its tzinfo, and fall on played_on; send it
     # when known. Within one played_on, untimed matches come first, then
     # timed ones by UTC instant; sequence (for example, round number) and
     # then match_id break ties.
@@ -1932,7 +1970,13 @@ def ledger_order(match: Match) -> tuple[date, int, datetime, int, str]:
     by sequence then match_id. Timed matches follow, by the UTC instant of
     played_at, then sequence, then match_id. played_at must be
     timezone-aware; a naive value raises InvalidMatchError, and so does a
-    match that is not exactly a Match (a subclass included).
+    match that is not exactly a Match (a subclass included), or whose
+    match_id, status, rating_format, match_type, game_format, teams,
+    confirmed_by, played_on, played_at, sequence, or best_of has the wrong
+    type, checked exactly as Match.validate checks them first (a played_at
+    tzinfo must be exactly datetime.timezone). Value rules, such as a
+    nonnegative sequence, and the games, team ids, and confirmed_by
+    members are not checked.
     """
     _require_plain_match(match)
     Match._validate_field_types(match)
@@ -4534,6 +4578,9 @@ class RatingEngine:
         cfg must be the Config the snapshot was taken under (default
         Config()): its version and fingerprint must equal the snapshot's.
         The whole snapshot is validated before anything is built: exactly
+        a dict for every object and exactly a list or tuple for every list
+        (another container type, a dict subclass included, is rejected),
+        exactly a bool for resumable, exactly
         the schema's keys at every level, snapshot_version 8, dates as
         YYYY-MM-DD text, non-blank str ids with no repeated player or match
         id (ids, external_ids sources and ids, and provenance strs exactly
@@ -4978,13 +5025,16 @@ class RatingEngine:
         in the future is accepted; the next replay with an earlier as_of
         rejects the seed.
 
-        rating_format must be a RatingFormat (a str is not converted),
+        rating_format must be exactly a RatingFormat (a str is not
+        converted), replace_unplayed_seed exactly a bool (0, 1, and None are
+        rejected),
         snapshot must be exactly an ExternalRatingSnapshot (not a subclass),
-        and the snapshot is checked before anything changes: captured_on is a
-        date (not a datetime), source is a str that is not blank or whitespace
-        only and does not start with "open_" (the prefix reserved for
-        provenance the engine writes, matched exactly), external_player_id
-        is None or a str that is not blank or whitespace only,
+        and the snapshot is checked before anything changes: captured_on is
+        exactly a date (not a datetime or a date subclass), source is a str
+        that is not blank or whitespace only and does not start with
+        "open_" (the prefix reserved for provenance the engine writes,
+        matched exactly), external_player_id is None or a str that is not
+        blank or whitespace only,
         evidence_reference is None or a str that is not blank or whitespace
         only (each of these strs exactly a str, not a subclass; the same
         evidence reference may be used for many seeds), rating is an int or finite float
@@ -5204,8 +5254,8 @@ class RatingEngine:
         it changes nothing; the engine state is unchanged apart from the
         player record created for an unknown id.
 
-        Raises InvalidSeedError when rating_format is not a RatingFormat (a
-        str is not converted), and PlayerError for a player_id that is
+        Raises InvalidSeedError when rating_format is not exactly a
+        RatingFormat (a str is not converted), and PlayerError for a player_id that is
         blank or not exactly a str (a subclass is rejected). Both are
         checked before anything changes, so a failed call creates no player.
         """
@@ -5274,7 +5324,8 @@ class RatingEngine:
         it is on, seed_provisional_rating returns it without storing it.
         Raises UnknownPlayerError when no
         player record exists for the id, and PlayerError for an id that is
-        blank or not exactly a str (a subclass is rejected).
+        blank or not exactly a str (a subclass is rejected), and then for a
+        rating_format that is not exactly a RatingFormat.
         """
         player = self.player(player_id)
         _check_lookup_format(rating_format)
@@ -5366,7 +5417,8 @@ class RatingEngine:
         next replay). replay() passes a fixed as_of for authoritative rebuilds.
         `as_of` only labels the update as part of a replay and must not be
         earlier than the match date; the update itself does not depend on it.
-        An as_of that is not a plain date (a datetime is not one), or one
+        An as_of that is not a plain date (a datetime or a date subclass is
+        not one), or one
         earlier than played_on, raises InvalidMatchError right after the
         match is validated, before any check that rejects the match.
         A match_id already processed or reserved returns
@@ -5730,7 +5782,8 @@ class RatingEngine:
         replayed, or when as_of is not a plain date (a datetime is not one).
         These checks come first. Then it raises UnknownPlayerError when no
         player record exists for the id, and PlayerError for an id that is
-        blank or not exactly a str (a subclass is rejected).
+        blank or not exactly a str (a subclass is rejected), and then for a
+        rating_format that is not exactly a RatingFormat.
         """
         if as_of is not None and not _is_plain_date(as_of):
             raise ReferenceDateError(
@@ -5855,8 +5908,13 @@ def replay(
     RatingEngine.add_player), dated on or before as_of.
 
     Raises ReferenceDateError for an as_of that is not a plain date (a str,
-    a datetime, None, or any other type). It checks this first, before
-    whole_ledger, from_snapshot, the ledger rows, and the seeds.
+    a datetime, a date subclass, None, or any other type). It checks this
+    first, before whole_ledger, from_snapshot, the ledger rows, and the
+    seeds. Then it raises SnapshotError for a whole_ledger that is not
+    exactly a bool, and ConfigError unless cfg is None or exactly a Config
+    with only its fields, before from_snapshot is read. It reads matches
+    and seed_players once each, into lists, before any row or seed is
+    checked.
 
     Raises InvalidSeedError for a seed state that breaks the seed rules (see
     add_player) or whose initial_source_date is after as_of, and PlayerError
@@ -6223,8 +6281,15 @@ def prequential_predictions(
     freeze it as usual.
 
     A score_from or anchor that is not None and not a plain date (a str, a
-    datetime, or any other type) raises EvaluationError naming the argument,
-    before the ledger is read, in both modes and for an empty ledger too.
+    datetime, a date subclass, or any other type) raises EvaluationError
+    naming the argument, before the ledger is read, in both modes and for
+    an empty ledger too. Then, also before the ledger is read, mode must
+    be exactly the str "live" or "scheduled", scoring None or exactly a
+    ScoringType, and burn_in_matches exactly an int (a bool or a subclass
+    is rejected), or it raises EvaluationError; and cfg must be None or
+    exactly a Config with only its fields, or it raises ConfigError. It
+    reads matches and seed_players once each, into lists, before any row
+    or seed is checked.
     """
     cfg = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
     # Read each caller iterable once, before any row or seed is checked, so
@@ -6316,9 +6381,9 @@ def evaluate(
     Prequential evaluation: each match is predicted before it updates ratings.
 
     Scores the matches that prequential_predictions() returns, with the same
-    eligibility, mode, score_from and anchor rules. A score_from or anchor
-    that is not None and not a plain date raises EvaluationError naming the
-    argument, as prequential_predictions does, for an empty ledger too.
+    eligibility, mode, score_from and anchor rules, and checks every
+    argument as prequential_predictions does, in the same order, for an
+    empty ledger too.
     """
     cfg = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
     predictions = prequential_predictions(
@@ -6458,11 +6523,14 @@ def fit_scale(
     Publish the returned ScaleFit alongside the config that adopts it.
     Raises EvaluationError, before any prediction work, unless low < high,
     tolerance is finite and greater than 0, and 2 * low, 2 * high, and
-    (high - low) * 14 are finite. A score_from or anchor that is not None and
-    not a plain date raises EvaluationError naming the argument, as
-    prequential_predictions does, for an empty ledger too, unless another
-    argument fails first: the trial config is built before the dates are
-    checked, so for example a low of 0 or less raises ConfigError.
+    (high - low) * 14 are finite; low, high, and tolerance must each be
+    exactly an int or a float (a bool or a subclass is rejected), checked
+    first. Then every other argument is checked as prequential_predictions
+    checks it, in the same order, for an empty ledger too, and scoring must
+    be exactly a ScoringType (None is rejected), all before any trial
+    config is built. A trial config is built from the fields of Config
+    itself, so a low of 0 or less then raises ConfigError. A trial never
+    goes through dataclasses.replace.
     """
     _check_search_bounds(low, high, tolerance)
     cfg = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
@@ -6564,10 +6632,8 @@ def fit_win_calibration(
     are skipped. Same search as fit_scale: coarse grid, then golden section.
     Raises EvaluationError when no prediction remains, and, before any
     prediction work, for the same low, high, and tolerance as fit_scale.
-    A score_from or anchor that is not None and not a plain date raises
-    EvaluationError naming the argument, as prequential_predictions does,
-    for an empty ledger too, unless the low, high, and tolerance checks
-    fail first.
+    Then it checks every other argument as fit_scale does, in the same
+    order, for an empty ledger too.
     """
     _check_search_bounds(low, high, tolerance)
     cfg = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
