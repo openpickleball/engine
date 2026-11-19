@@ -183,7 +183,10 @@ def test_from_snapshot_uses_the_config_it_is_given() -> None:
     cfg = Config(k_max=0.5)
     eng = replay(LEDGER, _seeds(), cfg=cfg, as_of=AS_OF)
     restored = RatingEngine.from_snapshot(eng.to_snapshot(), cfg)
-    assert restored.cfg is cfg
+    # The engine keeps a rebuilt copy of cfg (issue #122).
+    assert restored.cfg == cfg
+    assert restored.cfg.fingerprint() == cfg.fingerprint()
+    assert restored.cfg is not cfg
     assert _engine_state(restored) == _engine_state(eng)
 
 

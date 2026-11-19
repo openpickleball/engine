@@ -73,3 +73,11 @@ Config() us 28.8
 ```
 
 The issue repro rates with the tampered weight on main, and a `-5.0` weight placed inside the `_FrozenMapping` flips the winner's sign. `Config()` takes about 29 microseconds, so one rebuild per public call is negligible.
+
+## Departures during the work
+
+- Criterion 3's comparison: the issue repro rebuilds to `match_weights[TOURNAMENT] = 1` (a plain int), which rates exactly like `Config()` (same deltas) but has a different fingerprint from `Config()` (an int and a float differ to the fingerprint). So the parametrized test compares every entry point against the constructor-built `Config(match_weights={..., TOURNAMENT: Big(1)})`, and a separate test checks the repro's deltas against `Config()`. `reliability` reads no match weight, so the tampered config also sets `diversity_target` to `Big(12)` (which overrides `__rtruediv__`), and the reference passes the same value to the constructor.
+- Criterion 2: a mapping field holding exactly a `dict` is passed to `Config(...)` as it is, not copied first. `Config(...)` reads its items once and stores its own `_FrozenMapping`, so the result shares nothing with the caller, and skipping the copy avoids rehashing caller keys before `__post_init__` checks them. A `_FrozenMapping` whose `_data` slot is unset also raises `ConfigError` (a test covers it).
+- `tests/test_calibration.py` monkeypatched `open_engine.engine.prequential_predictions` to fake the predictions `fit_scale` and `fit_win_calibration` see. Those now call `_prequential`, so the patches target `_prequential`. An old-contract test of an internal path, not a frozen one.
+- The `fit_scale` cases of the new rejection and rates-like-plain tests already pass on main: `fit_scale` builds each trial with `Config(...)` from the field values, so it already rebuilt. They stay as regression coverage. The once-per-call count test is red for `fit_scale` on main.
+- "RatingEngine state untouched where an engine exists": `from_snapshot` and resume build a new engine, so no caller engine exists to check; each rejection raises before an engine is returned.
