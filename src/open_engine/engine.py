@@ -1046,7 +1046,9 @@ class Config:
     the rewritten object's own methods read what it holds, not its real
     values. Compare configs with == or fingerprint(), not is. The engine
     trusts its own stored copy: rewriting it after the call is outside the
-    threat model. fingerprint(), to_dict(), and == called on a rewritten
+    threat model. A caller's Config rewritten while replay or an evaluation
+    function reads matches and seed_players is rebuilt too, since those
+    build the copy after they read them. fingerprint(), to_dict(), and == called on a rewritten
     Config itself read its rewritten values. fingerprint(),
     to_dict(), and from_dict() use the fields of Config itself, not of the instance or a
     subclass, so a subclass's extra fields do not change the fingerprint. So a built
@@ -1630,7 +1632,21 @@ def _require_config(cfg: object) -> Config:
     A rebuilt copy of cfg when it is exactly a Config with only its fields.
 
     Raises ConfigError otherwise, or when the rebuild does (see
-    _rebuilt_config).
+    _rebuilt_config). An entry point that drains a caller iterable calls it
+    only after the last caller code has run (issue #122), with
+    _config_shape as its early check.
+    """
+    return _rebuilt_config(_config_shape_checked(cfg))
+
+
+def _config_shape(cfg: object) -> Config | None:
+    """None for None, else cfg after the type and field checks, not rebuilt."""
+    return None if cfg is None else _config_shape_checked(cfg)
+
+
+def _config_shape_checked(cfg: object) -> Config:
+    """
+    cfg when it is exactly a Config with only its fields; ConfigError otherwise.
 
     A subclass can run its own methods: store a value after __post_init__
     made every number plain, or override fingerprint, _payload, or __eq__
@@ -1648,7 +1664,7 @@ def _require_config(cfg: object) -> Config:
         or not all(type(name) is str and name in _CONFIG_FIELD_NAMES for name in held)
     ):
         raise ConfigError("cfg has attributes that are not Config fields")
-    return _rebuilt_config(cfg)
+    return cfg
 
 
 # The _data slot of _FrozenMapping, read without calling any method of the
@@ -6337,12 +6353,13 @@ def replay(
     first, before whole_ledger, from_snapshot, the ledger rows, and the
     seeds. Then it raises SnapshotError for a whole_ledger that is not
     exactly a bool, and ConfigError unless cfg is None or exactly a Config
-    with only its fields, before from_snapshot is read. cfg is rebuilt from
-    its field values (see Config), so a rewritten value it rejects raises
-    ConfigError too, and the result's cfg, replay_info fingerprint, and
-    snapshots come from that copy. It reads matches
-    and seed_players once each, into lists, before any row or seed is
-    checked.
+    with only its fields, before matches, seed_players, and from_snapshot
+    are read. It reads matches and seed_players once each, into lists,
+    before any row or seed is checked. Only then, after the last caller
+    code has run, is cfg rebuilt from its field values (see Config), so a
+    rewritten value it rejects raises ConfigError too, even one rewritten
+    while those iterables were read, and the result's cfg, replay_info
+    fingerprint, and snapshots come from that copy.
 
     Raises InvalidSeedError for a seed state that breaks the seed rules (see
     add_player) or whose initial_source_date is after as_of, and PlayerError
@@ -6400,11 +6417,14 @@ def replay(
         raise SnapshotError(f"whole_ledger must be a bool, not {_type_name(whole_ledger)}")
     if whole_ledger and from_snapshot is None:
         raise SnapshotError("whole_ledger needs from_snapshot: it only applies to a resume")
-    checked = _config_or_default(cfg)
+    shape = _config_shape(cfg)
     # Read each caller iterable once, before any row or seed is checked, so
     # a generator cannot change a row between its check and its use.
     rows = list(matches)
     seeds = list(seed_players)
+    # The copy is built only now, after the last caller code ran: a
+    # generator above could rewrite any Config it reaches (issue #122).
+    checked = _config_or_default(shape)
     start = None
     if from_snapshot is not None:
         start = _resume_start(from_snapshot, checked, as_of)
@@ -6650,7 +6670,7 @@ def _check_evaluation_arguments(
     mode: object,
     score_from: object,
     anchor: object,
-) -> Config:
+) -> Config | None:
     """
     The checked Config for the evaluation functions; raise for a bad argument.
 
@@ -6658,8 +6678,9 @@ def _check_evaluation_arguments(
     the str "live" or "scheduled"), scoring (None or exactly a
     ScoringType), and burn_in_matches (exactly an int) raise
     EvaluationError, then cfg (None or exactly a Config with only its
-    fields) raises ConfigError. Returns Config() for None, else the copy
-    rebuilt from cfg's field values.
+    fields) raises ConfigError. Returns None for None, else cfg itself, not
+    yet rebuilt: the caller drains its iterables first, then builds the
+    copy with _config_or_default (issue #122).
     """
     for name, value in (("score_from", score_from), ("anchor", anchor)):
         if value is not None and not _is_plain_date(value):
@@ -6672,7 +6693,7 @@ def _check_evaluation_arguments(
         )
     if not _is_exact_int(burn_in_matches):
         raise EvaluationError(f"burn_in_matches must be an int, not {_type_name(burn_in_matches)}")
-    return _config_or_default(cfg)
+    return _config_shape(cfg)
 
 
 def prequential_predictions(
@@ -6720,16 +6741,19 @@ def prequential_predictions(
     be exactly the str "live" or "scheduled", scoring None or exactly a
     ScoringType, and burn_in_matches exactly an int (a bool or a subclass
     is rejected), or it raises EvaluationError; and cfg must be None or
-    exactly a Config with only its fields, or it raises ConfigError. cfg is
-    rebuilt from its field values (see Config), so a rewritten value it
-    rejects raises ConfigError too. It reads matches and seed_players once
-    each, into lists, before any row or seed is checked.
+    exactly a Config with only its fields, or it raises ConfigError. It
+    reads matches and seed_players once each, into lists, before any row or
+    seed is checked. Only then is cfg rebuilt from its field values (see
+    Config), so a rewritten value it rejects raises ConfigError too, even
+    one rewritten while those iterables were read.
     """
-    checked = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
+    shape = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
+    rows = list(matches)
+    seeds = list(seed_players)
     return _prequential(
-        matches,
-        seed_players,
-        cfg=checked,
+        rows,
+        seeds,
+        cfg=_config_or_default(shape),
         scoring=scoring,
         burn_in_matches=burn_in_matches,
         mode=mode,
@@ -6849,18 +6873,21 @@ def evaluate(
     argument as prequential_predictions does, in the same order, for an
     empty ledger too.
     """
-    cfg = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
+    shape = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
+    rows = list(matches)
+    seeds = list(seed_players)
+    checked = _config_or_default(shape)
     predictions = _prequential(
-        matches,
-        seed_players,
-        cfg=cfg,
+        rows,
+        seeds,
+        cfg=checked,
         scoring=scoring,
         burn_in_matches=burn_in_matches,
         mode=mode,
         score_from=score_from,
         anchor=anchor,
     )
-    return _report_from_predictions(predictions, cfg, scoring)[0]
+    return _report_from_predictions(predictions, checked, scoring)[0]
 
 
 def _scored_pairs(
@@ -7003,20 +7030,24 @@ def fit_scale(
     goes through dataclasses.replace.
     """
     _check_search_bounds(low, high, tolerance)
-    cfg = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
+    shape = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
     _check_fit_scoring(scoring)
     ledger = list(matches)
     seeds = list(seed_players)
+    # Built after the iterables drain, the last caller code (issue #122).
+    checked = _config_or_default(shape)
     cache: dict[float, tuple[EvaluationReport, float]] = {}
     # The trial configs are built from the fields of Config itself, read off
     # the checked exact Config, never through dataclasses.replace, which
     # reads the instance's own __dataclass_fields__ and __class__.
-    base = {f.name: getattr(cfg, f.name) for f in fields(Config)}
+    base = {f.name: getattr(checked, f.name) for f in fields(Config)}
 
     def run(scale: float) -> tuple[EvaluationReport, float]:
         key = round(scale, 6)
         if key not in cache:
-            trial = Config(**{**base, "scale_by_scoring": {**cfg.scale_by_scoring, scoring: scale}})
+            trial = Config(
+                **{**base, "scale_by_scoring": {**checked.scale_by_scoring, scoring: scale}}
+            )
             predictions = _prequential(
                 ledger,
                 seeds,
@@ -7050,7 +7081,7 @@ def fit_scale(
             break  # the bracket hit float spacing above a tiny tolerance
     fitted_scale = round((a + b) / 2, 3)
 
-    default_scale = cfg.scale_by_scoring[scoring]
+    default_scale = checked.scale_by_scoring[scoring]
     fitted = run(fitted_scale)[0]
     at_default = run(default_scale)[0]
     return ScaleFit(
@@ -7106,12 +7137,14 @@ def fit_win_calibration(
     order, for an empty ledger too.
     """
     _check_search_bounds(low, high, tolerance)
-    cfg = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
+    shape = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
     _check_fit_scoring(scoring)
+    rows = list(matches)
+    seeds = list(seed_players)
     predictions = _prequential(
-        matches,
-        seed_players,
-        cfg=cfg,
+        rows,
+        seeds,
+        cfg=_config_or_default(shape),
         scoring=scoring,
         burn_in_matches=burn_in_matches,
         mode=mode,
