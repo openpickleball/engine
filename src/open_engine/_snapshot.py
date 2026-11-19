@@ -1241,8 +1241,14 @@ def _check_verified_against_log(
                 )
 
 
-def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
-    """Validate a snapshot against cfg and read it. Raises SnapshotError naming the bad value."""
+def _snap_top(snapshot: object) -> Mapping[object, object]:
+    """
+    The snapshot's top-level object, checked for shape and version.
+
+    In order: snapshot is exactly a dict, its keys are str, a
+    snapshot_version key holds SNAPSHOT_VERSION, then the keys are
+    exactly the top-level keys.
+    """
     # Exactly dict and list at every level: json.loads and to_snapshot give
     # them, and another container type runs its own code on every read.
     if type(snapshot) is not dict:
@@ -1255,6 +1261,19 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
                 f"snapshot.snapshot_version must be {SNAPSHOT_VERSION}, not {_safe_shown(version)}"
             )
     raw = _snap_object(snapshot, "snapshot", _TOP_KEYS)
+    return raw
+
+
+def _snap_header(
+    raw: Mapping[object, object], cfg: Config
+) -> tuple[date | None, ReplayInfo | None]:
+    """
+    calculated_as_of and replay_info, after the version and config checks.
+
+    In order: engine_version is a str, config_version and
+    config_fingerprint are strs equal to cfg's, then calculated_as_of,
+    then replay_info.
+    """
     _snap_str(raw["engine_version"], "snapshot.engine_version")
     config_version = _snap_str(raw["config_version"], "snapshot.config_version")
     if config_version != cfg.version:
@@ -1272,7 +1291,19 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
     replay_info = _snap_replay_info(
         raw["replay_info"], calculated_as_of, config_version, fingerprint
     )
+    return calculated_as_of, replay_info
 
+
+def _snap_players(
+    raw: Mapping[object, object], cfg: Config, replay_info: ReplayInfo | None
+) -> tuple[dict[str, Player], dict[str, str]]:
+    """
+    The players by id, and each player's path in the snapshot.
+
+    In order: each player in list order, with no repeated id, then the
+    held identities, the named players, and net_rating_created against
+    replay_info.
+    """
     players: dict[str, Player] = {}
     player_paths: dict[str, str] = {}
     for index, value in enumerate(_snap_list(raw["players"], "snapshot.players")):
@@ -1285,10 +1316,19 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
     _check_held_identities(players, player_paths)
     _check_named_players(players, player_paths)
     _check_net_rating_created(replay_info, players)
+    return players, player_paths
 
-    processed = _snap_match_ids(raw["processed_match_ids"], "snapshot.processed_match_ids")
-    reserved = _snap_match_ids(raw["reserved_match_ids"], "snapshot.reserved_match_ids")
 
+def _snap_log(
+    raw: Mapping[object, object], players: Mapping[str, Player], cfg: Config
+) -> dict[MatchupKey, list[date]]:
+    """
+    The self-reported log by matchup.
+
+    In order: each entry in list order, with no repeated matchup and
+    every named player in players, then the log against the players'
+    states.
+    """
     log: dict[MatchupKey, list[date]] = {}
     entries = _snap_list(raw["self_reported_log"], "snapshot.self_reported_log")
     for index, value in enumerate(entries):
@@ -1301,12 +1341,16 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
                 raise SnapshotError(f"{path}.teams names {pid!r}, which is not in players")
         log[key] = dates
     _check_log_players(players, list(log.items()), cfg)
+    return log
 
-    content_keys = _snap_content_keys(raw["content_keys"], processed)
-    resumable = raw["resumable"]
-    if type(resumable) is not bool:
-        raise SnapshotError("snapshot.resumable must be a bool")
-    _check_verified_against_log(players, player_paths, log, cfg, resumable)
+
+def _snap_ledger_digests(raw: Mapping[object, object]) -> dict[str, str]:
+    """
+    The ledger digests by match id.
+
+    ledger_digests is a dict, then each entry in order: its id is a
+    non-blank str and its digest 64 lowercase hex characters.
+    """
     digests_raw = raw["ledger_digests"]
     if type(digests_raw) is not dict:
         raise SnapshotError("snapshot.ledger_digests must be an object")
@@ -1319,7 +1363,11 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
                 f"snapshot.ledger_digests[{key!r}] must be 64 lowercase hex characters"
             )
         digests[key] = digest
+    return digests
 
+
+def _snap_ledger_player_ids(raw: Mapping[object, object]) -> set[str]:
+    """The ledger player ids, each a non-blank str named once, in list order."""
     ledger_player_ids: set[str] = set()
     named = _snap_list(raw["ledger_player_ids"], "snapshot.ledger_player_ids")
     for index, value in enumerate(named):
@@ -1328,6 +1376,27 @@ def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
         if player_id in ledger_player_ids:
             raise SnapshotError(f"{path}: duplicate player id {player_id!r}")
         ledger_player_ids.add(player_id)
+    return ledger_player_ids
+
+
+def _read_snapshot(snapshot: object, cfg: Config) -> _Snapshot:
+    """Validate a snapshot against cfg and read it. Raises SnapshotError naming the bad value."""
+    raw = _snap_top(snapshot)
+    calculated_as_of, replay_info = _snap_header(raw, cfg)
+    players, player_paths = _snap_players(raw, cfg, replay_info)
+
+    processed = _snap_match_ids(raw["processed_match_ids"], "snapshot.processed_match_ids")
+    reserved = _snap_match_ids(raw["reserved_match_ids"], "snapshot.reserved_match_ids")
+
+    log = _snap_log(raw, players, cfg)
+
+    content_keys = _snap_content_keys(raw["content_keys"], processed)
+    resumable = raw["resumable"]
+    if type(resumable) is not bool:
+        raise SnapshotError("snapshot.resumable must be a bool")
+    _check_verified_against_log(players, player_paths, log, cfg, resumable)
+    digests = _snap_ledger_digests(raw)
+    ledger_player_ids = _snap_ledger_player_ids(raw)
 
     possible_duplicates = _snap_possible_duplicates(
         raw["possible_duplicates"],
