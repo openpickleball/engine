@@ -1,6 +1,6 @@
 # The OPEN rating model
 
-> **Status:** This engine is a demonstration. Its methods have not been validated on real match data, its outputs are not OPEN ratings, and its API may change without notice. No OPEN rating is live. The default parameter values are uncalibrated placeholders or declared choices, as the [parameter table](#parameters) marks them.
+> **Status:** This engine is a demonstration. Its methods have not been validated on real match data, its outputs are not OPEN ratings, and its API may change without notice. No OPEN rating is live. Each default parameter value is an uncalibrated placeholder, a declared choice, or a label that changes no rating, as the [parameter table](#parameters) marks it.
 
 This page states every equation the engine uses to move a rating, to report reliability, and to predict and evaluate matches. It follows a match through the engine in the order the code processes it. Each equation names the function in `src/open_engine/engine.py` or `src/open_engine/winprob.py` that computes it, so you can check one against the other.
 
@@ -41,17 +41,17 @@ Each player has a separate `RatingState` in each rating format: singles, overall
 | --- | --- |
 | `rating` | The rating, between `cfg.min_rating` and `cfg.max_rating`. |
 | `rd` | Rating deviation, OPEN's internal uncertainty, between `cfg.rd_min` and `cfg.rd_max`. |
-| `rd_as_of` | The date `rd` was last set. Inactivity is measured from here. `None` for a new player. |
+| `rd_as_of` | The date inactivity is measured from. A match sets it to the match date, and an imported seed to its capture date. A category state derived from overall doubles keeps the doubles `rd_as_of`, though its RD is raised to at least `cfg.category_seed_rd`. `None` for a new player. |
 | `initial_source_date` | The capture date of an imported rating, else `None`. Matches on or before it are frozen for this player. |
 | `matches_played`, `verified_matches_played` | Counted matches, and counted tournament, league, and recreational verified matches. |
 | `last_played` | The date of the player's latest counted match in this format. |
 | `partners`, `opponents` | The latest date this player played with or against each other player. |
 
-Once a starting state is set, only a counted match moves the rating.
+A counted match moves the rating. Before the state's first counted match, a new seed can also replace it: `seed_external_rating(..., replace_unplayed_seed=True)` replaces an unplayed seed, and under `cfg.category_feeds_parent` a new overall doubles seed replaces each stored, unplayed category state derived from doubles (`initial_source` `open_parent:doubles`). After a counted match, no seed replaces it.
 
 ## Starting states
 
-A player's first match in a format starts from one of three states.
+A seed given to `RatingEngine.add_player` or `replay` sets a state directly, under the seed rules listed in `add_player`. It can carry any rating in range, including an `open_provisional` one other than `cfg.default_rating`. Otherwise the engine builds one of these three states itself.
 
 **New player** (`RatingEngine._new_state`):
 
@@ -72,7 +72,7 @@ rd_as_of            = snapshot.captured_on
 initial_source_date = snapshot.captured_on
 ```
 
-An imported rating is a seed only: it sets the starting rating and nothing more. The imported reliability is stored for display (`PlayerSummary.imported_reliability`) and never sets RD. RD grows from the capture date, so an older import starts with more uncertainty. `seed_external_rating` refuses to replace a rating in a format where a counted OPEN match included the player. A seed passed to `RatingEngine.add_player` or `replay` follows the seed rules listed in `add_player`.
+An imported rating is a seed only. It sets the starting state above, including `initial_source_date`, which freezes the player in matches on or before it. The imported reliability is never converted: it is stored for display (`PlayerSummary.imported_reliability`) and never sets RD or OPEN-earned reliability. RD grows from the capture date, so an older import starts with more uncertainty. `seed_external_rating` refuses to replace a rating in a format where a counted OPEN match included the player.
 
 **Category derived from overall doubles** (`RatingEngine._new_state`). When `cfg.category_feeds_parent` is on, the player has no stored state in the category, and the player's overall doubles state has a counted match or an `initial_source_date` (an imported baseline), the category state starts from it:
 
@@ -149,7 +149,7 @@ M      = min(cfg.max_information_multiplier,
              cfg.game_length_weights[points_to] * (1 + cfg.game_count_bonus * (games - 1)))
 ```
 
-`games` is the number of games recorded. Longer games and more games carry more evidence, up to the cap.
+`games` is the number of games recorded. Under the default weights, longer games and more games carry more evidence, up to the cap. With `cfg.game_count_bonus` at 0, or game length weights that do not rise with length, they need not.
 
 `repeat_factor` is 1.0 except for a self-reported match (`_consider`):
 
@@ -174,7 +174,7 @@ else:
     rd'  = min(cfg.rd_max, sqrt(rd**2 + cfg.rd_growth_per_day**2 * days))
 ```
 
-Inactivity widens RD only. The rating does not drift, and an old match's update is never shrunk or discounted. A match dated before a player's `rd_as_of` (a late live match) grows no RD.
+Inactivity can widen RD and changes nothing else. The rating does not drift, and an old match's update is never shrunk or discounted. A match dated before a player's `rd_as_of` (a late live match) grows no RD.
 
 ## K
 
@@ -198,7 +198,7 @@ rating_new = clamp(rating + raw_delta, cfg.min_rating, cfg.max_rating)
 rd_new     = max(cfg.rd_min, rd' * (1 - cfg.rd_shrink_per_match * weight))
 ```
 
-The player is listed in `MatchResult.clamped` when `rating_new` differs from `rating + raw_delta` by more than 1e-12. RD shrinks from the inflated `rd'`, not the stored `rd`, and never goes below `cfg.rd_min`. The update also sets:
+The player is listed in `MatchResult.clamped` when `rating_new` differs from `rating + raw_delta` by more than 1e-12. The RD update starts from the inflated `rd'`, not the stored `rd`, and never goes below `cfg.rd_min`. The update also sets:
 
 ```
 rd_as_of     = max(rd_as_of, played_on)        played_on when rd_as_of is None
@@ -219,7 +219,7 @@ applied_i = rating_new_i - rating_i            0.0 for a frozen player
 imbalance = mean(applied_i on team A) + mean(applied_i on team B)
 ```
 
-The mean divides by the full team size, frozen players included. `MatchResult.imbalance` is this value rounded to 5 places. A match adds `team_size * imbalance` to the pool's total rating, and `ReplayInfo.net_rating_created` totals `math.fsum` of the unrounded `applied_i` per rating format. In exact arithmetic the changes cancel when the two teams have the same mean K and no player is clamped or frozen. Unequal K, a clamp, or a frozen player can make imbalance nonzero. So can float rounding when a rating is far larger than its change, which needs a rating range far wider than the default: the new rating can then drop part of the change without a clamp. The module docstring's K and imbalance notes cover the rest, including why the backend should monitor the total.
+The mean divides by the full team size, frozen players included. `MatchResult.imbalance` is this value rounded to 5 places. A match adds `team_size * imbalance`, with the unrounded imbalance, to the pool's total rating. `ReplayInfo.net_rating_created` totals it per rating format: `_replay` takes `math.fsum` of the unrounded `applied_i` of each counted update and adds those sums with `+=` in ledger order. In exact arithmetic the changes cancel when the two teams have the same mean K and no player is clamped or frozen. Unequal K, a clamp, or a frozen player can make imbalance nonzero. So can float rounding when a rating is far larger than its change, which needs a rating range far wider than the default: the new rating can then drop part of the change without a clamp. The module docstring's K and imbalance notes cover the rest, including why the backend should monitor the total.
 
 `MatchResult` reports `expected_a = E`, `actual_a = S`, `surprise`, `effective_weight = weight`, and each player's delta, each rounded to 5 places. The stored rating keeps full precision.
 
@@ -242,7 +242,7 @@ team A delta = +0.60 * 1.0 * 0.11111 = +0.06667       team B delta = -0.06667
 rd_new = max(0.10, 0.80 * (1 - 0.08 * 1.0)) = 0.736   imbalance = 0.0
 ```
 
-Sixty days later the same four players meet in a league best of 3 (11-9, 8-11, 11-6). Each RD first grows: `sqrt(0.736**2 + 0.012**2 * 60) = 0.74185`, so `K = 0.12 + 0.48 * (0.74185 - 0.10) / 0.70 = 0.56013`. The weight is `0.90 * 1.0 * min(1.30, 1.00 * (1 + 0.12 * 2)) = 1.116`.
+Sixty days later the same four players meet in a league best of 3 (11-9, 8-11, 11-6). Each RD first grows: `rd' = sqrt(0.736**2 + 0.012**2 * 60) = 0.7418463`, so `K = 0.12 + 0.48 * (rd' - 0.10) / 0.70 = 0.56012`, computed from the unrounded `rd'`. The weight is `0.90 * 1.0 * min(1.30, 1.00 * (1 + 0.12 * 2)) = 1.116`.
 
 ## Reliability
 
@@ -317,9 +317,9 @@ error    = actual - expected
 mse  = mean(error**2)        mae = mean(abs(error))        bias = mean(error)
 ```
 
-`mse`, `mae`, and `bias` are reported to 6 places. The calibration table groups pairs by `expected` into bins of width 0.1 (the last bin includes 1.0) and gives each bin's lower bound, mean expected, mean actual (4 places), and count.
+`mse`, `mae`, and `bias` are reported to 6 places. The calibration table has ten bins, `lower = index / 10` for index 0 to 9. A pair is in a bin when `lower <= expected < lower + 0.1`, and the last bin also takes `expected == 1.0`. Each bin gives its lower bound, mean expected, mean actual (4 places), and count. The edges are floats, so a pair exactly on a boundary can be counted in two bins: `0.2 + 0.1` is `0.30000000000000004`, so `expected == 0.3` is in both the 0.2 and the 0.3 bin.
 
-**Scale fit** (`fit_scale`). For one scoring type, the scale that minimizes the unrounded prequential MSE on `[low, high]`. Each trial scale reruns the whole prequential pass, since the ratings depend on the scale. The search evaluates a grid of 15 points (14 intervals), then a golden-section search within one grid step of the best point until the bracket is no wider than `tolerance`. The result is the bracket midpoint rounded to 3 places. Trial scales that round to the same 6 places share one result.
+**Scale fit** (`fit_scale`). For one scoring type, the scale that minimizes the unrounded prequential MSE on `[low, high]`. Each trial scale reruns the whole prequential pass, since the ratings depend on the scale. The search evaluates a grid of 15 points (14 intervals), then a golden-section search within one grid step of the best point until the bracket is no wider than `tolerance`, or stops shrinking at float spacing. The result is the bracket midpoint rounded to 3 places. Trial scales that round to the same 6 places share one result.
 
 **Win calibration fit** (`fit_win_calibration`). For one scoring type, the exponent `a` that minimizes the Brier score over predictions that have a modeled win probability:
 
@@ -327,9 +327,9 @@ mse  = mean(error**2)        mae = mean(abs(error))        bias = mean(error)
 brier(a) = mean((calibrated(P_match, a) - won)**2)        won = 1 or 0
 ```
 
-`a` is evaluated rounded to 6 places. The predictions are made once, with the config's scale, so fit the scale first. The search is the same as for the scale, and the result is rounded to 3 places.
+`a` is evaluated rounded to 6 places. The predictions are made once, with the config's scale, so fit the scale first. The search is the same as for the scale, with the same two stopping rules, and the result is rounded to 3 places.
 
-**Identification.** A fit within `tolerance` of `low` or `high` has `at_bound` set. `ScaleFit.profile` lists every trial scale with its unrounded MSE. A fit at a bound, or with a flat profile, is not identified: the data do not pin down the value. Fits on real match data run outside this repository.
+**Identification.** A fit within `tolerance` of `low` or `high` has `at_bound` set. `ScaleFit.profile` lists every scale `fit_scale` ran, as its 6-place cache key, with its unrounded MSE, sorted by scale. That includes the grid, the search, and the runs at the fitted scale and at the config's default scale, which can lie outside `[low, high]`. A fit at a bound, or with a flat profile, is not identified: the data do not pin down the value. Fits on real match data run outside this repository.
 
 ## Parameters
 
@@ -339,7 +339,7 @@ Every `Config` field the math reads, with its default. Status says what the defa
 - **Declared**: a declared choice (OPEN policy or a modeling choice), not a calibrated one. It changes only when out-of-sample evaluation supports another value.
 - **Label**: a label or display rule only. It changes no rating, prediction, or evaluation.
 
-`Config.fingerprint()` hashes every field, so every published rating records the exact values behind it.
+`Config.fingerprint()` hashes every field, and every replay records the fingerprint in its `ReplayInfo`, so the exact values behind a replay's ratings are on record.
 
 | Field | Default | Role | Status |
 | --- | --- | --- | --- |
@@ -386,10 +386,10 @@ The engine also has fixed constants in `engine.py`, each with a comment saying w
 
 ## What the model does not do
 
-- **No rating drift for inactivity.** Inactivity widens RD, which raises K and lowers reliability. It never moves a rating.
+- **No rating drift for inactivity.** Inactivity can widen RD, which can raise K and lower reliability. It never moves a rating.
 - **No rating for a match that is not completed.** A forfeit, retirement, or unfinished match changes no rating. Rating a retirement on its finished games would need a declared `Config` parameter backed by out-of-sample evaluation.
 - **No zero-sum guarantee.** Each player moves by their own K, so a match can add rating to the pool or remove it. `imbalance` and `ReplayInfo.net_rating_created` report it, and the engine does not cap it.
 - **No floor on a winner's change** other than the rating range. The match performance note gives the cases.
 - **No conversion of external scores.** An imported rating seeds a starting rating only, and an imported reliability is never turned into RD or OPEN reliability.
-- **No use of game order.** From the game scores, an update reads only each team's total points, the number of games, and which team won more games.
-- **No dependence on the replay date.** A replay gives the same ratings as recording the same ledger live in ledger order. The replay date labels the result and changes no update.
+- **No use of game order in the update.** From the game scores, the rating update reads only each team's total points, the number of games, and which team won more games. The likely-duplicate check does compare scores in order, so under `cfg.reject_content_duplicates` a copy with its games reordered can count where a copy in the same order is rejected.
+- **No dependence on the replay date, for the rows it counts.** `replay(as_of=d)` records only the rows dated on or before `d`, and gives the same ratings as recording those rows live in ledger order. The replay date decides which rows are recorded and labels the result, but changes no update of a row it records.
