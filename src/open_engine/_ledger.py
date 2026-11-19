@@ -15,10 +15,11 @@ from collections.abc import Iterable
 from dataclasses import fields, is_dataclass
 from datetime import date, datetime
 from enum import Enum
+from types import NoneType
 
 from ._errors import LedgerConflictError
 from ._model import _UTC_MIN, Match, _require_plain_match, _utc_instant, _validate_match
-from ._types import RatingFormat
+from ._types import GameFormat, MatchStatus, MatchType, RatingFormat, ScoringType
 
 
 def ledger_order(match: Match) -> tuple[date, int, datetime, int, str]:
@@ -145,9 +146,36 @@ def _json_text(form: object) -> str:
     return json.dumps(form, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
+# The type tag _json_form gives each value in a match digest, by exact type.
+# Each string is the type's module and qualified name as the type reported
+# them when checkpoints first stored digests, so a class that moves to
+# another module keeps its tag and every stored digest stays valid (#133).
+# The table holds every type a validated Match can hold outside played_at;
+# tests/test_digest_tags.py fails when a Match or GameFormat field's type
+# has no entry. A changed string changes stored digests.
+_DIGEST_TAGS: dict[type, str] = {
+    str: "builtins.str",
+    int: "builtins.int",
+    bool: "builtins.bool",
+    NoneType: "builtins.NoneType",
+    float: "builtins.float",
+    tuple: "builtins.tuple",
+    list: "builtins.list",
+    frozenset: "builtins.frozenset",
+    set: "builtins.set",
+    date: "datetime.date",
+    RatingFormat: "open_engine.engine.RatingFormat",
+    MatchType: "open_engine.engine.MatchType",
+    ScoringType: "open_engine.engine.ScoringType",
+    MatchStatus: "open_engine.engine.MatchStatus",
+    GameFormat: "open_engine.engine.GameFormat",
+}
+
+
 def _json_form(value: object) -> object:
     """
-    value as JSON data tagged with its exact type, recursing like _strict.
+    value as JSON data tagged with its exact type (the tag from _DIGEST_TAGS),
+    recursing like _strict.
 
     Ints are written in hex, which has no digit limit. A float is written as
     a number with negative zero folded into zero (as == does), or as its
@@ -155,7 +183,11 @@ def _json_form(value: object) -> object:
     their JSON text, so the form never depends on set order or the hash
     seed.
     """
-    tag = f"{type(value).__module__}.{type(value).__qualname__}"
+    tag = _DIGEST_TAGS.get(type(value))
+    if tag is None:
+        # A validated match never reaches this: every type it can hold is
+        # in _DIGEST_TAGS. Any other type keeps its module and name.
+        tag = f"{type(value).__module__}.{type(value).__qualname__}"
     if is_dataclass(value) and not isinstance(value, type):
         return [tag, [[f.name, _json_form(getattr(value, f.name))] for f in fields(type(value))]]
     if isinstance(value, (tuple, list)):
