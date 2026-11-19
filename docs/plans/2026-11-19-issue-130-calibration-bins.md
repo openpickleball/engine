@@ -31,3 +31,7 @@ Domain skills: superpowers:test-driven-development, invoke. Framework skills: no
 
 - Measured on `main`: one prediction with `expected = 0.3` gives `calibration == ((0.2, ...,1), (0.3, ..., 1))`.
 - The red test and the random comparison above.
+
+## As built
+
+Criterion 3 said the fits do not change. The fitted scale and the `fit_win_calibration` result do not, but `ScaleFit.fitted` and `ScaleFit.at_default` hold whole `EvaluationReport`s, so their calibration tables change the same way as `evaluate`'s. The changelog says so. The bin edges on `main` differed from `k / 10` at two indices: index 2 (`0.30000000000000004`, which put 0.3 in two bins) and index 7 (`0.7999999999999999`, which only a raw value of exactly that float could fall through; a scored `expected` is rounded to 5 places and never is).
