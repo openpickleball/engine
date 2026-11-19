@@ -31,12 +31,16 @@ Option 1. `seed_provisional_rating` in a category format returns the starting st
   - `state` docstring: drop "Use seed_provisional_rating to store it"; say where it stores and where it does not.
   - `seed_external_rating` docstring and the comment at the refresh: the refresh now applies to a stored unplayed derived state that a seed (`add_player`, replay seeds) or a loaded snapshot holds; drop the "(issue #112)" sentence that says such a state does not follow match changes, or restate it for seeds only.
   - `add_player` docstring and `_reserved_source_broken` docstring only where their text about "the engine's own states" becomes wrong.
-- `tests/test_category_seed_not_stored.py` (new): criteria 1, 2, 3, 6, plus `seed_external_rating(p, category)` after `seed_provisional_rating(p, category)` no longer needs `replace_unplayed_seed`.
+- `tests/test_category_seed_not_stored.py` (new, committed red and then frozen): criteria 1, 2, 3, plus `seed_external_rating(p, category)` after `seed_provisional_rating(p, category)` no longer needs `replace_unplayed_seed`.
+- `tests/test_category_seed_fuzz.py` (new): criterion 6. Random call sequences under random configs check that every snapshot loads and round trips. A second test seeds first, then records matches in date order with `seed_provisional_rating` calls between them that must store nothing, and checks that live equals a replay given the engine's own players, taken before the first match, as seeds (processed and reserved ids and every state). It is in its own file because the criterion 1 to 3 file was frozen after its red commit.
+- `tests/test_category_seed_import.py` (new): after `seed_provisional_rating(p, category)`, `seed_external_rating(p, category, ...)` is accepted with or without `replace_unplayed_seed`, with no doubles state, a dated doubles seed, or a played doubles state. The last is the issue #79 repro, now accepted through the public API, per the #79 decision that seeding a category format with no stored state stays allowed. A stored derived state from an `add_player` seed is still refused.
+- `tests/helpers.py` (new): `store_state`, which stores `engine.state(p, fmt)` with `engine._put_state` (documented as a state an earlier release's `seed_provisional_rating` stored), and `derived_seed`, a backend seed holding a doubles seed and its derived category state.
 - Existing tests that relied on `seed_provisional_rating` storing a category state (43 fail with the change; measured below). Each is updated to the new contract, not weakened:
   - Tests that assert the old storing behavior (`test_resume_after_changes.py` case "seed_provisional_rating creates a state", `test_read_only_lookups.py` "category with played parent") change to assert the new behavior (or use a non-category format where the test is about storing in general).
   - Tests that need a stored unplayed derived category state for another purpose get it through `add_player` with a seed-shaped state where the state is seed-shaped (`test_reseed_refreshes_derived.py`, `test_seed_keeps_open_history.py`, `test_reserved_provenance.py`, `test_reserved_provenance_shapes.py`, `test_seed_validation.py`, `test_future_seed.py`, `test_seed_sensitive_rejections.py`).
   - Snapshot-load tests whose state is not seed-shaped (`inherited_live_updates` nonzero, `rd_as_of` after the source date, undated derived with a played parent: `test_inherited_live_updates.py`, `test_inherited_rd_checks.py`, `test_addendum_review_fixes.py`) get it from one shared test helper that stores `engine.state(p, fmt)` with `engine._put_state`, documented as "a state an earlier release's seed_provisional_rating stored", since those snapshots must still load (criterion 5).
-  - Test helpers that set a category rating by assigning to the state `seed_provisional_rating` returned (`test_winprob.py`, `test_own_k.py`, `test_properties.py`, and any other the run finds) store it explicitly instead, so the assignment is not silently lost.
+  - Test helpers that set a category rating by assigning to the state `seed_provisional_rating` returned (`test_winprob.py`, `test_own_k.py`, `test_properties.py`) store it explicitly with `store_state` instead, so the assignment is not silently lost.
+  - Tests that still passed but whose setup no longer stored a category state get it explicitly: seeds carrying the state `state` returns (`test_seed_replay_pinned.py`, `test_external_seed_types.py`, `test_replay_resume.py`, `test_seed_provenance_entry_points.py`) or `store_state` (`test_snapshot_invariants.py`). `test_resume_after_changes.py` also gains a case for a category `seed_provisional_rating` that keeps the engine resumable. Stale test names in `test_seed_keeps_open_history.py`, `test_reserved_provenance.py`, and `test_read_only_lookups.py` are renamed to say what they test.
 - `CHANGELOG.md`: **Breaking:** entry under `## [Unreleased]` with Migration.
 - `README.md`: the `InvalidSeedError` refresh sentence and any line that says `seed_provisional_rating` stores in every format.
 
@@ -62,12 +66,12 @@ Option 1. `seed_provisional_rating` in a category format returns the starting st
 - Criterion 3: new live versus replay tests, one per path, with and without the category seed.
 - Criterion 4: rewritten `tests/test_reseed_refreshes_derived.py`.
 - Criterion 5: the existing snapshot rule tests, kept passing through the helper.
-- Criterion 6: the fuzz test.
+- Criterion 6: the fuzz test in `tests/test_category_seed_fuzz.py`. Its live-versus-replay test fails 39 of 60 runs on the engine before this change.
 - Live drive: run the issue's repros as scripts against the branch and show live equals both replays.
 
 Measured on main (e38aeca), scratch scripts in the session scratchpad:
 
-- Path 1: `live=4.0559 with=4.0559 without=4.1687 stored=yes`.
+- Path 1: `live=4.0559 with=4.0559 without=4.1800 stored=yes`. (An earlier scratch run recorded 4.1687 for "without"; it used a slightly different setup. The setup described in the issue gives 4.1800 on main and on the branch.)
 - Path 2: `live=3.6066 with=3.6066 without=2.5990 stored=yes`.
 - Comment case (`max_doubles_partner_gap=0.2`): live counts the mixed match (stale stored copy at 4.128), a replay from the engine's seeds rejects it (fresh doubles 3.705).
 - Applying only the `seed_provisional_rating` change on main: 43 failed, 3667 passed (the tests listed above).

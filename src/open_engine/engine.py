@@ -3297,7 +3297,7 @@ def _check_inherited_live_updates(
     plays, it also keeps the RD it was derived with, max(parent RD,
     category_seed_rd), and the parent's rd_as_of at derivation, which a
     played parent has set and never moves back. This engine no longer
-    stores an unplayed state with a nonzero count (issue #112): only an
+    creates an unplayed state with a nonzero count (issue #112): only an
     earlier release's seed_provisional_rating did. The unplayed rules
     accept such a state as that release stored it, so its snapshots still
     load.
@@ -4409,7 +4409,7 @@ class RatingEngine:
         parent's initial_source_date, and no imported reliability, external
         player id, or evidence reference; while such a state is unplayed,
         also an RD of at least category_seed_rd and an rd_as_of that is set
-        and no later than the parent state's. This engine no longer stores
+        and no later than the parent state's. This engine no longer creates
         an unplayed state with a nonzero inherited_live_updates (issue
         #112); these rules accept one as an earlier release's
         seed_provisional_rating stored it, so its snapshots still load.
@@ -4609,8 +4609,8 @@ class RatingEngine:
         seed fixes where that category starts: it does not follow later
         changes to the doubles state from matches, and an "open_provisional"
         one does not follow a later doubles seed either (only an unplayed
-        "open_parent:doubles" one is refreshed by a doubles reseed). Live
-        recording then equals only a replay given the same seed (issue
+        "open_parent:doubles" one is refreshed by a doubles reseed). A
+        replay without that seed can then differ from live recording (issue
         #112).
 
         Raises InvalidSeedError for a seed that breaks these rules (a seed
@@ -4785,14 +4785,14 @@ class RatingEngine:
         at least Config.category_seed_rd. Other category states, imported
         or provisional, are not changed. Such a stored derived state comes
         from a seed (add_player, replay seeds) or a loaded snapshot:
-        seed_provisional_rating does not store one (issue #112).An
+        seed_provisional_rating does not store one (issue #112). An
         unplayed category state that a seed (add_player, replay seeds) or a
         loaded snapshot holds fixes where that category starts: it does not
         follow later changes to the doubles state from matches, and an
         "open_provisional" one does not follow a later doubles seed either
         (only an unplayed "open_parent:doubles" one is refreshed by a
-        doubles reseed). Live recording then equals only a replay given the
-        same seed.
+        doubles reseed). A replay without that seed can then differ from
+        live recording.
         The seed's RD is always Config.external_seed_rd: an external
         reliability is kept for display (imported_reliability), never turned
         into OPEN RD. There is no reference date here, so a snapshot captured
