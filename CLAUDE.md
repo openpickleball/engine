@@ -10,7 +10,7 @@ The services and APIs that store players and matches and serve ratings live in t
 
 ## Current status
 
-The engine is a demonstration. Its methods have not been validated on real match data, its outputs are not OPEN ratings, and its API may change without notice. No OPEN rating is live. Keep that labeling in the README, the package description, the module docstrings, and the changelog.
+The engine is a demonstration. Its methods have not been validated on real match data, its outputs are not OPEN ratings, and its API may change without notice. No OPEN rating is live. Keep that labeling in the README, the package description, the module docstrings, `docs/behavior.md`, and the changelog.
 
 - `src/open_engine/engine.py`: enums and game formats, `Config`, `Match`, `Player`, `RatingEngine` with its snapshots (`to_snapshot`, `from_snapshot`), `replay` and resume from a snapshot, evaluation and calibration. Its docstrings state each public call's contract and name the `docs/behavior.md` section that holds its edge cases.
 - `src/open_engine/winprob.py`: game and match win probability and its calibration.

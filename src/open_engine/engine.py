@@ -22,8 +22,11 @@ docs/model.md states the rating model: each equation the engine uses, with the
 function it comes from. docs/behavior.md holds the published behavior notes
 (input types, errors, ledger order, duplicates, late matches, imbalance,
 reliability display, snapshots, and the rest) and the requirements the backend
-must meet. Each public docstring names the section of docs/behavior.md that
-holds its edge cases.
+must meet. Where a public docstring has edge cases, it names the section of
+docs/behavior.md that holds them. Neither page ships with the package. They are
+at https://github.com/openpickleball/engine/blob/main/docs/model.md and
+https://github.com/openpickleball/engine/blob/main/docs/behavior.md, and each
+docstring's "docs/behavior.md" means the second page.
 """
 
 from __future__ import annotations
@@ -1888,7 +1891,7 @@ class RejectionReason(_StrEnum):
     read the players' seeded ratings or dates, so record also keeps the
     players of an update rejected for one of them, and
     RatingEngine.seed_external_rating and RatingEngine.add_player refuse a
-    seed that could change it (see seed_external_rating).
+    seed that could change it (see docs/behavior.md, "External seeds").
     """
 
     DUPLICATE_MATCH_ID = "duplicate_match_id"
