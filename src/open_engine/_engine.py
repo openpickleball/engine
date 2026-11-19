@@ -1147,7 +1147,7 @@ class RatingEngine:
                 raw_delta = sign * player_k(state, cfg) * effective_weight * surprise
                 old_rating = state.rating
                 state.rating = max(cfg.min_rating, min(cfg.max_rating, old_rating + raw_delta))
-                if abs(state.rating - (old_rating + raw_delta)) > _CLAMP_TOLERANCE:
+                if abs((state.rating - old_rating) - raw_delta) > _CLAMP_TOLERANCE:
                     clamped.append(pid)
                 state.rd = max(
                     cfg.rd_min,
