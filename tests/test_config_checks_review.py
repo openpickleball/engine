@@ -325,17 +325,15 @@ class _OddInt(int):
         return "odd"
 
 
-def test_a_lookalike_scoring_type_in_a_format_is_stored_as_the_enum() -> None:
-    cfg = Config(
-        allowed_game_formats=frozenset({(_LooksLikeRally(), 11), (ScoringType.SIDE_OUT, 11)})  # type: ignore[arg-type]
-    )
-    plain = Config(
-        allowed_game_formats=frozenset({(ScoringType.RALLY, 11), (ScoringType.SIDE_OUT, 11)})
-    )
-    assert cfg.fingerprint() == plain.fingerprint()
-    assert hash(cfg) == hash(plain)
-    assert cfg == plain
-    assert all(type(scoring) is ScoringType for scoring, _ in cfg.allowed_game_formats)
+def test_a_lookalike_scoring_type_in_a_format_is_rejected() -> None:
+    # Since issue #145, a format's scoring item must be a member or exactly
+    # a str, checked by type before any of its own methods run.
+    formats = frozenset({(_LooksLikeRally(), 11), (ScoringType.SIDE_OUT, 11)})
+    with pytest.raises(
+        ConfigError,
+        match=re.escape("allowed_game_formats entries must be (scoring type, whole number) pairs"),
+    ):
+        Config(allowed_game_formats=formats)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("name", ["scale_by_scoring", "win_calibration_by_scoring"])

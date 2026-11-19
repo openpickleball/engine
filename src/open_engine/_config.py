@@ -68,6 +68,26 @@ class _FrozenMapping(Mapping[_K, _V]):
 
 
 _SCORING_VALUES = frozenset(ScoringType)
+_FORMAT_PAIRS = "allowed_game_formats entries must be (scoring type, whole number) pairs"
+
+
+def _format_scoring(value: object) -> ScoringType | None:
+    """An allowed_game_formats scoring item as a member: a member, or exactly a str naming one."""
+    if _is_member(value, ScoringType):
+        return cast(ScoringType, value)
+    if type(value) is str and value in _SCORING_VALUES:
+        return ScoringType(value)
+    return None
+
+
+def _format_points(value: object) -> int | None:
+    """An allowed_game_formats points item as a plain int, judged by its real type alone."""
+    real = type(value)
+    if real is bool or not issubclass(real, int):
+        return None
+    points = int.__int__(cast(int, value))
+    return points if _is_config_whole(points) else None
+
 
 # Config fields that hold a mapping. __post_init__ stores each as a read-only copy.
 _CONFIG_MAPPING_FIELDS = (
@@ -445,29 +465,39 @@ class Config:
         """
         Store allowed_game_formats as a frozenset of (ScoringType, int) pairs.
 
-        In order: it is a set or frozenset, then for each entry: it is a
-        tuple of two items, its first item is not a ScoringType that is not
-        a member, then it is a scoring type and a whole number.
+        In order: it is a set or frozenset, then every entry is a tuple of
+        two items, then no entry's first item is a ScoringType that is not a
+        member, then every entry is a scoring type (a member, or exactly a
+        str naming one) and a whole number (a real int, not a bool, finite
+        as a float), then every whole number is at least 1. Each step checks
+        every entry before the next starts, so the message does not depend
+        on set order, which can change with the hash seed (issue #145).
+        The container is judged by its real type, so a __class__ property
+        never runs, and is read once (a set or frozenset subclass's own
+        __iter__ can run). Every entry and item is judged by type() alone,
+        so no other caller code runs.
         """
-        if not isinstance(self.allowed_game_formats, (set, frozenset)):
+        if not issubclass(type(self.allowed_game_formats), (set, frozenset)):
             raise ConfigError("allowed_game_formats must be a set or frozenset")
         # Each entry is read once, through tuple's own methods, so a tuple
         # subclass cannot show the check one pair and the stored set another.
-        formats: set[tuple[ScoringType, int]] = set()
+        entries: list[tuple[object, object]] = []
         for entry in self.allowed_game_formats:
             if not (issubclass(type(entry), tuple) and tuple.__len__(entry) == 2):
-                raise ConfigError(
-                    "allowed_game_formats entries must be (scoring type, whole number) pairs"
-                )
-            entry_scoring = tuple.__getitem__(entry, 0)
+                raise ConfigError(_FORMAT_PAIRS)
+            entries.append((tuple.__getitem__(entry, 0), tuple.__getitem__(entry, 1)))
+        for entry_scoring, _ in entries:
             if type(entry_scoring) is ScoringType and not _is_member(entry_scoring, ScoringType):
                 raise ConfigError("allowed_game_formats has a ScoringType that is not a member")
-            entry_points = _plain_number(tuple.__getitem__(entry, 1))
-            if not (entry_scoring in _SCORING_VALUES and _is_config_whole(entry_points)):
-                raise ConfigError(
-                    "allowed_game_formats entries must be (scoring type, whole number) pairs"
-                )
-            formats.add((ScoringType(cast(str, entry_scoring)), cast(int, entry_points)))
+        formats: list[tuple[ScoringType, int]] = []
+        for entry_scoring, entry_points in entries:
+            scoring = _format_scoring(entry_scoring)
+            points = _format_points(entry_points)
+            if scoring is None or points is None:
+                raise ConfigError(_FORMAT_PAIRS)
+            formats.append((scoring, points))
+        if any(points < 1 for _, points in formats):
+            raise ConfigError("allowed_game_formats points must be at least 1")
         object.__setattr__(self, "allowed_game_formats", frozenset(formats))
 
     def _store_enum_mappings(self, pairs: dict[str, list[tuple[object, object]]]) -> None:
@@ -499,7 +529,8 @@ class Config:
         Check the stored mapping values.
 
         In order: scales, win calibration values, and match weights are
-        positive, then every allowed game format has a game length weight.
+        positive, then every allowed game format has a game length weight,
+        naming the shortest game length that has none.
         """
         if any(value <= 0 for value in self.scale_by_scoring.values()):
             raise ConfigError("scales must be positive")
@@ -507,7 +538,9 @@ class Config:
             raise ConfigError("win calibration values must be positive")
         if any(value <= 0 for value in self.match_weights.values()):
             raise ConfigError("match_weights values must be positive")
-        for _, points in self.allowed_game_formats:
+        # Stored points are plain ints, so sorting runs no caller code, and
+        # the shortest missing length is named whatever the set order.
+        for points in sorted({points for _, points in self.allowed_game_formats}):
             if points not in self.game_length_weights:
                 raise ConfigError(f"No game_length_weight for games to {points}")
 
@@ -976,17 +1009,31 @@ def _rebuilt_formats(value: object) -> frozenset[tuple[object, int]]:
     if type(value) is not frozenset and type(value) is not set:
         raise ConfigError(f"cfg.{name} must be exactly a frozenset or set, not {_type_name(value)}")
     rebuilt: set[tuple[object, int]] = set()
+    problems: list[str] = []
     # Iterating an exact set or frozenset calls no method of its entries.
+    # Every entry is checked, and the first problem in sorted order is
+    # raised, so the message does not depend on set order (issue #145).
     for entry in cast("set[object]", value):
-        if not (issubclass(type(entry), tuple) and tuple.__len__(cast(tuple[object], entry)) == 2):
-            raise ConfigError(f"cfg.{name} entries must be pairs, not {_type_name(entry)}")
-        pair = cast(tuple[object, object], entry)
-        scoring = _leaf_member(name, tuple.__getitem__(pair, 0), ScoringType)
-        points = _leaf_whole(name, tuple.__getitem__(pair, 1))
-        if type(scoring) is str:
-            raise ConfigError(f"cfg.{name} has an unknown scoring type")
-        rebuilt.add((scoring, points))
+        try:
+            rebuilt.add(_rebuilt_format(entry))
+        except ConfigError as exc:
+            problems.append(str(exc))
+    if problems:
+        raise ConfigError(min(problems))
     return frozenset(rebuilt)
+
+
+def _rebuilt_format(entry: object) -> tuple[object, int]:
+    """One stored allowed_game_formats entry as a plain pair, by its real types alone."""
+    name = "allowed_game_formats"
+    if not (issubclass(type(entry), tuple) and tuple.__len__(cast(tuple[object], entry)) == 2):
+        raise ConfigError(f"cfg.{name} entries must be pairs, not {_type_name(entry)}")
+    pair = cast(tuple[object, object], entry)
+    scoring = _leaf_member(name, tuple.__getitem__(pair, 0), ScoringType)
+    points = _leaf_whole(name, tuple.__getitem__(pair, 1))
+    if type(scoring) is str:
+        raise ConfigError(f"cfg.{name} has an unknown scoring type")
+    return (scoring, points)
 
 
 def _config_or_default(cfg: object) -> Config:
