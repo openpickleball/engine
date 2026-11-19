@@ -876,15 +876,20 @@ class Config:
     Every field is checked when the config is built, and any failure
     raises ConfigError. A number is an int or a float, never a bool, that
     is finite as a float: not NaN or infinite, and not an int too large to
-    convert. A whole number is an int that is also a number. An int or
-    float subclass is accepted in any number field, mapping value, game
-    length key, or allowed_game_formats points value: before any check,
-    the config stores the plain int or float of its own value
-    (int.__int__ or float.__float__, keeping an int as int and a float as
-    float), so the checks, fingerprint(), and rating code all read that
-    plain value (issue #107). fingerprint() reads the fields of Config
-    itself, not of the instance, so a subclass's extra fields do not
-    change it. So a built
+    convert. A whole number is an int that is also a number. Where a
+    number is allowed, an int or float subclass is accepted, and where a
+    whole number is required (the whole-number fields, game_length_weights
+    keys, and allowed_game_formats points), an int subclass is. Each is
+    converted to the plain int or float of its own value (int.__int__ or
+    float.__float__) before any range or cross-field check, and stored
+    that way, so for an exact Config the range checks, fingerprint(), and
+    rating code read that plain value (issue #107). A value whose
+    __class__ claims int or float while its real type is neither is
+    rejected. A Config subclass's own methods, such as an overriding
+    __post_init__, run unchecked, so a subclass can still store other
+    values (issue #118). fingerprint(), to_dict(), and from_dict() use the
+    fields of Config itself, not of the instance or a subclass, so a
+    subclass's extra fields do not change the fingerprint. So a built
     config always gives plain JSON, and fingerprint(), ==, and hash()
     never raise. The rules:
 
@@ -1104,8 +1109,9 @@ class Config:
         if type(self.version) is not str:
             raise ConfigError(must_be("version", "a str"))
         # Store every number as the plain int or float of its own value, so
-        # the checks, fingerprint(), and rating code all read the same value
-        # (issue #107). A bool or a non-number is kept for the checks below.
+        # the checks below, fingerprint(), and rating code read the same
+        # value (issue #107). A bool or a non-number is kept, and a spoofed
+        # number replaced, for the type checks below to reject.
         for name in _CONFIG_NUMBER_FIELDS + _CONFIG_WHOLE_FIELDS + _CONFIG_OPTIONAL_NUMBER_FIELDS:
             object.__setattr__(self, name, _plain_number(getattr(self, name)))
         for name in _CONFIG_NUMBER_FIELDS:
@@ -3244,8 +3250,9 @@ def _check_provenance(
     states, an external snapshot, and the ids and provenance strs checked
     here to be exact types (not subclasses), so a subclass of one of them
     cannot pass these provenance checks there and then load as different
-    values. Other seed fields can still hold number subclasses, which this
-    does not cover.
+    values. Number fields can hold an int or float subclass, but every
+    entry point checks and stores them as plain int or float values
+    (issue #107).
     """
     for fmt in sorted(states, key=lambda f: f.value):
         state = states[fmt]
@@ -4347,9 +4354,9 @@ class RatingEngine:
         str, not a subclass), RatingFormat values as format keys, ratings
         within min_rating and max_rating, RD within rd_min and rd_max, an imported
         reliability between 0 and 100, nonnegative int counts no larger
-        than 2**63 - 1 (an int or float subclass in a state's numbers or
-        the replay counts is checked and stored as the plain int or float
-        of its own value), replay_info present exactly when calculated_as_of
+        than 2**63 - 1 (an int or float subclass where a number is allowed,
+        or an int subclass for a count, is checked and stored as the plain
+        int or float of its own value), replay_info present exactly when calculated_as_of
         is and consistent with it (its net_rating_created a finite float,
         not a negative zero, for every RatingFormat, 0.0 for every format when matches_counted
         is 0 and for a format in which no player has a played state),
@@ -4521,11 +4528,13 @@ class RatingEngine:
           or finite floats (not bool), the counts are ints, partners and
           opponents are dicts, dates are dates, initial_source is a str,
           and initial_external_player_id and initial_evidence_reference
-          are each a str or None. An int or float subclass in one of these
-          number or count fields is accepted, and is checked and stored as
-          the plain int or float of its own value (int.__int__ or
-          float.__float__, issue #107). The caller's Player and RatingState
-          are not changed.
+          are each a str or None. An int or float subclass in rating, rd,
+          initial_rating, or an imported reliability, and an int subclass
+          in a count, is accepted, and is checked and stored as the plain
+          int or float of its own value (int.__int__ or float.__float__,
+          issue #107). A value whose __class__ claims int or float while
+          its real type is neither is rejected. The caller's Player and
+          RatingState are not changed.
         - initial_source is not blank or whitespace only, and neither is
           an initial_external_player_id or initial_evidence_reference
           that is set.
@@ -4774,7 +4783,8 @@ class RatingEngine:
         (not bool) within the rating bounds, and reliability is None or an int
         or finite float (not bool) between 0 and 100. An int or float
         subclass rating or reliability is checked and stored as the plain
-        int or float of its own value; the caller's snapshot is not
+        int or float of its own value, and a value whose __class__ only
+        claims int or float is rejected; the caller's snapshot is not
         changed. An external_player_id
         links the (source, external_player_id) pair to the player, and None
         links nothing. So every state seeded here passes the seed rules in
