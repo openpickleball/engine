@@ -31,7 +31,10 @@ Published behavior notes:
   enums exactly their class (a str equal to a member's value is
   rejected), flags exactly bool, a Config exactly a Config, and a
   GameFormat exactly a GameFormat, each holding nothing in its instance
-  __dict__ but its own fields. Match.played_at, when set, must be exactly
+  __dict__ but its own fields. An entry point that takes a Config builds a
+  fresh copy from its stored field values, checked again as Config(...)
+  checks them, and uses only that copy (issue #122; see Config).
+  Match.played_at, when set, must be exactly
   a datetime whose tzinfo is exactly datetime.timezone or exactly
   zoneinfo.ZoneInfo (standard library C code that runs no caller code;
   its offsets come from its tz data, the tz database or the file given to
@@ -50,8 +53,11 @@ Published behavior notes:
   conversion stays. replay and the evaluation functions read the matches
   and seed_players iterables once, into lists, before any row is checked.
   A snapshot passed in memory must use exactly dict for every object and
-  exactly list or tuple for every list. Config and GameFormat built
-  exactly and then rewritten with object.__setattr__ are not checked.
+  exactly list or tuple for every list. A Config built exactly and then
+  rewritten with object.__setattr__ is rebuilt from its field values at
+  each entry point that takes it, so a rewritten value is checked again
+  (issue #122). A GameFormat's field values are checked again, by type
+  and by GameFormat's own rules, each time an entry point reads it.
 - Each player moves by their own K (from their RD after inactivity):
   `sign * K * effective_weight * surprise`. A partner's or opponent's
   uncertainty never changes a player's step. Team average movement is not
@@ -509,6 +515,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import UTC, date, datetime, timedelta, timezone
 from enum import Enum, StrEnum
+from types import MemberDescriptorType
 from typing import Literal, TypeGuard, TypeVar, cast
 from zoneinfo import ZoneInfo
 
@@ -1019,8 +1026,31 @@ class Config:
     fit_scale, fit_win_calibration, and reliability) raises ConfigError
     for a subclass, for any other object that is not None (a falsy one
     included), and for an exact Config whose instance __dict__ holds
-    anything but its fields (issue #118). fingerprint(), to_dict(), and
-    from_dict() use the fields of Config itself, not of the instance or a
+    anything but its fields (issue #118). An exact Config can still be
+    rewritten with object.__setattr__ after it was built, so each of those
+    entry points builds a fresh Config from the given one's stored field
+    values (issue #122) and uses only that copy. Every check and the
+    plain-value conversion run again: a rewritten value Config would reject
+    raises ConfigError, and an int or float subclass becomes its plain
+    value. Each stored value is read by its real type alone, so no caller
+    code runs while the copy is built. A mapping field must hold exactly a
+    dict, or exactly the read-only copy a Config stores holding exactly a
+    dict, with keys that are enum members or exact strs (game length keys
+    real ints) and values that are numbers; allowed_game_formats must be
+    exactly a frozenset or set of real tuple pairs, each a ScoringType
+    member or exact str and a real int; and a scalar field an exact bool,
+    an exact str, None, or a real int or float. Anything else raises
+    ConfigError. RatingEngine.cfg is that copy and is never the given
+    object. For a Config that was not rewritten, the copy is equal to it
+    and has the same fingerprint. For a rewritten one it can differ, since
+    the rewritten object's own methods read what it holds, not its real
+    values. Compare configs with == or fingerprint(), not is. The engine
+    trusts its own stored copy: rewriting it after the call is outside the
+    threat model. A caller's Config rewritten while replay or an evaluation
+    function reads matches and seed_players is rebuilt too, since those
+    build the copy after they read them. fingerprint(), to_dict(), and == called on a rewritten
+    Config itself read its rewritten values. fingerprint(),
+    to_dict(), and from_dict() use the fields of Config itself, not of the instance or a
     subclass, so a subclass's extra fields do not change the fingerprint. So a built
     config always gives plain JSON, and fingerprint(), ==, and hash()
     never raise. The rules:
@@ -1599,6 +1629,23 @@ def _config_enum_key(key: object, kind: type[Enum], name: str) -> Enum | None:
 
 def _require_config(cfg: object) -> Config:
     """
+    A rebuilt copy of cfg when it is exactly a Config with only its fields.
+
+    Raises ConfigError otherwise, or when the rebuild does (see
+    _rebuilt_config). An entry point that drains a caller iterable calls it
+    only after it has read matches and seed_players (issue #122), with
+    _config_shape as its early check.
+    """
+    return _rebuilt_config(_config_shape_checked(cfg))
+
+
+def _config_shape(cfg: object) -> Config | None:
+    """None for None, else cfg after the type and field checks, not rebuilt."""
+    return None if cfg is None else _config_shape_checked(cfg)
+
+
+def _config_shape_checked(cfg: object) -> Config:
+    """
     cfg when it is exactly a Config with only its fields; ConfigError otherwise.
 
     A subclass can run its own methods: store a value after __post_init__
@@ -1618,6 +1665,136 @@ def _require_config(cfg: object) -> Config:
     ):
         raise ConfigError("cfg has attributes that are not Config fields")
     return cfg
+
+
+# The _data slot of _FrozenMapping, read without calling any method of the
+# object that holds it (issue #122).
+_FROZEN_DATA = cast(MemberDescriptorType, vars(_FrozenMapping)["_data"])
+
+
+# The enum each enum-keyed Config mapping field is keyed by.
+_CONFIG_ENUM_KEYS: dict[str, type[Enum]] = {
+    "scale_by_scoring": ScoringType,
+    "win_calibration_by_scoring": ScoringType,
+    "match_weights": MatchType,
+}
+
+
+def _leaf_value(name: str, value: object) -> object:
+    """
+    One stored Config leaf as a plain value, judged by its real type alone.
+
+    An exact bool, an exact str, and None are kept; a real int or float
+    subclass becomes the plain int or float of its own value. Anything else
+    raises ConfigError. Only type(), issubclass(), and int's and float's own
+    methods run, so no caller code does (issue #122). Config(...) then
+    checks the plain value as it checks a constructor argument.
+    """
+    real = type(value)
+    if real is bool or real is str or value is None:
+        return value
+    if issubclass(real, int):
+        return int.__int__(cast(int, value))
+    if issubclass(real, float):
+        return float.__float__(cast(float, value))
+    raise ConfigError(f"cfg.{name} must hold a plain value, not {_type_name(value)}")
+
+
+def _leaf_member(name: str, value: object, kind: type[Enum]) -> object:
+    """
+    A stored enum key or scoring entry: a member by identity, or an exact str.
+
+    An exact str naming a member becomes that member; any other exact str
+    is kept for Config(...) to reject. Anything else raises ConfigError
+    without running its code.
+    """
+    if _is_member(value, kind):
+        return value
+    if type(value) is str:
+        return {member.value: member for member in kind}.get(value, value)
+    raise ConfigError(f"cfg.{name} has a key or entry of type {_type_name(value)}")
+
+
+def _leaf_whole(name: str, value: object) -> int:
+    """A stored game length key or format points: a real int, not a bool, as a plain int."""
+    real = type(value)
+    if real is bool or not issubclass(real, int):
+        raise ConfigError(f"cfg.{name} must hold whole numbers, not {_type_name(value)}")
+    return int.__int__(cast(int, value))
+
+
+def _rebuilt_config(cfg: Config) -> Config:
+    """
+    A fresh Config built from cfg's stored field values (issue #122).
+
+    cfg passed _require_config, so its instance __dict__ is an exact dict
+    holding exactly its fields. object.__setattr__ can still rewrite a
+    field after __post_init__ checked it, so every field value goes through
+    Config(...) again: every check and the plain-value conversion (#107)
+    run on it. First every leaf becomes a plain value by its real type
+    alone (_leaf_value, _leaf_member, _leaf_whole), so no caller code runs
+    here or in Config(...). A mapping field must hold exactly a dict, or
+    exactly a _FrozenMapping whose _data slot holds exactly a dict, read
+    through the slot descriptor; its keys are enum members or exact strs
+    (game length keys real ints), and two keys that become one raise.
+    allowed_game_formats must be exactly a frozenset or set of real tuple
+    entries, read through tuple's own methods. Anything else raises
+    ConfigError. The result shares nothing with cfg.
+    """
+    held = vars(cfg)
+    values: dict[str, object] = {}
+    for f in fields(Config):
+        name = f.name
+        value = held[name]
+        if name in _CONFIG_MAPPING_FIELDS:
+            values[name] = _rebuilt_mapping(name, value)
+        elif name == "allowed_game_formats":
+            values[name] = _rebuilt_formats(value)
+        else:
+            values[name] = _leaf_value(name, value)
+    try:
+        return Config(**values)  # type: ignore[arg-type]
+    except TypeError as exc:
+        raise ConfigError(f"cfg has a value of the wrong type: {exc}") from exc
+
+
+def _rebuilt_mapping(name: str, value: object) -> dict[object, object]:
+    """A stored Config mapping field as a new dict of plain keys and values."""
+    if type(value) is _FrozenMapping:
+        try:
+            value = _FROZEN_DATA.__get__(value, _FrozenMapping)
+        except AttributeError:
+            raise ConfigError(f"cfg.{name} has no stored mapping") from None
+    if type(value) is not dict:
+        raise ConfigError(f"cfg.{name} must hold exactly a dict, not {_type_name(value)}")
+    kind = _CONFIG_ENUM_KEYS.get(name)
+    rebuilt: dict[object, object] = {}
+    # dict.items of an exact dict reads no key or value method.
+    for key, item in dict.items(cast("dict[object, object]", value)):
+        plain = _leaf_whole(name, key) if kind is None else _leaf_member(name, key, kind)
+        if plain in rebuilt:
+            raise ConfigError(f"cfg.{name} repeats a key")
+        rebuilt[plain] = _leaf_value(name, item)
+    return rebuilt
+
+
+def _rebuilt_formats(value: object) -> frozenset[tuple[object, int]]:
+    """The stored allowed_game_formats as a new frozenset of plain pairs."""
+    name = "allowed_game_formats"
+    if type(value) is not frozenset and type(value) is not set:
+        raise ConfigError(f"cfg.{name} must be exactly a frozenset or set, not {_type_name(value)}")
+    rebuilt: set[tuple[object, int]] = set()
+    # Iterating an exact set or frozenset calls no method of its entries.
+    for entry in cast("set[object]", value):
+        if not (issubclass(type(entry), tuple) and tuple.__len__(cast(tuple[object], entry)) == 2):
+            raise ConfigError(f"cfg.{name} entries must be pairs, not {_type_name(entry)}")
+        pair = cast(tuple[object, object], entry)
+        scoring = _leaf_member(name, tuple.__getitem__(pair, 0), ScoringType)
+        points = _leaf_whole(name, tuple.__getitem__(pair, 1))
+        if type(scoring) is str:
+            raise ConfigError(f"cfg.{name} has an unknown scoring type")
+        rebuilt.add((scoring, points))
+    return frozenset(rebuilt)
 
 
 def _config_or_default(cfg: object) -> Config:
@@ -2817,12 +2994,24 @@ def reliability(state: RatingState, cfg: Config, as_of: date) -> float:
     is exactly an int or float that is finite as a float, rd_as_of None or
     exactly a date, and partners and opponents exactly dicts with exactly
     str keys and exactly date values; ConfigError unless cfg is exactly a
-    Config with only its fields; and ReferenceDateError unless as_of is
+    Config with only its fields (it is rebuilt from its field values, see
+    Config, so a rewritten value it rejects raises too); and
+    ReferenceDateError unless as_of is
     exactly a date. An rd too large to inflate for inactivity raises
     EvaluationError too, instead of OverflowError.
     """
     _check_reliability_state(state)
-    _require_config(cfg)
+    return _reliability(state, _require_config(cfg), as_of)
+
+
+def _reliability(state: RatingState, cfg: Config, as_of: date) -> float:
+    """
+    reliability under a checked Config, with the same state and as_of checks.
+
+    The engine's own callers (player_summary) pass self.cfg, the copy
+    already rebuilt, so it is not rebuilt on every call.
+    """
+    _check_reliability_state(state)
     if not _is_plain_date(as_of):
         raise ReferenceDateError(f"reliability as_of must be a date, not {_type_name(as_of)}")
     try:
@@ -4635,8 +4824,16 @@ class RatingEngine:
 
         Raises ConfigError unless cfg is None or exactly a Config (not a
         subclass) holding only its own fields, before anything is built.
+        The engine keeps a fresh copy of cfg, rebuilt from its field values
+        and checked again as Config(...) checks them (issue #122), so
+        self.cfg is never cfg. For a Config that was not rewritten after it
+        was built, self.cfg equals cfg and has the same fingerprint.
         """
-        self.cfg = _config_or_default(cfg)
+        self._start(_config_or_default(cfg))
+
+    def _start(self, cfg: Config) -> None:
+        """Set every attribute of an empty engine under an already checked cfg."""
+        self.cfg = cfg
         self.players: dict[str, Player] = {}
         self.processed_match_ids: set[str] = set()
         # match_id of each match record considered and did not count. A later
@@ -4805,7 +5002,9 @@ class RatingEngine:
         cfg must be the Config the snapshot was taken under (default
         Config()): its version and fingerprint must equal the snapshot's.
         cfg must be None or exactly a Config with no attributes beyond its
-        fields, or it raises ConfigError before the snapshot is read.
+        fields, or it raises ConfigError before the snapshot is read. The
+        engine keeps a copy of cfg rebuilt from its field values (see
+        Config), and the fingerprint check reads that copy.
         The whole snapshot is validated before anything is built: exactly
         a dict for every object and exactly a list or tuple for every list
         (another container type, a dict subclass included, is rejected),
@@ -4935,19 +5134,7 @@ class RatingEngine:
         snapshot.
         """
         engine = cls(cfg)
-        state = _read_snapshot(snapshot, engine.cfg)
-        engine.players = state.players
-        engine.processed_match_ids = state.processed_match_ids
-        engine._reserved_match_ids = state.reserved_match_ids
-        engine.self_reported_log = state.self_reported_log
-        engine._content_keys = state.content_keys
-        engine.possible_duplicates = state.possible_duplicates
-        engine.calculated_as_of = state.calculated_as_of
-        engine.replay_info = state.replay_info
-        engine._ledger_digests = state.ledger_digests
-        engine._ledger_player_ids = state.ledger_player_ids
-        engine._seed_sensitive_rejections = state.seed_sensitive_rejections
-        engine._resumable = state.resumable
+        _load_snapshot(engine, snapshot)
         return engine
 
     # -- players and identity ------------------------------------------------
@@ -6031,7 +6218,7 @@ class RatingEngine:
         if as_of is None and state.last_played is not None:
             reference = max(reference, state.last_played)
         connectivity = self._connectivity_of(player_id, rating_format, reference)
-        earned = reliability(state, cfg, reference)
+        earned = _reliability(state, cfg, reference)
         cap = cfg.connectivity_reliability_cap
         if cap is not None and not connectivity.connected:
             # The cap as displayed, 1 place, never above the cap itself.
@@ -6116,6 +6303,30 @@ class RatingEngine:
 # ---------------------------------------------------------------------------
 
 
+def _engine_under(cfg: Config) -> RatingEngine:
+    """An empty engine under cfg, already checked and rebuilt: no second rebuild."""
+    engine = RatingEngine.__new__(RatingEngine)
+    engine._start(cfg)
+    return engine
+
+
+def _load_snapshot(engine: RatingEngine, snapshot: object) -> None:
+    """Load a snapshot, checked under engine.cfg, into a new empty engine."""
+    state = _read_snapshot(snapshot, engine.cfg)
+    engine.players = state.players
+    engine.processed_match_ids = state.processed_match_ids
+    engine._reserved_match_ids = state.reserved_match_ids
+    engine.self_reported_log = state.self_reported_log
+    engine._content_keys = state.content_keys
+    engine.possible_duplicates = state.possible_duplicates
+    engine.calculated_as_of = state.calculated_as_of
+    engine.replay_info = state.replay_info
+    engine._ledger_digests = state.ledger_digests
+    engine._ledger_player_ids = state.ledger_player_ids
+    engine._seed_sensitive_rejections = state.seed_sensitive_rejections
+    engine._resumable = state.resumable
+
+
 def replay(
     matches: Iterable[Match],
     seed_players: Iterable[Player] = (),
@@ -6142,9 +6353,13 @@ def replay(
     first, before whole_ledger, from_snapshot, the ledger rows, and the
     seeds. Then it raises SnapshotError for a whole_ledger that is not
     exactly a bool, and ConfigError unless cfg is None or exactly a Config
-    with only its fields, before from_snapshot is read. It reads matches
-    and seed_players once each, into lists, before any row or seed is
-    checked.
+    with only its fields, before matches, seed_players, and from_snapshot
+    are read. It reads matches and seed_players once each, into lists,
+    before any row or seed is checked. Only after reading them is cfg
+    rebuilt from its field values (see Config), so a
+    rewritten value it rejects raises ConfigError too, even one rewritten
+    while those iterables were read, and the result's cfg, replay_info
+    fingerprint, and snapshots come from that copy.
 
     Raises InvalidSeedError for a seed state that breaks the seed rules (see
     add_player) or whose initial_source_date is after as_of, and PlayerError
@@ -6202,11 +6417,14 @@ def replay(
         raise SnapshotError(f"whole_ledger must be a bool, not {_type_name(whole_ledger)}")
     if whole_ledger and from_snapshot is None:
         raise SnapshotError("whole_ledger needs from_snapshot: it only applies to a resume")
-    checked = _config_or_default(cfg)
+    shape = _config_shape(cfg)
     # Read each caller iterable once, before any row or seed is checked, so
     # a generator cannot change a row between its check and its use.
     rows = list(matches)
     seeds = list(seed_players)
+    # The copy is built only now, after matches and seed_players are read:
+    # a generator above could rewrite any Config it reaches (issue #122).
+    checked = _config_or_default(shape)
     start = None
     if from_snapshot is not None:
         start = _resume_start(from_snapshot, checked, as_of)
@@ -6222,9 +6440,14 @@ def replay(
     )
 
 
-def _resume_start(snapshot: Mapping[str, object], cfg: Config | None, as_of: date) -> RatingEngine:
-    """The engine a resumed replay starts from. SnapshotError when it cannot resume."""
-    engine = RatingEngine.from_snapshot(snapshot, cfg)
+def _resume_start(snapshot: Mapping[str, object], cfg: Config, as_of: date) -> RatingEngine:
+    """
+    The engine a resumed replay starts from. SnapshotError when it cannot resume.
+
+    cfg is the copy replay already rebuilt, so it is not rebuilt again.
+    """
+    engine = _engine_under(cfg)
+    _load_snapshot(engine, snapshot)
     checkpoint = engine.calculated_as_of
     if checkpoint is None:
         raise SnapshotError("Cannot resume: the snapshot is not from a replay")
@@ -6252,7 +6475,7 @@ def _replay(
     matches: Iterable[Match],
     seed_players: Iterable[Player],
     *,
-    cfg: Config | None,
+    cfg: Config,
     as_of: date,
     check_seed_dates: bool,
     track: bool,
@@ -6268,11 +6491,12 @@ def _replay(
     replay records what a checkpoint needs (row digests), since hashing
     every row in every window would slow evaluation for nothing.
 
-    start is a checked checkpoint engine (see _resume_start). Every row is
+    cfg is a checked, rebuilt Config, used as it is. start is a checked
+    checkpoint engine (see _resume_start). Every row is
     checked against its digests before any row is recorded, and only rows
     dated after its checkpoint are recorded.
     """
-    engine = RatingEngine(cfg) if start is None else start
+    engine = _engine_under(cfg) if start is None else start
     named_before = frozenset(engine._ledger_player_ids)
     held = engine._held_identities()
     for player in seed_players:
@@ -6446,7 +6670,7 @@ def _check_evaluation_arguments(
     mode: object,
     score_from: object,
     anchor: object,
-) -> Config:
+) -> Config | None:
     """
     The checked Config for the evaluation functions; raise for a bad argument.
 
@@ -6454,7 +6678,9 @@ def _check_evaluation_arguments(
     the str "live" or "scheduled"), scoring (None or exactly a
     ScoringType), and burn_in_matches (exactly an int) raise
     EvaluationError, then cfg (None or exactly a Config with only its
-    fields) raises ConfigError.
+    fields) raises ConfigError. Returns None for None, else cfg itself, not
+    yet rebuilt: the caller drains its iterables first, then builds the
+    copy with _config_or_default (issue #122).
     """
     for name, value in (("score_from", score_from), ("anchor", anchor)):
         if value is not None and not _is_plain_date(value):
@@ -6467,7 +6693,7 @@ def _check_evaluation_arguments(
         )
     if not _is_exact_int(burn_in_matches):
         raise EvaluationError(f"burn_in_matches must be an int, not {_type_name(burn_in_matches)}")
-    return _config_or_default(cfg)
+    return _config_shape(cfg)
 
 
 def prequential_predictions(
@@ -6516,10 +6742,44 @@ def prequential_predictions(
     ScoringType, and burn_in_matches exactly an int (a bool or a subclass
     is rejected), or it raises EvaluationError; and cfg must be None or
     exactly a Config with only its fields, or it raises ConfigError. It
-    reads matches and seed_players once each, into lists, before any row
-    or seed is checked.
+    reads matches and seed_players once each, into lists, before any row or
+    seed is checked. Only then is cfg rebuilt from its field values (see
+    Config), so a rewritten value it rejects raises ConfigError too, even
+    one rewritten while those iterables were read.
     """
-    cfg = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
+    shape = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
+    rows = list(matches)
+    seeds = list(seed_players)
+    return _prequential(
+        rows,
+        seeds,
+        cfg=_config_or_default(shape),
+        scoring=scoring,
+        burn_in_matches=burn_in_matches,
+        mode=mode,
+        score_from=score_from,
+        anchor=anchor,
+    )
+
+
+def _prequential(
+    matches: Iterable[Match],
+    seed_players: Iterable[Player],
+    *,
+    cfg: Config,
+    scoring: ScoringType | None,
+    burn_in_matches: int,
+    mode: PredictionMode,
+    score_from: date | None,
+    anchor: date | None,
+) -> list[PrequentialPrediction]:
+    """
+    prequential_predictions after its argument checks.
+
+    cfg is a checked, rebuilt Config (or a fit_scale trial built with
+    Config(...)), used as it is: the scratch, live, and window engines do
+    not rebuild it again.
+    """
     # Read each caller iterable once, before any row or seed is checked, so
     # a generator cannot change a row between its check and its use.
     rows = list(matches)
@@ -6531,7 +6791,7 @@ def prequential_predictions(
     # add_player on a scratch engine applies every seed check, against the
     # earlier seeds too, in the same order and with the same messages, so
     # both modes reject the same seeds before any rating work.
-    scratch = RatingEngine(cfg)
+    scratch = _engine_under(cfg)
     held = scratch._held_identities()
     for player in seeds:
         scratch._add_seed(player, held)
@@ -6552,7 +6812,7 @@ def prequential_predictions(
             predictions.append(prediction)
 
     if mode == "live":
-        engine = RatingEngine(cfg)
+        engine = _engine_under(cfg)
         held = engine._held_identities()
         for player in seeds:
             engine._add_seed(player, held)
@@ -6613,18 +6873,21 @@ def evaluate(
     argument as prequential_predictions does, in the same order, for an
     empty ledger too.
     """
-    cfg = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
-    predictions = prequential_predictions(
-        matches,
-        seed_players,
-        cfg=cfg,
+    shape = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
+    rows = list(matches)
+    seeds = list(seed_players)
+    checked = _config_or_default(shape)
+    predictions = _prequential(
+        rows,
+        seeds,
+        cfg=checked,
         scoring=scoring,
         burn_in_matches=burn_in_matches,
         mode=mode,
         score_from=score_from,
         anchor=anchor,
     )
-    return _report_from_predictions(predictions, cfg, scoring)[0]
+    return _report_from_predictions(predictions, checked, scoring)[0]
 
 
 def _scored_pairs(
@@ -6767,21 +7030,25 @@ def fit_scale(
     goes through dataclasses.replace.
     """
     _check_search_bounds(low, high, tolerance)
-    cfg = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
+    shape = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
     _check_fit_scoring(scoring)
     ledger = list(matches)
     seeds = list(seed_players)
+    # Built after matches and seed_players are read (issue #122).
+    checked = _config_or_default(shape)
     cache: dict[float, tuple[EvaluationReport, float]] = {}
     # The trial configs are built from the fields of Config itself, read off
     # the checked exact Config, never through dataclasses.replace, which
     # reads the instance's own __dataclass_fields__ and __class__.
-    base = {f.name: getattr(cfg, f.name) for f in fields(Config)}
+    base = {f.name: getattr(checked, f.name) for f in fields(Config)}
 
     def run(scale: float) -> tuple[EvaluationReport, float]:
         key = round(scale, 6)
         if key not in cache:
-            trial = Config(**{**base, "scale_by_scoring": {**cfg.scale_by_scoring, scoring: scale}})
-            predictions = prequential_predictions(
+            trial = Config(
+                **{**base, "scale_by_scoring": {**checked.scale_by_scoring, scoring: scale}}
+            )
+            predictions = _prequential(
                 ledger,
                 seeds,
                 cfg=trial,
@@ -6814,7 +7081,7 @@ def fit_scale(
             break  # the bracket hit float spacing above a tiny tolerance
     fitted_scale = round((a + b) / 2, 3)
 
-    default_scale = cfg.scale_by_scoring[scoring]
+    default_scale = checked.scale_by_scoring[scoring]
     fitted = run(fitted_scale)[0]
     at_default = run(default_scale)[0]
     return ScaleFit(
@@ -6870,12 +7137,14 @@ def fit_win_calibration(
     order, for an empty ledger too.
     """
     _check_search_bounds(low, high, tolerance)
-    cfg = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
+    shape = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
     _check_fit_scoring(scoring)
-    predictions = prequential_predictions(
-        matches,
-        seed_players,
-        cfg=cfg,
+    rows = list(matches)
+    seeds = list(seed_players)
+    predictions = _prequential(
+        rows,
+        seeds,
+        cfg=_config_or_default(shape),
         scoring=scoring,
         burn_in_matches=burn_in_matches,
         mode=mode,

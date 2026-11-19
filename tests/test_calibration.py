@@ -235,7 +235,7 @@ def _synthetic_predictions(raws: list[float], wins: list[bool]) -> list[Prequent
 
 
 def _patch_predictions(monkeypatch: pytest.MonkeyPatch, preds: list[PrequentialPrediction]) -> None:
-    monkeypatch.setattr(engine_module, "prequential_predictions", lambda *a, **k: preds)
+    monkeypatch.setattr(engine_module, "_prequential", lambda *a, **k: preds)
 
 
 def test_fit_win_calibration_recovers_distortion(monkeypatch):
@@ -307,7 +307,7 @@ def test_fit_scale_picks_lower_unrounded_mse_when_rounded_values_tie(monkeypatch
             for i in range(n)
         ]
 
-    monkeypatch.setattr(engine_module, "prequential_predictions", fake_predictions)
+    monkeypatch.setattr(engine_module, "_prequential", fake_predictions)
     cfg = Config(win_weight=0.0)
     fit = fit_scale([], cfg=cfg, scoring=ScoringType.RALLY)
     assert abs(fit.scale - 5.0) <= 0.05
@@ -344,7 +344,7 @@ def test_fit_scale_rejects_bad_search_arguments(
 ) -> None:
     # tolerance <= 0 could hang the golden-section loop, and low >= high
     # could return a fit from a meaningless search range.
-    monkeypatch.setattr(engine_module, "prequential_predictions", _no_prediction_work)
+    monkeypatch.setattr(engine_module, "_prequential", _no_prediction_work)
     with pytest.raises(EvaluationError, match=message):
         fit_scale([], scoring=ScoringType.RALLY, **kwargs)
 
@@ -353,7 +353,7 @@ def test_fit_scale_rejects_bad_search_arguments(
 def test_fit_win_calibration_rejects_bad_search_arguments(
     monkeypatch: pytest.MonkeyPatch, kwargs: dict[str, float], message: str
 ) -> None:
-    monkeypatch.setattr(engine_module, "prequential_predictions", _no_prediction_work)
+    monkeypatch.setattr(engine_module, "_prequential", _no_prediction_work)
     with pytest.raises(EvaluationError, match=message):
         fit_win_calibration([], **kwargs)
 
@@ -363,7 +363,7 @@ def test_fit_scale_ends_when_tolerance_is_below_float_spacing(
 ) -> None:
     # A positive tolerance below the float spacing near the optimum could
     # hang: the bracket can stop shrinking before it gets that narrow.
-    monkeypatch.setattr(engine_module, "prequential_predictions", lambda *a, **k: [])
+    monkeypatch.setattr(engine_module, "_prequential", lambda *a, **k: [])
 
     def fake_report(predictions: object, cfg: Config, scoring: ScoringType) -> tuple[None, float]:
         return None, (cfg.scale_by_scoring[scoring] - 3.1234567) ** 2
