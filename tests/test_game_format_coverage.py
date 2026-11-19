@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from open_engine import (
+    ConfigError,
     GameFormat,
     InvalidMatchError,
     Match,
@@ -22,7 +23,7 @@ BASE = Match("syn-m1", ("syn-a",), ("syn-b",), ((11, 5),), ON, RatingFormat.SING
 
 
 class _Int(int):
-    """An int subclass, accepted like int."""
+    """An int subclass, rejected since issue #116: it could override comparison."""
 
 
 def _engine() -> RatingEngine:
@@ -40,22 +41,23 @@ def _engine() -> RatingEngine:
         pytest.param({"cap": 15}, {"cap": _Int(15)}, id="cap"),
     ],
 )
-def test_an_int_subclass_rates_and_predicts_like_the_int(
+def test_an_int_subclass_is_rejected_where_the_int_rates(
     plain: dict[str, Any], subclass: dict[str, Any]
 ):
-    results = []
-    predictions = []
-    for changes in (plain, subclass):
-        fmt = GameFormat(**changes)
-        engine = _engine()
-        predictions.append(
-            engine.predict_win_probability(("syn-a",), ("syn-b",), RatingFormat.SINGLES, fmt, 3)
-        )
-        result = engine.record(dataclasses.replace(BASE, game_format=fmt))
-        assert result.counted
-        results.append((result.deltas, engine.to_snapshot()))
-    assert predictions[0] == predictions[1]
-    assert results[0] == results[1]
+    engine = _engine()
+    fmt = GameFormat(**plain)
+    engine.predict_win_probability(("syn-a",), ("syn-b",), RatingFormat.SINGLES, fmt, 3)
+    assert engine.record(dataclasses.replace(BASE, game_format=fmt)).counted
+
+    engine = _engine()
+    before = engine.to_snapshot()
+    bad = GameFormat(**subclass)
+    name = next(iter(subclass))
+    with pytest.raises(ConfigError, match=f"^{name} must be an int.*, not _Int$"):
+        engine.predict_win_probability(("syn-a",), ("syn-b",), RatingFormat.SINGLES, bad, 3)
+    with pytest.raises(InvalidMatchError, match=f"^{name} must be an int.*, not _Int$"):
+        engine.record(dataclasses.replace(BASE, game_format=bad))
+    assert engine.to_snapshot() == before
 
 
 def _valid(i: int) -> Match:

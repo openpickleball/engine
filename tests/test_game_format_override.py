@@ -1,8 +1,9 @@
-"""Match.validate runs a GameFormat's own validate (issue #88 review).
+"""A GameFormat subclass that overrides validate is rejected (issue #116).
 
-A GameFormat subclass may add rules by overriding validate. A ConfigError it
-raises reaches a match as InvalidMatchError with the same message. All ids
-are synthetic.
+Before issue #116, Match.validate ran a subclass's own validate (issue #88
+review). A subclass can also override a field with a property that runs
+caller code, so a match now needs exactly a GameFormat, and the override
+never runs. All ids are synthetic.
 """
 
 from __future__ import annotations
@@ -29,23 +30,32 @@ BASE = Match("syn-m1", ("syn-a",), ("syn-b",), ((11, 5),), ON, RatingFormat.SING
 class _StrictFormat(GameFormat):
     """A synthetic format with one extra rule."""
 
+    calls = 0
+
     def validate(self) -> None:
-        super().validate()
+        _StrictFormat.calls += 1
         raise ConfigError("syn rule")
 
 
-def test_match_validate_raises_the_override_as_invalid_match_error():
+SUBCLASS = "^game_format must be a GameFormat, not _StrictFormat$"
+
+
+def test_match_validate_rejects_the_subclass_before_its_validate():
     row = dataclasses.replace(BASE, game_format=_StrictFormat())
-    with pytest.raises(InvalidMatchError, match="^syn rule$"):
+    calls = _StrictFormat.calls
+    with pytest.raises(InvalidMatchError, match=SUBCLASS):
         row.validate()
+    assert _StrictFormat.calls == calls
 
 
-def test_record_rejects_the_override_and_changes_nothing():
+def test_record_rejects_the_subclass_and_changes_nothing():
     engine = RatingEngine()
     other = Match("syn-m0", ("syn-f",), ("syn-g",), ((11, 3),), ON, RatingFormat.SINGLES)
     assert engine.record(other).counted
     before = engine.to_snapshot()
-    with pytest.raises(InvalidMatchError, match="^syn rule$"):
+    calls = _StrictFormat.calls
+    with pytest.raises(InvalidMatchError, match=SUBCLASS):
         engine.record(dataclasses.replace(BASE, game_format=_StrictFormat()))
     assert engine.to_snapshot() == before
     assert not {"syn-a", "syn-b"} & set(engine.players)
+    assert _StrictFormat.calls == calls

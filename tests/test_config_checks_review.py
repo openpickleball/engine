@@ -339,12 +339,13 @@ def test_a_lookalike_scoring_type_in_a_format_is_stored_as_the_enum() -> None:
 
 
 @pytest.mark.parametrize("name", ["scale_by_scoring", "win_calibration_by_scoring"])
-def test_a_lookalike_scoring_key_is_stored_as_the_enum(name: str) -> None:
+def test_a_lookalike_scoring_key_is_rejected(name: str) -> None:
+    # Since the second review of issues #116, #118, and #119, each key is
+    # converted once, from a member or an exact str only: a lookalike's own
+    # __hash__ and __eq__ could answer differently on each call.
     values = {ScoringType.SIDE_OUT: 1.5, _LooksLikeRally(): 1.5}
-    cfg = Config(**{name: values})  # type: ignore[arg-type]
-    plain = Config(**{name: dict.fromkeys(ScoringType, 1.5)})
-    assert cfg.fingerprint() == plain.fingerprint()
-    assert all(type(key) is ScoringType for key in getattr(cfg, name))
+    with pytest.raises(ConfigError, match=f"^{name} needs a value for every scoring type$"):
+        Config(**{name: values})  # type: ignore[arg-type]
 
 
 def test_str_keys_are_stored_as_enum_members() -> None:

@@ -21,7 +21,16 @@ from open_engine import (
 D = RatingFormat.DOUBLES
 M1 = Match("syn-m1", ("syn-a", "syn-b"), ("syn-c", "syn-d"), ((11, 5),), date(2026, 3, 2), D)
 BAD_ROW = Match("", ("syn-a", "syn-b"), ("syn-c", "syn-d"), ((11, 5),), date(2026, 3, 2), D)
+
+
+class _Day(date):
+    """A date subclass that is not a datetime."""
+
+
 BAD_DATES = {
+    # A subclass can override comparison, so since issue #119 only an
+    # exact date is accepted.
+    "date subclass": _Day(2026, 3, 1),
     "str": "2026-03-01",
     "naive datetime": datetime(2026, 3, 1),
     "aware datetime": datetime(2026, 3, 1, tzinfo=UTC),
@@ -34,10 +43,6 @@ FUNCTIONS: dict[str, Callable[..., Any]] = {
     "fit_scale": fit_scale,
     "fit_win_calibration": fit_win_calibration,
 }
-
-
-class _Day(date):
-    """A date subclass that is not a datetime."""
 
 
 @pytest.mark.parametrize("func", list(FUNCTIONS.values()), ids=list(FUNCTIONS))
@@ -60,7 +65,7 @@ def test_bad_date_raises_before_the_ledger_is_read(argument: str, mode: str) -> 
 
 
 @pytest.mark.parametrize("mode", ["live", "scheduled"])
-@pytest.mark.parametrize("value", [None, date(2026, 3, 1), _Day(2026, 3, 1)])
+@pytest.mark.parametrize("value", [None, date(2026, 3, 1)])
 def test_plain_dates_and_none_are_accepted(mode: str, value: date | None) -> None:
     expected = prequential_predictions([M1], mode=mode)
     assert prequential_predictions([M1], mode=mode, score_from=value, anchor=value) == expected

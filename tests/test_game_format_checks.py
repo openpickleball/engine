@@ -34,7 +34,7 @@ BASE = Match("syn-m1", ("syn-a",), ("syn-b",), ((11, 5),), ON, RatingFormat.SING
 
 
 class _Int(int):
-    """An int subclass, accepted like int."""
+    """An int subclass, rejected since issue #116: it could override comparison."""
 
 
 BAD: list[Any] = [
@@ -62,6 +62,11 @@ BAD: list[Any] = [
     pytest.param({"points_to": 0}, "points_to must be positive", id="points_to-zero"),
     pytest.param({"win_by": 0}, "win_by must be positive", id="win_by-zero"),
     pytest.param({"cap": 5}, "cap must be greater than points_to", id="cap-below"),
+    pytest.param(
+        {"points_to": _Int(11)}, "points_to must be an int, not _Int", id="points_to-int-subclass"
+    ),
+    pytest.param({"win_by": _Int(2)}, "win_by must be an int, not _Int", id="win_by-int-subclass"),
+    pytest.param({"cap": _Int(15)}, "cap must be an int or None, not _Int", id="cap-int-subclass"),
 ]
 
 
@@ -165,9 +170,6 @@ GOOD: list[Any] = [
     pytest.param({}, id="defaults"),
     pytest.param({"cap": None}, id="cap-none"),
     pytest.param({"scoring": ScoringType.RALLY}, id="scoring-member"),
-    pytest.param({"points_to": _Int(11)}, id="points_to-int-subclass"),
-    pytest.param({"win_by": _Int(2)}, id="win_by-int-subclass"),
-    pytest.param({"cap": _Int(15)}, id="cap-int-subclass"),
 ]
 
 

@@ -18,8 +18,9 @@ class OpenEngineError(ValueError):
 
 class ConfigError(OpenEngineError):
     """
-    A Config value is not valid, or a GameFormat is not valid when it is
-    checked outside a match: by GameFormat.validate, the win probability
+    A Config value is not valid, a cfg is not None or exactly a Config with
+    only its fields, or a GameFormat is not valid when it is checked
+    outside a match: by GameFormat.validate, the win probability
     functions, or RatingEngine.predict_win_probability.
     """
 
@@ -33,7 +34,12 @@ class InvalidSeedError(OpenEngineError):
 
 
 class PlayerError(OpenEngineError):
-    """A player identity, account link, or external identity is not valid."""
+    """
+    A player identity, account link, or external identity is not valid.
+
+    RatingEngine.state and player_summary also raise it for a rating_format
+    that is not a RatingFormat member.
+    """
 
 
 class UnknownPlayerError(PlayerError):
@@ -41,7 +47,14 @@ class UnknownPlayerError(PlayerError):
 
 
 class EvaluationError(OpenEngineError):
-    """An evaluation, calibration fit, or win probability cannot be computed."""
+    """
+    An evaluation, calibration fit, or win probability cannot be computed.
+
+    It covers argument types too: reliability for a state or field of the
+    wrong type, and expected_point_share, the win probability functions,
+    and calibrate_win_probability for a number that is not exactly an int
+    or float finite as a float.
+    """
 
 
 class SnapshotError(OpenEngineError):
@@ -53,8 +66,9 @@ class ReferenceDateError(OpenEngineError):
     No usable reference date to measure inactivity and reliability at.
 
     player_summary raises it when it gets no as_of and the engine was never
-    replayed, or when its as_of is not a plain date. replay raises it when
-    its as_of is not a plain date.
+    replayed, or when its as_of is not a plain date. replay and reliability
+    raise it when their as_of is not a plain date. A plain date is exactly
+    a date: a datetime or a date subclass is not one.
     """
 
 

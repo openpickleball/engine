@@ -264,7 +264,8 @@ def test_from_snapshot_rejects_a_format_key_subclass() -> None:
     snap = _checkpoint()
     player = snap["players"][0]
     player["ratings"] = {SubStr(k): v for k, v in player["ratings"].items()}
-    with pytest.raises(SnapshotError, match=r"\.ratings key 'doubles' is not a RatingFormat$"):
+    # The message names the key's type, never its own repr (review of #119).
+    with pytest.raises(SnapshotError, match=r"\.ratings key SubStr is not a RatingFormat$"):
         RatingEngine.from_snapshot(snap)
 
 

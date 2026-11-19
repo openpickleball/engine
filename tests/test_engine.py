@@ -515,14 +515,23 @@ class NoOffset(tzinfo):
 
 
 @pytest.mark.parametrize(
-    "played_at",
-    [datetime(2026, 10, 29, 19), datetime(2026, 10, 29, 19, tzinfo=NoOffset())],
+    ("played_at", "message"),
+    [
+        (datetime(2026, 10, 29, 19), "timezone-aware"),
+        # Any tzinfo other than exactly datetime.timezone or zoneinfo.ZoneInfo
+        # can run its own code, so it is rejected before its offset is read
+        # (issue #116).
+        (
+            datetime(2026, 10, 29, 19, tzinfo=NoOffset()),
+            "tzinfo must be exactly datetime.timezone or zoneinfo.ZoneInfo, not NoOffset",
+        ),
+    ],
     ids=["no_tzinfo", "no_offset"],
 )
 @pytest.mark.parametrize("check", [Match.validate, ledger_order], ids=["validate", "ledger_order"])
-def test_naive_played_at_rejected(played_at: datetime, check):
+def test_naive_played_at_rejected(played_at: datetime, message: str, check):
     m = match("naive", ("a", "b"), ("c", "d"), played_at=played_at)
-    with pytest.raises(ValueError, match="timezone-aware"):
+    with pytest.raises(open_engine.InvalidMatchError, match=message):
         check(m)
 
 
@@ -583,6 +592,11 @@ def new_york(cache: bool = True) -> ZoneInfo:
         pytest.skip("tzdata for America/New_York is not installed")
 
 
+def fixed_offset(played_at: datetime) -> datetime:
+    """The migration conversion: the same instant and offset, as a datetime.timezone."""
+    return played_at.astimezone(timezone(timedelta(seconds=played_at.utcoffset().total_seconds())))
+
+
 def outcome(rows: list[Match]) -> object:
     """What replay gives: a snapshot, or the error type and message."""
     try:
@@ -612,6 +626,40 @@ def test_invalid_row_after_as_of_raises():
     late = match("late", ("a", "b"), ("c", "d"), games=((11.0, 3),), on=date(2026, 12, 15))
     with pytest.raises(ValueError, match="Game scores must be integers"):
         replay([late], as_of=LEDGER_AS_OF)
+
+
+def test_exact_zoneinfo_played_at_accepted_and_subclass_rejected():
+    # An exact ZoneInfo is standard library C code with no instance __dict__,
+    # so reading its offset runs no caller code. A subclass can override
+    # utcoffset, so it is rejected before it runs (issue #116).
+    exact = match(
+        "m",
+        ("a", "b"),
+        ("c", "d"),
+        on=FOLD_DAY,
+        played_at=datetime(2026, 11, 1, 1, 30, tzinfo=new_york()),
+    )
+    assert replay([exact], as_of=LEDGER_AS_OF).replay_info.matches_counted == 1
+
+    class _CountingZone(ZoneInfo):
+        calls = 0
+
+        def utcoffset(self, dt):
+            _CountingZone.calls += 1
+            return super().utcoffset(dt)
+
+    sub = match(
+        "m",
+        ("a", "b"),
+        ("c", "d"),
+        on=FOLD_DAY,
+        played_at=datetime(2026, 11, 1, 1, 30, tzinfo=_CountingZone("America/New_York")),
+    )
+    before = (sub.match_id, sub.games, sub.played_at.tzinfo)
+    with pytest.raises(open_engine.InvalidMatchError, match="not _CountingZone"):
+        replay([sub], as_of=LEDGER_AS_OF)
+    assert _CountingZone.calls == 0
+    assert (sub.match_id, sub.games, sub.played_at.tzinfo) == before
 
 
 def test_fold_duplicates_conflict_in_both_orders():
@@ -659,6 +707,58 @@ def test_identical_fold_rows_with_distinct_zone_objects_collapse():
         assert engine.replay_info.matches_considered == 1
 
 
+def test_fold_duplicates_conflict_in_both_orders_with_fixed_offsets():
+    # 01:30 happens twice on FOLD_DAY: fold=0 is 05:30Z, fold=1 is 06:30Z.
+    # Converted to fixed offsets, they keep their instants and offsets.
+    zone = new_york()
+    kw = {"on": FOLD_DAY, "games": ((11, 3),)}
+    first = match(
+        "m",
+        ("p1", "p2"),
+        ("p3", "p4"),
+        played_at=fixed_offset(datetime(2026, 11, 1, 1, 30, tzinfo=zone)),
+        **kw,
+    )
+    second = match(
+        "m",
+        ("p1", "p2"),
+        ("p3", "p4"),
+        played_at=fixed_offset(datetime(2026, 11, 1, 1, 30, tzinfo=zone, fold=1)),
+        **kw,
+    )
+    assert first.played_at != second.played_at
+    between = match(
+        "t",
+        ("p1", "p3"),
+        ("p2", "p4"),
+        games=((3, 11),),
+        on=FOLD_DAY,
+        played_at=datetime(2026, 11, 1, 6, tzinfo=UTC),
+    )
+    one = outcome([first, second, between])
+    two = outcome([second, first, between])
+    assert one == two
+    assert one == (open_engine.LedgerConflictError, "Conflicting ledger rows for match_id: m")
+
+
+def test_identical_fold_rows_with_distinct_zone_objects_collapse_with_fixed_offsets():
+    rows = [
+        match(
+            "m",
+            ("a", "b"),
+            ("c", "d"),
+            on=FOLD_DAY,
+            played_at=fixed_offset(datetime(2026, 11, 1, 1, 30, tzinfo=new_york(cache=False))),
+        )
+        for _ in range(2)
+    ]
+    assert rows[0].played_at.tzinfo is not rows[1].played_at.tzinfo
+    for order in (rows, list(reversed(rows))):
+        engine = replay(order, as_of=LEDGER_AS_OF)
+        assert engine.replay_info is not None
+        assert engine.replay_info.matches_considered == 1
+
+
 def test_played_at_outside_utc_range_rejected():
     m = match(
         "early",
@@ -679,14 +779,14 @@ TWO_GAMES = ((11, 5), (11, 5))
 
 
 class _Int(int):
-    """An int subclass: equal to the int under ==, valid, but of another type."""
+    """An int subclass: equal to the int under ==, but of another type."""
 
 
 LOOSE_PAIRS = [
     pytest.param(
-        {"game_format": GameFormat(points_to=11)},
-        {"game_format": GameFormat(points_to=_Int(11))},
-        id="points_to",
+        {"confirmed_by": frozenset({"a", "c"})},
+        {"confirmed_by": {"a", "c"}},
+        id="confirmed_by",
     ),
 ]
 
@@ -711,6 +811,13 @@ INVALID_LOOSE_PAIRS = [
         {"game_format": GameFormat(points_to=11.0)},
         "points_to must be an int, not float",
         id="points_to",
+    ),
+    # Since issue #116 an int subclass is rejected too.
+    pytest.param(
+        {"game_format": GameFormat(points_to=11)},
+        {"game_format": GameFormat(points_to=_Int(11))},
+        "points_to must be an int, not _Int",
+        id="points_to_subclass",
     ),
 ]
 
