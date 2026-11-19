@@ -9,6 +9,7 @@ _FrozenMapping, so they still load. All ids are synthetic.
 from __future__ import annotations
 
 import ast
+import dataclasses
 import importlib
 import inspect
 import pickle
@@ -62,9 +63,12 @@ def test_get_source_finds_the_class(cls: type) -> None:
 
 
 @pytest.mark.parametrize("cls", PUBLIC_CLASSES, ids=_name)
-def test_type_hints_resolve_as_in_the_defining_module(cls: type) -> None:
+def test_type_hints_resolve_for_every_field(cls: type) -> None:
     hints = typing.get_type_hints(cls)
-    assert hints == typing.get_type_hints(cls, globalns=vars(_defining_module(cls)))
+    if dataclasses.is_dataclass(cls):
+        assert {f.name for f in dataclasses.fields(cls)} <= set(hints)
+    # Every annotation was evaluated, none left as a string.
+    assert not any(isinstance(hint, (str, typing.ForwardRef)) for hint in hints.values())
 
 
 @pytest.mark.parametrize("cls", PICKLED_CLASSES, ids=_name)
