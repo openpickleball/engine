@@ -134,16 +134,22 @@ def test_a_blank_id_raises_player_error_not_unknown_player_error(player_id: str)
 
 
 @pytest.mark.parametrize("fmt", [MX, S], ids=["category with played parent", "no parent"])
-def test_a_missing_format_reports_the_state_a_seed_would_create(fmt: RatingFormat) -> None:
+def test_a_missing_format_reports_the_state_seed_provisional_rating_returns(
+    fmt: RatingFormat,
+) -> None:
     engine = _engine()
     seeded = copy.deepcopy(engine)
-    seeded.seed_provisional_rating("syn-a", fmt)
+    returned = seeded.seed_provisional_rating("syn-a", fmt)
 
-    assert engine.state("syn-a", fmt) == seeded.players["syn-a"].ratings[fmt]
+    assert engine.state("syn-a", fmt) == returned
     assert engine.player_summary("syn-a", fmt, as_of=AS_OF) == seeded.player_summary(
         "syn-a", fmt, as_of=AS_OF
     )
     assert fmt not in engine.players["syn-a"].ratings
+    # seed_provisional_rating stores no category starting state (issue #112).
+    assert (fmt in seeded.players["syn-a"].ratings) == (fmt.parent is None)
+    if fmt.parent is None:
+        assert seeded.players["syn-a"].ratings[fmt] is returned
 
 
 def test_a_missing_category_state_derives_from_the_played_parent() -> None:

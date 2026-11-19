@@ -213,8 +213,8 @@ Published behavior notes:
   from RD and variety) when the groups that outnumbered theirs drop out of the
   window; and, as for variety, an as_of earlier than the stored state
   does not rebuild past contacts. A summary for a format the player has
-  no state in is measured as if the unplayed state a seed would store
-  were stored: a player with no contacts, so not connected. The result
+  no state in is measured as if the starting state RatingEngine.state
+  returns were stored: a player with no contacts, so not connected. The result
   for one format and reference date is rebuilt after each state change
   (the engine keeps the 16 most recent),
   which costs about the sum over players of their contacts times their
@@ -2612,10 +2612,12 @@ def _reserved_source_broken(
     - in a category format, "open_parent:" plus that format's parent's
       value, as _new_state derives it: category_feeds_parent is on, the
       player has a parent state, the state is dated exactly when the parent
-      state is (the dates may differ: a parent reseed refreshes an unplayed
-      derived state, so the engine's own states share the parent's date,
-      but a seed or snapshot made before that refresh existed, or built by
-      a caller, can hold another date, and keeps it once played), an
+      state is (the dates may differ: the engine creates a derived state
+      only at the player's first category match, with the parent's date,
+      and then refuses a parent reseed, and a parent reseed refreshes an
+      unplayed derived state a seed or snapshot holds; but a seed or
+      snapshot made before that refresh existed, or built by a caller, can
+      hold another date, and keeps it once played), an
       undated state has a played parent, and an unplayed state has an RD
       of at least category_seed_rd.
     This does not check the rating or the date against the parent state's,
@@ -3284,7 +3286,7 @@ def _check_inherited_live_updates(
     states: Mapping[RatingFormat, RatingState], path: str, cfg: Config
 ) -> None:
     """
-    Raise SnapshotError for an inherited live count the engine cannot produce.
+    Raise SnapshotError for an inherited live count no engine release produces.
 
     Only a category state derived from its parent inherits a count, and the
     parent's own count only grows until the next replay, so it is never
@@ -3294,7 +3296,11 @@ def _check_inherited_live_updates(
     a nonzero count still has its parent's initial_source_date. Until it
     plays, it also keeps the RD it was derived with, max(parent RD,
     category_seed_rd), and the parent's rd_as_of at derivation, which a
-    played parent has set and never moves back.
+    played parent has set and never moves back. This engine no longer
+    creates an unplayed state with a nonzero count (issue #112): only an
+    earlier release's seed_provisional_rating did. The unplayed rules
+    accept such a state as that release stored it, so its snapshots still
+    load.
     """
     for fmt in sorted(states, key=lambda f: f.value):
         inherited = states[fmt].inherited_live_updates
@@ -4389,7 +4395,7 @@ class RatingEngine:
         category_feeds_parent in a category format, an overall doubles
         state with one. In a resumable snapshot every named
         player is in ledger_player_ids.
-        Every state must be one the engine can produce: initial_rating
+        Every state must be one an engine release can produce: initial_rating
         within the rating bounds; an unplayed state with RD new_player_rd,
         external_seed_rd, or at least category_seed_rd, and no partners,
         opponents, or live updates; matches_played 0 exactly when
@@ -4403,7 +4409,11 @@ class RatingEngine:
         parent's initial_source_date, and no imported reliability, external
         player id, or evidence reference; while such a state is unplayed,
         also an RD of at least category_seed_rd and an rd_as_of that is set
-        and no later than the parent state's. Every partner, opponent, and
+        and no later than the parent state's. This engine no longer creates
+        an unplayed state with a nonzero inherited_live_updates (issue
+        #112); these rules accept one as an earlier release's
+        seed_provisional_rating stored it, so its snapshots still load.
+        Every partner, opponent, and
         self-reported team member is a player in the snapshot. Each state's
         matches_played - verified_matches_played (its self-reported updates)
         is at most the self-reported log dates in its format that name the
@@ -4551,10 +4561,12 @@ class RatingEngine:
           format's parent's value (doubles) needs Config.category_feeds_parent
           on, a doubles state in the same seed, an initial_source_date
           when that doubles state has one and none when it has none (the
-          two dates may differ: a doubles reseed refreshes an unplayed
-          derived state, so the engine's own states share the doubles
-          date, but a seed or snapshot made before that refresh existed,
-          or built by a caller, can hold another date), and an RD of at least
+          two dates may differ: the engine creates a derived state only at
+          the player's first category match, with the doubles date, and
+          then refuses a doubles reseed, and a doubles reseed refreshes an
+          unplayed derived state a seed or snapshot holds; but a seed or
+          snapshot made before that refresh existed, or built by a caller,
+          can hold another date), and an RD of at least
           Config.category_seed_rd. An undated one also needs a played
           doubles state, which a seed cannot have, so such a seed is
           always rejected. A seed taken from an engine with
@@ -4593,6 +4605,13 @@ class RatingEngine:
         add_player has no reference date, so it does not check that
         initial_source_date is in the past: replay rejects a seed dated after
         its as_of, and prequential_predictions one dated after its last match.
+        Under Config.category_feeds_parent, an unplayed category state in a
+        seed fixes where that category starts: it does not follow later
+        changes to the doubles state from matches, and an "open_provisional"
+        one does not follow a later doubles seed either (only an unplayed
+        "open_parent:doubles" one is refreshed by a doubles reseed). A
+        replay without that seed can then differ from live recording (issue
+        #112).
 
         Raises InvalidSeedError for a seed that breaks these rules (a seed
         that is not exactly a Player (a subclass included), or has a blank
@@ -4764,8 +4783,16 @@ class RatingEngine:
         "open_parent:doubles") with the state a category match would start
         from right after the seed: the new rating and date, with an RD of
         at least Config.category_seed_rd. Other category states, imported
-        or provisional, are not changed. A stored category state does not
-        follow later changes to the doubles state from matches (issue #112).
+        or provisional, are not changed. Such a stored derived state comes
+        from a seed (add_player, replay seeds) or a loaded snapshot:
+        seed_provisional_rating does not store one (issue #112). An
+        unplayed category state that a seed (add_player, replay seeds) or a
+        loaded snapshot holds fixes where that category starts: it does not
+        follow later changes to the doubles state from matches, and an
+        "open_provisional" one does not follow a later doubles seed either
+        (only an unplayed "open_parent:doubles" one is refreshed by a
+        doubles reseed). A replay without that seed can then differ from
+        live recording.
         The seed's RD is always Config.external_seed_rd: an external
         reliability is kept for display (imported_reliability), never turned
         into OPEN RD. There is no reference date here, so a snapshot captured
@@ -4911,6 +4938,8 @@ class RatingEngine:
         # A stored, unplayed category state derived from the format just
         # seeded must start from the new seed, as _new_state would build it
         # now, or live recording and a replay of later matches disagree.
+        # The engine creates no such state itself (issue #112), but a seed
+        # (add_player, replay seeds) or a loaded snapshot can hold one.
         if cfg.category_feeds_parent:
             for child in RatingFormat:
                 if child.parent is not rating_format:
@@ -4973,7 +5002,24 @@ class RatingEngine:
 
     def seed_provisional_rating(self, player_id: str, rating_format: RatingFormat) -> RatingState:
         """
-        The player's state in a format. Creates a new unplayed state if it is missing.
+        The player's state in a format. Stores a new unplayed state if it is missing,
+        except in a category format under Config.category_feeds_parent.
+
+        Creates an empty player record for an unknown player_id. A state
+        the player already has in the format is returned as stored. For a
+        format the player has none in, it builds the starting state the
+        player's first match in that format would use if played now, as
+        state does. In singles and overall doubles, and in a category
+        format (mixed, men's, or women's doubles) while
+        category_feeds_parent is off, it stores that state and returns the
+        stored object. In a category format while category_feeds_parent is
+        on, it returns the state without storing it (issue #112): that
+        state starts from the player's overall doubles state, and a stored
+        copy would not follow later changes to doubles, so live recording
+        and a replay of the same matches could disagree. The returned
+        object is then a new copy each call, not engine state, and changing
+        it changes nothing; the engine state is unchanged apart from the
+        player record created for an unknown id.
 
         Raises InvalidSeedError when rating_format is not a RatingFormat (a
         str is not converted), and PlayerError for a player_id that is
@@ -4984,7 +5030,13 @@ class RatingEngine:
             raise InvalidSeedError("rating_format must be a RatingFormat")
         player = self._player_or_new(player_id)
         if rating_format not in player.ratings:
-            self._put_state(player, rating_format, self._new_state(player_id, rating_format))
+            new_state = self._new_state(player_id, rating_format)
+            if rating_format.parent is not None and self.cfg.category_feeds_parent:
+                # The state derives from doubles. A stored copy would not
+                # follow later doubles changes, so live and a replay could
+                # disagree (issue #112).
+                return new_state
+            self._put_state(player, rating_format, new_state)
         return player.ratings[rating_format]
 
     def _new_state(self, player_id: str, rating_format: RatingFormat) -> RatingState:
@@ -5033,8 +5085,11 @@ class RatingEngine:
         the player's first match in that format would use if played now: a
         category state derived from overall doubles where that applies, else a
         provisional default. That object is a new copy each call and is not
-        engine state, so changing it changes nothing. Use
-        seed_provisional_rating to store it. Raises UnknownPlayerError when no
+        engine state, so changing it changes nothing. seed_provisional_rating
+        stores it in singles and overall doubles, and in a category format
+        while Config.category_feeds_parent is off; in a category format while
+        it is on, seed_provisional_rating returns it without storing it.
+        Raises UnknownPlayerError when no
         player record exists for the id, and PlayerError for an id that is
         blank or not exactly a str (a subclass is rejected).
         """
@@ -5553,7 +5608,7 @@ class RatingEngine:
         found, largest = self._connectivity[key]
         if player_id in found:
             return found[player_id]
-        # No stored state: measure the unplayed state a seed would store, a
+        # No stored state: measure the starting state state() returns, a
         # player with no contacts and a group of one.
         return NetworkConnectivity(
             pool_size=1,

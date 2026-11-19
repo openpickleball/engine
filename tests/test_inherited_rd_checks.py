@@ -3,7 +3,9 @@
 Such a state comes only from deriving a category state from a played
 parent, so its RD is at least category_seed_rd and its rd_as_of is set and
 no later than the parent's. Once the category state has played, its RD
-moves on its own. All ids are synthetic.
+moves on its own. Since issue #112 the engine stores no such state, but
+snapshots from an earlier release can hold one and must still load. All
+ids are synthetic.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from helpers import store_state
 from open_engine import Match, RatingEngine, RatingFormat, SnapshotError, replay
 
 D = RatingFormat.DOUBLES
@@ -32,7 +35,9 @@ def _live_engine(play_category: bool = False) -> RatingEngine:
         match = Match("syn-x1", *TEAMS, ((11, 6),), date(2025, 3, 5), MX)
         assert engine.record(match).counted
     else:
-        engine.seed_provisional_rating("syn-a", MX)
+        store_state(
+            engine, "syn-a", MX
+        )  # a state an earlier release's seed_provisional_rating stored (issue #112)
     return engine
 
 

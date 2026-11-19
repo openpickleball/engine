@@ -71,7 +71,10 @@ def _replace_seed(engine: RatingEngine) -> None:
 
 
 CHANGES: dict[str, Callable[[RatingEngine], object]] = {
-    "seed_provisional_rating creates a state": lambda e: e.seed_provisional_rating("syn-b", MX),
+    "seed_provisional_rating creates a state": lambda e: e.seed_provisional_rating(
+        "syn-b", RatingFormat.SINGLES
+    ),
+    "seed_provisional_rating creates a player": lambda e: e.seed_provisional_rating("syn-n", MX),
     "add_player": lambda e: e.add_player(Player("syn-n")),
     "seed_external_rating": _seed_new,
     "future seed_external_rating": _seed_future,
@@ -105,6 +108,10 @@ READS: dict[str, Callable[[RatingEngine], object]] = {
     "player of an existing player": lambda e: e.player("syn-a"),
     "player_summary of a missing category state": lambda e: e.player_summary("syn-a", MX),
     "state of a missing category state": lambda e: e.state("syn-a", MX),
+    # It stores no category starting state (issue #112).
+    "seed_provisional_rating of a missing category state": lambda e: e.seed_provisional_rating(
+        "syn-b", MX
+    ),
     "predict_point_share": lambda e: e.predict_point_share(
         ("syn-a", "syn-x"), ("syn-b", "syn-c"), MX
     ),

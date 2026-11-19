@@ -14,6 +14,7 @@ from datetime import date
 
 import pytest
 
+from helpers import derived_seed, store_state
 from open_engine import (
     Config,
     ExternalRatingSnapshot,
@@ -98,28 +99,30 @@ def _assert_refused(
     assert eng.to_snapshot() == before
 
 
-def test_a_state_derived_from_open_doubles_is_not_replaced() -> None:
+def test_a_stored_derived_state_from_a_seed_or_earlier_release_is_not_replaced() -> None:
     # The issue's repro: three counted doubles matches, then a derived
-    # mixed doubles state, then an import for mixed doubles.
+    # mixed doubles state, then an import for mixed doubles. Since issue
+    # #112 the engine stores no such state, but one stored by an earlier
+    # release (in a loaded snapshot) must still be refused.
     ledger = [_match(f"syn-m{i}", D, date(2026, 1, 5 + i)) for i in range(3)]
     eng = _live([], ledger)
-    derived = eng.seed_provisional_rating("syn-a", MX)
+    derived = store_state(eng, "syn-a", MX)
     assert derived.initial_source == "open_parent:doubles"
     assert derived.matches_played == 0
     _assert_refused(eng, MX, OPEN_PARENT)
     # Live still agrees with a replay of the same ledger.
     replayed = replay(ledger, as_of=AS_OF)
     live = _ratings(eng)
-    del live[("syn-a", MX.value)]  # stored by seed_provisional_rating only
+    del live[("syn-a", MX.value)]  # stored by store_state only
     assert live == _ratings(replayed)
 
 
 def test_a_derived_state_from_an_imported_parent_is_not_replaced() -> None:
     # No OPEN matches at all: the parent is an unplayed import, and the
-    # derived state still names its OPEN parent.
+    # derived state, stored by a seed, still names its OPEN parent.
     eng = RatingEngine()
-    eng.seed_external_rating("syn-a", D, ExternalRatingSnapshot("ext", 4.0, CAPTURED))
-    eng.seed_provisional_rating("syn-a", MX)
+    eng.add_player(derived_seed("syn-a", ExternalRatingSnapshot("ext", 4.0, CAPTURED), MX))
+    assert eng.players["syn-a"].ratings[MX].initial_source == "open_parent:doubles"
     _assert_refused(eng, MX, OPEN_PARENT)
 
 
@@ -304,10 +307,11 @@ def test_a_doubles_seed_a_derived_category_state_was_rated_from_is_not_replaced(
 
 def test_a_stored_derived_category_state_does_not_free_the_doubles_seed() -> None:
     # syn-a is frozen in the mixed match through its derived state, which
-    # seed_provisional_rating then stores.
+    # an earlier release's seed_provisional_rating then stored.
     seeds = _all_seeded_in_doubles_but_syn_b_in_mixed()
     eng = _live(seeds, [_match("syn-m1", MX, date(2026, 2, 1))])
-    eng.seed_provisional_rating("syn-a", MX)
+    store_state(eng, "syn-a", MX)
+    assert MX in eng.players["syn-a"].ratings
     _assert_refused(
         eng,
         D,

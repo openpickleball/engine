@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
@@ -71,8 +72,10 @@ def test_accepted_snapshot_seeds_replay(changes: dict[str, Any]) -> None:
     snapshot = replace(BASE, **changes)
     eng = RatingEngine()
     eng.seed_external_rating("a", D, snapshot)
-    eng.seed_provisional_rating("a", RatingFormat.MIXED_DOUBLES)
-    seeded = eng.players["a"]
+    # The engine stores no category starting state (issue #112), so the
+    # seed carries the one state reports, as a backend can.
+    seeded = copy.deepcopy(eng.players["a"])
+    seeded.ratings[RatingFormat.MIXED_DOUBLES] = eng.state("a", RatingFormat.MIXED_DOUBLES)
     RatingEngine().add_player(seeded)
     rebuilt = replay([], [seeded], as_of=snapshot.captured_on)
     assert rebuilt.players["a"].ratings[D].rating == snapshot.rating

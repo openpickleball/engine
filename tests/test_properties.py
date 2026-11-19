@@ -17,6 +17,7 @@ from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
 
+from helpers import store_state
 from open_engine import (
     Config,
     ExternalRatingSnapshot,
@@ -132,7 +133,9 @@ def put_seat(engine: RatingEngine, seat: Seat, fmt: RatingFormat) -> None:
         snap = ExternalRatingSnapshot("external_standard", seat.rating, seat.import_on)
         engine.seed_external_rating(seat.pid, fmt, snap)
         return
-    state = engine.seed_provisional_rating(seat.pid, fmt)
+    # store_state, not seed_provisional_rating: a category state the latter
+    # returns is not stored (issue #112), so these changes would be lost.
+    state = store_state(engine, seat.pid, fmt)
     state.rating = seat.rating
     state.rd = seat.rd
     if seat.last_played is not None:
