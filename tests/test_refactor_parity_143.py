@@ -13,8 +13,9 @@ call must also leave the engine's snapshot unchanged. All ids are
 synthetic.
 
 Nothing here depends on the release version or the hash seed: snapshot
-digests leave out the version and fingerprint keys, no message names a
-version or fingerprint, and no pinned message lists the members of a set.
+and summary digests leave out the version and fingerprint keys, no
+message names a version or fingerprint, and no pinned message lists the
+members of a set.
 The pinned ratings, predictions, fits, and digests do depend on Config's
 defaults and the rating math, so a change to a default or to rating
 behavior, which changes published ratings anyway, needs these values
@@ -3622,51 +3623,58 @@ def test_evaluation_keeps_its_results(name: str) -> None:
 
 SUMMARY_DATES: tuple[date | None, ...] = (None, D0 + timedelta(days=50), D0 + timedelta(days=900))
 SUMMARY_EXPECTED: dict[str, str] = {
-    "cap q0": "15 258d93f5713fe298",
-    "cap q1": "15 b4257554e01d69ca",
-    "cap q2": "15 d907a3e0744260b5",
-    "cap q3": "15 99445d03b85510e2",
-    "cap q4": "15 8fa825cee8292b76",
-    "cap q5": "15 172c692d12084a1e",
-    "cap q6": "15 387246a6f9f363e5",
-    "cap q7": "15 d20d38ff082c4085",
-    "cap q8": "15 88f04696a8cb49bc",
-    "cap q9": "15 6225b53746ecce6e",
+    "cap q0": "15 03afafee42d6d482",
+    "cap q1": "15 ddce747daa6462dd",
+    "cap q2": "15 ed8b2439b7870ea0",
+    "cap q3": "15 53314871b9674fdb",
+    "cap q4": "15 417e9906e47b0842",
+    "cap q5": "15 0d3613bb987a0c18",
+    "cap q6": "15 f11c0865b9a610a5",
+    "cap q7": "15 0b0bfd67de1910a7",
+    "cap q8": "15 0edef55c84f17ee6",
+    "cap q9": "15 f3282729eb77b252",
     "cap zz": "15 31a63d8510f7421c",
-    "default q0": "15 905fcd1457c22487",
-    "default q1": "15 87e47f6ed16eafd9",
-    "default q2": "15 3376ec9d45028cab",
-    "default q3": "15 b6533c22a1fe0995",
-    "default q4": "15 abc15b06a2e1f693",
-    "default q5": "15 c65fd1b5df41c4a6",
-    "default q6": "15 19138005da14c001",
-    "default q7": "15 cd1a5045cc88673d",
-    "default q8": "15 a386e5418f9aea80",
-    "default q9": "15 a01e6ecc9371638b",
+    "default q0": "15 db5bc3c20b184057",
+    "default q1": "15 855ba3c0e22aca11",
+    "default q2": "15 bec65fc6fe8f8359",
+    "default q3": "15 75ef8a2fb87119f6",
+    "default q4": "15 76c5e409d9a1a115",
+    "default q5": "15 cb84d2fa80f33126",
+    "default q6": "15 590d35eef0fd4edf",
+    "default q7": "15 f5c25ba2ff59304a",
+    "default q8": "15 e4febc40f7044fd1",
+    "default q9": "15 4dd18b637416949c",
     "default zz": "15 31a63d8510f7421c",
-    "nofeed q0": "15 e094cbabb06ffe8b",
-    "nofeed q1": "15 5d0c7777f1461e9c",
-    "nofeed q2": "15 da12b2668d90746d",
-    "nofeed q3": "15 3461c0fe7f5a70c6",
-    "nofeed q4": "15 d8b70baf8854ad7e",
-    "nofeed q5": "15 06c5491aa1df5cbf",
-    "nofeed q6": "15 ffdd6ad6cde5ae7a",
-    "nofeed q7": "15 00a7e0ae19c9d65f",
-    "nofeed q8": "15 ef0985c0463db0d9",
-    "nofeed q9": "15 7ea2f72eb9e43eeb",
+    "nofeed q0": "15 8686fd4906d63aad",
+    "nofeed q1": "15 105210d9a40535f6",
+    "nofeed q2": "15 b5f1748f7c4594de",
+    "nofeed q3": "15 99a0bcd418962923",
+    "nofeed q4": "15 c7147a65e4fc2af9",
+    "nofeed q5": "15 0a546e3f37363dc4",
+    "nofeed q6": "15 d3dd449f660fac25",
+    "nofeed q7": "15 e2750ab8129c0360",
+    "nofeed q8": "15 efff371c359b9bdc",
+    "nofeed q9": "15 6ee0c2e63c98a6ee",
     "nofeed zz": "15 31a63d8510f7421c",
-    "strict q0": "15 7fdd104061642565",
-    "strict q1": "15 02dd7b3e81941b88",
-    "strict q2": "15 a6d840c0436a4308",
-    "strict q3": "15 60c0628b275a7777",
-    "strict q4": "15 03800a74982a4f6b",
-    "strict q5": "15 4cca66a441b24c32",
-    "strict q6": "15 7a7ffbc6e6917c67",
-    "strict q7": "15 b062feefaddab219",
-    "strict q8": "15 4181732f3e4c6551",
-    "strict q9": "15 0ab2efa075a46f01",
+    "strict q0": "15 853427ec5d4c0cb9",
+    "strict q1": "15 e106daa1e5b9917d",
+    "strict q2": "15 94ffd957b09342b3",
+    "strict q3": "15 fd6a8a8595d06615",
+    "strict q4": "15 1552d4bdda0baa92",
+    "strict q5": "15 62789a11892a8314",
+    "strict q6": "15 ce6bf44748b540d8",
+    "strict q7": "15 922a42dccbf02004",
+    "strict q8": "15 37c1c736109102d3",
+    "strict q9": "15 b6915486028ce8d9",
     "strict zz": "15 31a63d8510f7421c",
 }
+
+
+def _summary(engine: RatingEngine, pid: object, fmt: object, as_of: object) -> object:
+    """player_summary's fields but config_version, which changes with a release."""
+    fields = dataclasses.asdict(engine.player_summary(pid, fmt, as_of))  # type: ignore[arg-type]
+    fields.pop("config_version")
+    return fields
 
 
 def _summaries(cfg_name: str) -> dict[str, str]:
@@ -3676,7 +3684,7 @@ def _summaries(cfg_name: str) -> dict[str, str]:
     out = {}
     for pid in [*PIDS, "zz"]:
         outcomes = [
-            _outcome(lambda p=pid, f=fmt, a=as_of: engine.player_summary(p, f, a))  # type: ignore[misc]
+            _outcome(lambda p=pid, f=fmt, a=as_of: _summary(engine, p, f, a))  # type: ignore[misc]
             for fmt in RatingFormat
             for as_of in SUMMARY_DATES
         ]
@@ -3715,7 +3723,7 @@ SUMMARY_ARGUMENTS_EXPECTED: dict[str, str] = {
     "unknown then format": "UnknownPlayerError: Unknown player: zz | ReferenceDateError: "
     "player_summary needs as_of when the engine has not been "
     "replayed: pass as_of or replay first",
-    "valid": "ok f73b1f8edf41062e | ReferenceDateError: player_summary needs as_of when "
+    "valid": "ok 9e0e7f61675bc239 | ReferenceDateError: player_summary needs as_of when "
     "the engine has not been replayed: pass as_of or replay first",
 }
 
@@ -3727,7 +3735,7 @@ def test_player_summary_checks_keep_their_order(name: str) -> None:
     never = RatingEngine(CONFIGS["cap"])
     never.add_player(Player(id="q0"))
     outcomes = [
-        _outcome(lambda e=engine: e.player_summary(pid, fmt, as_of))  # type: ignore[arg-type,misc]
+        _outcome(lambda e=engine: _summary(e, pid, fmt, as_of))  # type: ignore[misc]
         for engine in (replayed, never)
     ]
     assert " | ".join(outcomes) == SUMMARY_ARGUMENTS_EXPECTED[name]
