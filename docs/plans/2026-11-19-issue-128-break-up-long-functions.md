@@ -14,7 +14,7 @@ Functions, by body length on `main` today:
 
 | Function | Module | Body lines | Split into |
 | --- | --- | --- | --- |
-| `Config.__post_init__` | `_config.py` | 221 | one helper per check group, in the existing order: scalar types and plain values; mapping fields; game formats; rating range; K and weights (with the reachability check); RD; day windows and counts; labels and filters |
+| `Config.__post_init__` | `_config.py` | 221 | one helper per contiguous check group, in the existing order: scalar types and plain values; mapping pairs; game lengths; game formats; enum mappings; mapping values; rating range; K and RD; step size (match performance and evidence weights, with the reachability check); day windows and counts; labels and filters |
 | `_read_snapshot` | `_snapshot.py` | 127 | top-level shape and version; config check; players; logs and match id sets; cross-field rules; the resumable checks |
 | `RatingEngine.seed_external_rating` | `_engine.py` | 124 | `_checked_external_snapshot` (the argument and snapshot field checks, returning the plain snapshot); `_check_seed_allowed` (existing rating, counted matches, category parent, seed-sensitive rejections, replace flag); the commit and the derived category refresh |
 | `RatingEngine._compute` | `_engine.py` | 124 | `_rejection_before_update` (frozen-all and the two gap filters); `_apply_update` (the per-player update, one player); `_build_result` (the `MatchResult` and imbalance) |
@@ -32,6 +32,8 @@ Left out, with the reason recorded in the PR:
 - Moving `MatchupKey`: #127 already put it next to `_matchup_key` in `_ledger.py`.
 - Unifying error-message capitalization: tests match messages, and the backend may too; changing them is a behavior change that needs its own decision.
 - The other functions between 55 and 78 lines (`_check_resumable`, `_snap_seed_sensitive_rejections`, `_prequential`, `player_summary`, `fit_scale`, `fit_win_calibration`, `Match.validate`, `_validate_field_types`, `_network_connectivity`): out of scope unless a split falls out naturally while doing the above; a follow-up issue can take them.
+
+Departure recorded during the work: the Config groups follow the code's check order. The K bounds check runs before the RD checks, and the weight and reachability checks run after them, so "K and weights" cannot be one contiguous helper without reordering a check. K joins RD, and the weight checks form the step size helper. `_check_k_and_rd` repeats the one line `limit = _RATING_LIMIT_TEXT`, since the rating range and the RD checks both use it.
 
 ## Acceptance criteria
 
