@@ -211,7 +211,7 @@ class RatingEngine:
         and RatingEngine.from_snapshot rebuilds the engine from it, or from
         json.loads of its text. Every dict is emitted with sorted keys and
         every list in a fixed order, so the same state always gives the same
-        text. The README lists the schema in full.
+        text. docs/behavior.md, "Snapshot schema", lists the schema in full.
 
         To use the snapshot as a checkpoint, take it right after replay,
         before any other call on the engine.

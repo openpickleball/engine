@@ -11,7 +11,7 @@ Move, do not rewrite, as in #126. A rule leaves the README only after the same r
 ## Acceptance criteria
 
 1. The README keeps: the title and status (demonstration label), Technology, Install (the pinned TestPyPI line a test checks), Setup and tests, Quick start (the code block a test runs), Public API (every exported name listed, which a test checks, each with a one-line description), Test data, Contributing, License.
-2. "Config values", "Ledger order", "Match performance", "Match status", and "Snapshots and checkpoints", and the long error entries under Public API, become short summaries (a few sentences each) that say what the topic is and link to the `docs/behavior.md` section that holds the rules.
+2. "Config values", "Ledger order", "Match performance", "Match status", and "Snapshots and checkpoints", the prose after the Quick start code block, and the long entries under Public API (the exact input types paragraph and the error entries), become short summaries (a few sentences each) that say what the topic is and link to the `docs/behavior.md` section that holds the rules.
 3. Every sentence of the old README sections that are shortened appears in `docs/behavior.md`, `docs/model.md`, or the new README, or the PR lists it with where its content lives (a scratch claim-check script, as in #126).
 4. The README is under about 20 KB. Links are absolute GitHub URLs to `docs/behavior.md` and `docs/model.md`, so they work on a package index page.
 5. `tests/test_readme.py` and `tests/test_api.py` pass unchanged. `CHANGELOG.md` gets an entry under `### Changed` (documentation only).
@@ -19,6 +19,9 @@ Move, do not rewrite, as in #126. A rule leaves the README only after the same r
 ## Files that change
 
 - `README.md`, `docs/behavior.md` (only rules it lacks), `CHANGELOG.md`.
+- `src/open_engine/_engine.py`: the `to_snapshot` docstring said "The README lists the schema in full"; it now names the new `docs/behavior.md` "Snapshot schema" section. Docstring only.
+
+Departures recorded during the work: the Quick start prose and the long Public API entries were added to the shortened sections, since the README cannot get under 20 KB without them. The schema and the per-class error list moved into `docs/behavior.md` as whole blocks ("Snapshot schema", and a list under "Errors"), with internal links adjusted to point inside that file. Where the README and `docs/behavior.md` disagreed (the order of the `player_summary` player id checks), the code decided, and the true text was kept.
 
 ## Order of work
 
