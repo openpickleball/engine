@@ -211,7 +211,7 @@ class RatingEngine:
         and RatingEngine.from_snapshot rebuilds the engine from it, or from
         json.loads of its text. Every dict is emitted with sorted keys and
         every list in a fixed order, so the same state always gives the same
-        text. The README lists the schema in full.
+        text. docs/behavior.md, "Snapshot schema", lists the schema in full.
 
         To use the snapshot as a checkpoint, take it right after replay,
         before any other call on the engine.
@@ -1396,10 +1396,11 @@ class RatingEngine:
         Raises:
             ReferenceDateError: as_of is None and the engine was never replayed,
                 or as_of is not a plain date. These checks come first.
+            PlayerError: the id is blank or not exactly a str. This check comes
+                before the UnknownPlayerError check.
             UnknownPlayerError: no player record exists for the id.
-            PlayerError: the id is blank or not exactly a str, and then, once the
-                player is found, a rating_format that is not exactly a
-                RatingFormat.
+            PlayerError: once the player is found, a rating_format that is not
+                exactly a RatingFormat.
 
         See docs/behavior.md, "Player summaries" and "Reference dates".
         """
