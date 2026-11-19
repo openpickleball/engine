@@ -662,13 +662,3 @@ def fit_win_calibration(
         n=len(data),
         at_bound=fitted - low <= tolerance or high - fitted <= tolerance,
     )
-
-
-# Public classes keep open_engine.engine, which re-exports them, as their
-# __module__. _json_form tags each value in a match digest with its type's
-# module and name, and snapshots store those digests, so a new module name
-# would change every digest and stop resume from older snapshots (#127).
-EvaluationReport.__module__ = "open_engine.engine"
-PrequentialPrediction.__module__ = "open_engine.engine"
-ScaleFit.__module__ = "open_engine.engine"
-WinCalibrationFit.__module__ = "open_engine.engine"

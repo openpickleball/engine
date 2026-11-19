@@ -991,13 +991,3 @@ def _game_formats(value: object) -> frozenset[tuple[ScoringType, int]]:
                 f"allowed_game_formats has an unknown scoring type: {_shown(item)}"
             ) from exc
     return frozenset(out)
-
-
-# Public classes keep open_engine.engine, which re-exports them, as their
-# __module__. _json_form tags each value in a match digest with its type's
-# module and name, and snapshots store those digests, so a new module name
-# would change every digest and stop resume from older snapshots (#127).
-Config.__module__ = "open_engine.engine"
-# Config's mapping fields hold a _FrozenMapping, so pickles of public objects
-# name it: it keeps the same module, and engine.py re-exports it.
-_FrozenMapping.__module__ = "open_engine.engine"

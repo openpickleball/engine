@@ -252,14 +252,3 @@ def _game_format_broken(fmt: object) -> str | None:
 ALL_GAME_FORMATS: frozenset[tuple[ScoringType, int]] = frozenset(
     (scoring, points) for scoring in ScoringType for points in (11, 15, 21)
 )
-
-
-# Public classes keep open_engine.engine, which re-exports them, as their
-# __module__. _json_form tags each value in a match digest with its type's
-# module and name, and snapshots store those digests, so a new module name
-# would change every digest and stop resume from older snapshots (#127).
-RatingFormat.__module__ = "open_engine.engine"
-MatchType.__module__ = "open_engine.engine"
-ScoringType.__module__ = "open_engine.engine"
-MatchStatus.__module__ = "open_engine.engine"
-GameFormat.__module__ = "open_engine.engine"

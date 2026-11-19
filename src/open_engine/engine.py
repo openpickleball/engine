@@ -22,8 +22,9 @@ snapshot schema), _engine (RatingEngine, which records matches and takes and
 loads snapshots), _replay (replay and resume from a snapshot), and _evaluation
 (prequential_predictions, evaluate, fit_scale, and fit_win_calibration). This
 module re-exports their public names, so `from open_engine.engine import X`
-keeps working. Private names are not re-exported: import them from their
-module.
+keeps working. Import a private name from the module that defines it. The
+one exception is _FrozenMapping, re-exported because pickles made between
+its addition and issue #133 name it here.
 
 docs/model.md states the rating model: each equation the engine uses, with the
 function it comes from. docs/behavior.md holds the published behavior notes
@@ -38,17 +39,12 @@ docstring's "docs/behavior.md" means the second page.
 
 from __future__ import annotations
 
-# Not re-exports. Public classes report open_engine.engine as their module,
-# so typing.get_type_hints resolves their string annotations here, and these
-# are the names those annotations use beyond the classes below.
-from collections.abc import Mapping  # noqa: F401
-from datetime import date, datetime  # noqa: F401
-
 # Explicit re-exports, so `from open_engine.engine import X` passes mypy --strict.
 from ._config import Config as Config
 
-# The one private re-export: pickles of Config and the objects that hold one
-# name open_engine.engine._FrozenMapping, as they did before the split.
+# The one private re-export: pickles made before issue #133 name
+# open_engine.engine._FrozenMapping (Config and the objects that hold one),
+# and they name every public class here too, so this module keeps them all.
 from ._config import _FrozenMapping as _FrozenMapping
 from ._engine import RatingEngine as RatingEngine
 from ._errors import ConfigError as ConfigError
