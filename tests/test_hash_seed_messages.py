@@ -35,7 +35,19 @@ def tampered(formats):
     cfg = Config()
     object.__setattr__(cfg, "allowed_game_formats", formats)
     return reliability(RatingState(rating=3.5, rd=1.0), cfg, date(2025, 3, 1))
+
+
+class ClsProp:
+    @property
+    def __class__(self):
+        raise RuntimeError("caller code ran")
+
+    def __hash__(self):
+        return 1
 """
+
+PAIRS = "ConfigError: allowed_game_formats entries must be (scoring type, whole number) pairs"
+AT_LEAST_1 = "ConfigError: allowed_game_formats points must be at least 1"
 
 CASES = [
     pytest.param(
@@ -93,6 +105,38 @@ CASES = [
         "ConfigError: No game_length_weight for games to 7",
         id="rebuild formats missing three lengths",
     ),
+    pytest.param(
+        "Config(allowed_game_formats=frozenset({(SO, ClsProp()), (RA, 11.5), (SO, 'x')}))",
+        PAIRS,
+        id="caller class property points with other bad entries",
+    ),
+    pytest.param(
+        "Config(allowed_game_formats=frozenset({(SO, ClsProp())}))",
+        PAIRS,
+        id="caller class property points",
+    ),
+    pytest.param(
+        "Config(allowed_game_formats=frozenset({(SO, 0), (RA, -3), (SO, 11.5)}))",
+        PAIRS,
+        id="lengths below 1 and bad points",
+    ),
+    pytest.param(
+        "Config(allowed_game_formats=frozenset({(SO, 0), (fake_side_out(), 11)}))",
+        "ConfigError: allowed_game_formats has a ScoringType that is not a member",
+        id="length below 1 and a non-member",
+    ),
+    pytest.param(
+        "Config(allowed_game_formats=frozenset({(SO, 11), (RA, -3), (SO, 0)}))",
+        AT_LEAST_1,
+        id="lengths below 1",
+    ),
+    pytest.param("Config(allowed_game_formats={(SO, -3)})", AT_LEAST_1, id="length -3"),
+    pytest.param(
+        "Config.from_dict({**Config().to_dict(), 'allowed_game_formats': [['side_out', 0]]})",
+        AT_LEAST_1,
+        id="from_dict length 0",
+    ),
+    pytest.param("tampered(frozenset({(SO, -3), (RA, 0)}))", AT_LEAST_1, id="rebuild length -3"),
 ]
 
 
@@ -121,3 +165,24 @@ def _outcome(expression: str, hash_seed: str) -> str:
 def test_error_message_is_the_same_under_every_hash_seed(expression: str, expected: str) -> None:
     outcomes = {_outcome(expression, seed) for seed in HASH_SEEDS}
     assert outcomes == {expected}
+
+
+def test_scoring_type_str_subclass_is_rejected_before_its_code_runs() -> None:
+    from open_engine import Config, ConfigError, ScoringType
+
+    calls: list[str] = []
+
+    class CountingStr(str):
+        def __hash__(self) -> int:
+            calls.append("hash")
+            return str.__hash__(self)
+
+        def __eq__(self, other: object) -> bool:
+            calls.append("eq")
+            return str.__eq__(self, other)
+
+    formats = frozenset({(CountingStr("side_out"), 11), (ScoringType.RALLY, 11)})
+    calls.clear()
+    with pytest.raises(ConfigError, match=r"entries must be \(scoring type, whole number\) pairs"):
+        Config(allowed_game_formats=formats)
+    assert calls == []
