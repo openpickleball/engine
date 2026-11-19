@@ -107,6 +107,33 @@ def _check_lookup_format(rating_format: object) -> None:
         )
 
 
+def _imported_reliability(
+    state: RatingState, cfg: Config, reference: date, earned: float
+) -> float | None:
+    """
+    player_summary's imported_reliability: the imported value, rounded to 1 place, or None.
+
+    It is carried while the state has an initial_source_reliability and an
+    initial_source_date, has fewer than import_reliability_carry_matches
+    matches, was captured on or before reference and at most
+    import_reliability_max_age_days before it, and, rounded, is above earned.
+    """
+    # Imported reliability is shown, separately, only while it is fresh,
+    # higher than what OPEN has earned, and within the carry match limit.
+    # Both values are compared as displayed, rounded to 1 place.
+    imported: float | None = None
+    seed_reliability = state.initial_source_reliability
+    if (
+        seed_reliability is not None
+        and state.initial_source_date is not None
+        and state.matches_played < cfg.import_reliability_carry_matches
+        and 0 <= (reference - state.initial_source_date).days <= cfg.import_reliability_max_age_days
+        and round(float(seed_reliability), _RELIABILITY_PLACES) > earned
+    ):
+        imported = round(float(seed_reliability), _RELIABILITY_PLACES)
+    return imported
+
+
 class RatingEngine:
     """
     Holds players and processed matches, and records matches one at a time.
@@ -1429,21 +1456,7 @@ class RatingEngine:
                 shown = round(shown - _RELIABILITY_STEP, _RELIABILITY_PLACES)
             earned = min(earned, shown)
 
-        # Imported reliability is shown, separately, only while it is fresh,
-        # higher than what OPEN has earned, and within the carry match limit.
-        # Both values are compared as displayed, rounded to 1 place.
-        imported: float | None = None
-        seed_reliability = state.initial_source_reliability
-        if (
-            seed_reliability is not None
-            and state.initial_source_date is not None
-            and state.matches_played < cfg.import_reliability_carry_matches
-            and 0
-            <= (reference - state.initial_source_date).days
-            <= cfg.import_reliability_max_age_days
-            and round(float(seed_reliability), _RELIABILITY_PLACES) > earned
-        ):
-            imported = round(float(seed_reliability), _RELIABILITY_PLACES)
+        imported = _imported_reliability(state, cfg, reference, earned)
 
         return PlayerSummary(
             player_id=player.id,

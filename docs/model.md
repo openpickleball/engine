@@ -271,7 +271,7 @@ A player with no variety keeps 60 percent of their certainty. Partners and oppon
 
 - With `cfg.connectivity_reliability_cap` set, a player who is not connected has reliability at most the cap, shown rounded down to 1 place. The [network connectivity note](behavior.md#network-connectivity) defines connected and its limits.
 - `established` is true when the displayed reliability is at least `cfg.established_reliability_threshold` and `verified_matches_played` is at least `cfg.established_min_verified_matches`.
-- `imported_reliability` shows the imported value, rounded to 1 place, while it is carried. The rules for carrying it are in [`PlayerSummary` fields](behavior.md#playersummary-fields).
+- `imported_reliability` (`_imported_reliability`) shows the imported value, rounded to 1 place, while it is carried. The rules for carrying it are in [`PlayerSummary` fields](behavior.md#playersummary-fields).
 
 The summary also reports `rating` rounded to 3 places and `rd` (RD inflated to the reference date) rounded to 4. The notes on [reference dates](behavior.md#reference-dates) and on [`established`](behavior.md#established) explain which date a summary is measured at.
 
