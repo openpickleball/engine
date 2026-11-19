@@ -423,9 +423,11 @@ class MatchResult:
 
     reason is None when the match counted. deltas lists the rating changes.
     frozen and clamped list the players whose change was not fully applied.
-    A player is clamped when the rating range cut more than 1e-12 off their
-    change, or float rounding of the new rating dropped at least 5e-6 of it
-    (half a unit in the fifth place). A smaller rounding loss is not listed.
+    A player is clamped when the new rating, after the range clamp, differs
+    from the rounded sum old rating + raw delta by more than 1e-12, or when
+    the applied change differs from the raw delta by at least 5e-6 (half a
+    unit in the fifth place). A smaller loss is not listed, including a
+    range cut that float rounding of that sum absorbs first.
     imbalance is the mean team A delta plus the mean team B delta, from the
     unrounded changes, rounded to 5 places. parent holds the overall doubles
     update for a category match, with its own imbalance.

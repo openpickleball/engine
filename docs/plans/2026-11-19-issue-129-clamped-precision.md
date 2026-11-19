@@ -22,7 +22,7 @@ Revised after review: the first version compared the applied change with the raw
 
 - `src/open_engine/_engine.py`: the clamp check in `_compute` only.
 - `src/open_engine/_model.py`, `src/open_engine/_math.py`: comments and docstrings.
-- A new test file, `tests/test_clamped_precision.py`.
+- New test files: `tests/test_clamped_precision.py`, `tests/test_clamped_visible_loss.py`, and `tests/test_clamped_loss_boundary.py` (a loss on each side of the 5e-6 line).
 - `docs/behavior.md`, `docs/model.md`, `CLAUDE.md`, `CHANGELOG.md`.
 
 ## Order of work
