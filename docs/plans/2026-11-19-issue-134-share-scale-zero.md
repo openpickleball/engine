@@ -20,7 +20,7 @@ Domain skills: superpowers:test-driven-development, invoke. Framework skills (Dj
 
 ## Order of work
 
-1. Red test, committed alone: `scale` in (0, 0.0, -0.0, -1, -2.9, -1e-300) raises `EvaluationError` matching `scale must be greater than 0`; a wrong-type scale (`"1"`, `True`) still raises the type error first; a non-finite scale (`nan`, `inf`) still raises the finiteness error first; a tiny positive scale that overflows still raises the overflow error; a positive scale returns the same value as before (compare with a few fixed expected values computed on `main`).
+1. Red test, committed alone: `scale` in (0, 0.0, -0.0, -1, -2.9, -1e-300) raises `EvaluationError` matching `scale must be greater than 0`; a wrong-type scale (`"1"`, `True`) still raises the type error first; a non-finite scale (`nan`, `inf`) still raises the finiteness error first; an overflowing rating difference with a positive scale (int ratings of 10**308 and -(10**308), scale 1) still raises the overflow error, since a tiny positive float scale gives an infinite exponent that the clamp absorbs rather than an error; a tiny positive scale (1e-300) keeps its result; a positive scale returns the same value as before (compare with a few fixed expected values computed on `main`).
 2. Add the check in `expected_point_share` after the type loop: `if scale <= 0: raise EvaluationError("scale must be greater than 0")`.
 3. Docs and changelog. Full gate.
 
