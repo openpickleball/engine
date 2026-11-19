@@ -18,8 +18,9 @@ class OpenEngineError(ValueError):
 
 class ConfigError(OpenEngineError):
     """
-    A Config value is not valid, a cfg is not None or exactly a Config with
-    only its fields, or a GameFormat is not valid when it is checked
+    A Config value is not valid (also one rewritten after the Config was
+    built), a cfg is not None or exactly a Config with only its fields, or
+    a GameFormat is not valid when it is checked
     outside a match: by GameFormat.validate, the win probability
     functions, or RatingEngine.predict_win_probability.
     """

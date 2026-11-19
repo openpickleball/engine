@@ -53,8 +53,11 @@ Published behavior notes:
   conversion stays. replay and the evaluation functions read the matches
   and seed_players iterables once, into lists, before any row is checked.
   A snapshot passed in memory must use exactly dict for every object and
-  exactly list or tuple for every list. Config and GameFormat built
-  exactly and then rewritten with object.__setattr__ are not checked.
+  exactly list or tuple for every list. A Config built exactly and then
+  rewritten with object.__setattr__ is rebuilt from its field values at
+  each entry point that takes it, so a rewritten value is checked again
+  (issue #122). A GameFormat's field values are checked again, by type
+  and by GameFormat's own rules, each time an entry point reads it.
 - Each player moves by their own K (from their RD after inactivity):
   `sign * K * effective_weight * surprise`. A partner's or opponent's
   uncertainty never changes a player's step. Team average movement is not
@@ -1029,15 +1032,22 @@ class Config:
     values (issue #122) and uses only that copy. Every check and the
     plain-value conversion run again: a rewritten value Config would reject
     raises ConfigError, and an int or float subclass becomes its plain
-    value. The values are read without running caller code. A mapping
-    field must hold exactly a dict, or exactly the read-only copy a Config
-    stores holding exactly a dict, and allowed_game_formats must be exactly
-    a frozenset or set; anything else raises ConfigError. RatingEngine.cfg
-    is that copy: equal to the given config, with the same fingerprint, but
-    not the same object, so compare configs with == or fingerprint(), not
-    is. The engine trusts its own stored copy: rewriting it after the call
-    is outside the threat model. fingerprint(), to_dict(), and == called on
-    a rewritten Config itself read its rewritten values. fingerprint(),
+    value. Each stored value is read by its real type alone, so no caller
+    code runs while the copy is built. A mapping field must hold exactly a
+    dict, or exactly the read-only copy a Config stores holding exactly a
+    dict, with keys that are enum members or exact strs (game length keys
+    real ints) and values that are numbers; allowed_game_formats must be
+    exactly a frozenset or set of real tuple pairs, each a ScoringType
+    member or exact str and a real int; and a scalar field an exact bool,
+    an exact str, None, or a real int or float. Anything else raises
+    ConfigError. RatingEngine.cfg is that copy and is never the given
+    object. For a Config that was not rewritten, the copy is equal to it
+    and has the same fingerprint. For a rewritten one it can differ, since
+    the rewritten object's own methods read what it holds, not its real
+    values. Compare configs with == or fingerprint(), not is. The engine
+    trusts its own stored copy: rewriting it after the call is outside the
+    threat model. fingerprint(), to_dict(), and == called on a rewritten
+    Config itself read its rewritten values. fingerprint(),
     to_dict(), and from_dict() use the fields of Config itself, not of the instance or a
     subclass, so a subclass's extra fields do not change the fingerprint. So a built
     config always gives plain JSON, and fingerprint(), ==, and hash()
@@ -1646,6 +1656,57 @@ def _require_config(cfg: object) -> Config:
 _FROZEN_DATA = cast(MemberDescriptorType, vars(_FrozenMapping)["_data"])
 
 
+# The enum each enum-keyed Config mapping field is keyed by.
+_CONFIG_ENUM_KEYS: dict[str, type[Enum]] = {
+    "scale_by_scoring": ScoringType,
+    "win_calibration_by_scoring": ScoringType,
+    "match_weights": MatchType,
+}
+
+
+def _leaf_value(name: str, value: object) -> object:
+    """
+    One stored Config leaf as a plain value, judged by its real type alone.
+
+    An exact bool, an exact str, and None are kept; a real int or float
+    subclass becomes the plain int or float of its own value. Anything else
+    raises ConfigError. Only type(), issubclass(), and int's and float's own
+    methods run, so no caller code does (issue #122). Config(...) then
+    checks the plain value as it checks a constructor argument.
+    """
+    real = type(value)
+    if real is bool or real is str or value is None:
+        return value
+    if issubclass(real, int):
+        return int.__int__(cast(int, value))
+    if issubclass(real, float):
+        return float.__float__(cast(float, value))
+    raise ConfigError(f"cfg.{name} must hold a plain value, not {_type_name(value)}")
+
+
+def _leaf_member(name: str, value: object, kind: type[Enum]) -> object:
+    """
+    A stored enum key or scoring entry: a member by identity, or an exact str.
+
+    An exact str naming a member becomes that member; any other exact str
+    is kept for Config(...) to reject. Anything else raises ConfigError
+    without running its code.
+    """
+    if _is_member(value, kind):
+        return value
+    if type(value) is str:
+        return {member.value: member for member in kind}.get(value, value)
+    raise ConfigError(f"cfg.{name} has a key or entry of type {_type_name(value)}")
+
+
+def _leaf_whole(name: str, value: object) -> int:
+    """A stored game length key or format points: a real int, not a bool, as a plain int."""
+    real = type(value)
+    if real is bool or not issubclass(real, int):
+        raise ConfigError(f"cfg.{name} must hold whole numbers, not {_type_name(value)}")
+    return int.__int__(cast(int, value))
+
+
 def _rebuilt_config(cfg: Config) -> Config:
     """
     A fresh Config built from cfg's stored field values (issue #122).
@@ -1654,39 +1715,70 @@ def _rebuilt_config(cfg: Config) -> Config:
     holding exactly its fields. object.__setattr__ can still rewrite a
     field after __post_init__ checked it, so every field value goes through
     Config(...) again: every check and the plain-value conversion (#107)
-    run on it. No caller code runs while the values are read. A mapping
-    field must hold exactly a dict, or exactly a _FrozenMapping whose _data
-    slot holds exactly a dict, read through the slot descriptor; and
-    allowed_game_formats must be exactly a frozenset or set. Anything else
-    raises ConfigError. Config(...) reads each dict and set and stores its
-    own copy, so the result shares nothing with cfg.
+    run on it. First every leaf becomes a plain value by its real type
+    alone (_leaf_value, _leaf_member, _leaf_whole), so no caller code runs
+    here or in Config(...). A mapping field must hold exactly a dict, or
+    exactly a _FrozenMapping whose _data slot holds exactly a dict, read
+    through the slot descriptor; its keys are enum members or exact strs
+    (game length keys real ints), and two keys that become one raise.
+    allowed_game_formats must be exactly a frozenset or set of real tuple
+    entries, read through tuple's own methods. Anything else raises
+    ConfigError. The result shares nothing with cfg.
     """
     held = vars(cfg)
     values: dict[str, object] = {}
     for f in fields(Config):
-        value = held[f.name]
-        if f.name in _CONFIG_MAPPING_FIELDS:
-            if type(value) is _FrozenMapping:
-                try:
-                    value = _FROZEN_DATA.__get__(value, _FrozenMapping)
-                except AttributeError:
-                    raise ConfigError(f"cfg.{f.name} has no stored mapping") from None
-            if type(value) is not dict:
-                raise ConfigError(f"cfg.{f.name} must hold exactly a dict, not {_type_name(value)}")
-        elif (
-            f.name == "allowed_game_formats"
-            and type(value) is not frozenset
-            and type(value) is not set
-        ):
-            raise ConfigError(
-                f"cfg.allowed_game_formats must be exactly a frozenset or set, "
-                f"not {_type_name(value)}"
-            )
-        values[f.name] = value
+        name = f.name
+        value = held[name]
+        if name in _CONFIG_MAPPING_FIELDS:
+            values[name] = _rebuilt_mapping(name, value)
+        elif name == "allowed_game_formats":
+            values[name] = _rebuilt_formats(value)
+        else:
+            values[name] = _leaf_value(name, value)
     try:
         return Config(**values)  # type: ignore[arg-type]
     except TypeError as exc:
         raise ConfigError(f"cfg has a value of the wrong type: {exc}") from exc
+
+
+def _rebuilt_mapping(name: str, value: object) -> dict[object, object]:
+    """A stored Config mapping field as a new dict of plain keys and values."""
+    if type(value) is _FrozenMapping:
+        try:
+            value = _FROZEN_DATA.__get__(value, _FrozenMapping)
+        except AttributeError:
+            raise ConfigError(f"cfg.{name} has no stored mapping") from None
+    if type(value) is not dict:
+        raise ConfigError(f"cfg.{name} must hold exactly a dict, not {_type_name(value)}")
+    kind = _CONFIG_ENUM_KEYS.get(name)
+    rebuilt: dict[object, object] = {}
+    # dict.items of an exact dict reads no key or value method.
+    for key, item in dict.items(cast("dict[object, object]", value)):
+        plain = _leaf_whole(name, key) if kind is None else _leaf_member(name, key, kind)
+        if plain in rebuilt:
+            raise ConfigError(f"cfg.{name} repeats a key")
+        rebuilt[plain] = _leaf_value(name, item)
+    return rebuilt
+
+
+def _rebuilt_formats(value: object) -> frozenset[tuple[object, int]]:
+    """The stored allowed_game_formats as a new frozenset of plain pairs."""
+    name = "allowed_game_formats"
+    if type(value) is not frozenset and type(value) is not set:
+        raise ConfigError(f"cfg.{name} must be exactly a frozenset or set, not {_type_name(value)}")
+    rebuilt: set[tuple[object, int]] = set()
+    # Iterating an exact set or frozenset calls no method of its entries.
+    for entry in cast("set[object]", value):
+        if not (issubclass(type(entry), tuple) and tuple.__len__(cast(tuple[object], entry)) == 2):
+            raise ConfigError(f"cfg.{name} entries must be pairs, not {_type_name(entry)}")
+        pair = cast(tuple[object, object], entry)
+        scoring = _leaf_member(name, tuple.__getitem__(pair, 0), ScoringType)
+        points = _leaf_whole(name, tuple.__getitem__(pair, 1))
+        if type(scoring) is str:
+            raise ConfigError(f"cfg.{name} has an unknown scoring type")
+        rebuilt.add((scoring, points))
+    return frozenset(rebuilt)
 
 
 def _config_or_default(cfg: object) -> Config:
@@ -2893,7 +2985,17 @@ def reliability(state: RatingState, cfg: Config, as_of: date) -> float:
     EvaluationError too, instead of OverflowError.
     """
     _check_reliability_state(state)
-    cfg = _require_config(cfg)
+    return _reliability(state, _require_config(cfg), as_of)
+
+
+def _reliability(state: RatingState, cfg: Config, as_of: date) -> float:
+    """
+    reliability under a checked Config, with the same state and as_of checks.
+
+    The engine's own callers (player_summary) pass self.cfg, the copy
+    already rebuilt, so it is not rebuilt on every call.
+    """
+    _check_reliability_state(state)
     if not _is_plain_date(as_of):
         raise ReferenceDateError(f"reliability as_of must be a date, not {_type_name(as_of)}")
     try:
@@ -4708,7 +4810,8 @@ class RatingEngine:
         subclass) holding only its own fields, before anything is built.
         The engine keeps a fresh copy of cfg, rebuilt from its field values
         and checked again as Config(...) checks them (issue #122), so
-        self.cfg equals cfg, with the same fingerprint, but is not cfg.
+        self.cfg is never cfg. For a Config that was not rewritten after it
+        was built, self.cfg equals cfg and has the same fingerprint.
         """
         self._start(_config_or_default(cfg))
 
@@ -6099,7 +6202,7 @@ class RatingEngine:
         if as_of is None and state.last_played is not None:
             reference = max(reference, state.last_played)
         connectivity = self._connectivity_of(player_id, rating_format, reference)
-        earned = reliability(state, cfg, reference)
+        earned = _reliability(state, cfg, reference)
         cap = cfg.connectivity_reliability_cap
         if cap is not None and not connectivity.connected:
             # The cap as displayed, 1 place, never above the cap itself.
