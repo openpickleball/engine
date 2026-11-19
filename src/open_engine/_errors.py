@@ -56,7 +56,8 @@ class EvaluationError(OpenEngineError):
     It covers argument types too: reliability for a state or field of the
     wrong type, and expected_point_share, the win probability functions,
     and calibrate_win_probability for a number that is not exactly an int
-    or float finite as a float.
+    or float finite as a float, and expected_point_share for a scale of 0
+    or less.
     """
 
 
