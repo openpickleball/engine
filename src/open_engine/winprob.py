@@ -125,14 +125,25 @@ def _capped(p: float, points_to: int, win_by: int, cap: int) -> float:
 
 
 def game_win_probability(p: float, game_format: GameFormat) -> float:
-    """Probability that team A wins a game when it wins each point with probability p.
+    """
+    Probability that team A wins a game when it wins each point with probability p.
 
     Exact closed form when the format has no cap, score-state DP when it does.
-    Raises EvaluationError unless p is exactly an int or a float that is
-    finite as a float, ConfigError for an invalid format (it must be
-    exactly a GameFormat; see GameFormat.validate), and EvaluationError
-    when win_by is not 1 or 2 or the probability is too large to compute
-    for the format (a long game can overflow a float).
+
+    Args:
+        p: Team A's probability of winning each point, exactly an int or a
+            float that is finite as a float.
+        game_format: The game format, exactly a GameFormat (see
+            GameFormat.validate).
+
+    Returns:
+        The probability that team A wins the game.
+
+    Raises:
+        EvaluationError: p is not valid, win_by is not 1 or 2, or the
+            probability is too large to compute for the format (a long game
+            can overflow a float).
+        ConfigError: an invalid format.
     """
     _check_number("p", p)
     _check_format(game_format)
@@ -163,11 +174,20 @@ def match_win_probability(p: float, game_format: GameFormat, best_of: int) -> fl
     """
     Probability of winning a best-of-N match from a per-point win probability.
 
-    Raises EvaluationError unless p is exactly an int or a float that is
-    finite as a float and best_of is exactly an int that is positive and
-    odd (a bool or an int subclass is rejected), ConfigError for an
-    invalid game_format, and EvaluationError when the probability is too
-    large to compute for the format or best_of.
+    Args:
+        p: Team A's probability of winning each point, exactly an int or a
+            float that is finite as a float.
+        game_format: The game format, exactly a valid GameFormat.
+        best_of: Exactly an int that is positive and odd (a bool or an int
+            subclass is rejected).
+
+    Returns:
+        The probability that team A wins the match.
+
+    Raises:
+        EvaluationError: p or best_of is not valid, or the probability is too
+            large to compute for the format or best_of.
+        ConfigError: an invalid game_format.
     """
     _check_number("p", p)
     _check_best_of(best_of)
@@ -183,8 +203,17 @@ def calibrate_win_probability(p: float, a: float) -> float:
     """
     Apply sigmoid(a * logit(p)) to a win probability clipped to [1e-6, 1 - 1e-6].
 
-    Raises EvaluationError unless p and a are each exactly an int or a float
-    that is finite as a float.
+    Args:
+        p: The win probability, exactly an int or a float that is finite as
+            a float.
+        a: The calibration exponent, under the same rule.
+
+    Returns:
+        The calibrated win probability.
+
+    Raises:
+        EvaluationError: unless p and a are each exactly an int or a float
+            that is finite as a float.
     """
     _check_number("p", p)
     _check_number("a", a)

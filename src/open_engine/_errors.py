@@ -18,6 +18,8 @@ class OpenEngineError(ValueError):
 
 class ConfigError(OpenEngineError):
     """
+    A Config, a cfg argument, or a GameFormat checked outside a match is not valid.
+
     A Config value is not valid (also one rewritten after the Config was
     built), a cfg is not None or exactly a Config with only its fields, or
     a GameFormat is not valid when it is checked

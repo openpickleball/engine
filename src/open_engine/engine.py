@@ -185,10 +185,16 @@ class GameFormat:
         """
         Raise InvalidMatchError when a game score cannot end a game in this format.
 
-        Raises ConfigError when the format is not exactly a GameFormat with
-        only its fields, and InvalidMatchError when a score is not exactly
-        an int (a bool or an int subclass is rejected), before any score
-        is compared.
+        Args:
+            score_a: Team A's points, exactly an int.
+            score_b: Team B's points, exactly an int.
+
+        Raises:
+            ConfigError: the format is not exactly a GameFormat with only its
+                fields.
+            InvalidMatchError: a score is not exactly an int (a bool or an int
+                subclass is rejected), before any score is compared, or the score
+                cannot end a game in this format.
         """
         problem = _game_format_broken(self)
         if problem is not None:
@@ -510,127 +516,27 @@ class Config:
     """
     Every rating parameter. Frozen, so a config cannot change during a replay.
 
-    The defaults are uncalibrated placeholders. fingerprint() identifies the
-    exact parameter set behind published ratings.
-
-    Mapping fields are stored as read-only copies whose values must be
-    finite numbers, and allowed_game_formats as a frozenset of (scoring
-    type, whole number) pairs. Keys and pairs are stored as their own
-    types: a ScoringType or MatchType key given as its exact str value
-    becomes the enum member (a str subclass, or a non-member object of the
-    enum's type, raises ConfigError; each key is read once), and an int
-    subclass becomes the plain int of its own value (not what its __int__
-    returns). Changing
-    the dict or set a config was built from does not change the config,
-    and changing the config's own raises
-    TypeError. Two configs are equal exactly when their fingerprint payloads
-    are equal, so equal configs share a fingerprint and a hash, and a Config
-    can be a dict key or a set member. to_dict() and from_dict() store and
-    load a config.
+    Each default is an uncalibrated placeholder, a declared choice, or a label
+    that changes no rating, as the parameter table in docs/model.md marks it.
+    fingerprint() identifies the exact parameter set behind published ratings.
+    to_dict() and from_dict() store and load a config.
 
     Every field is checked when the config is built, and any failure
-    raises ConfigError. A number is an int or a float, never a bool, that
-    is finite as a float: not NaN or infinite, and not an int too large to
-    convert. A whole number is an int that is also a number. Where a
-    number is allowed, an int or float subclass is accepted, and where a
-    whole number is required (the whole-number fields, game_length_weights
-    keys, and allowed_game_formats points), an int subclass is. Each is
-    converted to the plain int or float of its own value (int.__int__ or
-    float.__float__) before any range or cross-field check, and stored
-    that way, so for an exact Config the range checks, fingerprint(), and
-    rating code read that plain value (issue #107). A value whose
-    __class__ claims int or float while its real type is neither is
-    rejected. Config itself can be subclassed, but a subclass's own
-    methods, such as an overriding __post_init__, could store other
-    values, so every entry point that takes a config (RatingEngine,
-    RatingEngine.from_snapshot, replay, prequential_predictions, evaluate,
-    fit_scale, fit_win_calibration, and reliability) raises ConfigError
-    for a subclass, for any other object that is not None (a falsy one
-    included), and for an exact Config whose instance __dict__ holds
-    anything but its fields (issue #118). An exact Config can still be
-    rewritten with object.__setattr__ after it was built, so each of those
-    entry points builds a fresh Config from the given one's stored field
-    values (issue #122) and uses only that copy. Every check and the
-    plain-value conversion run again: a rewritten value Config would reject
-    raises ConfigError, and an int or float subclass becomes its plain
-    value. Each stored value is read by its real type alone, so no caller
-    code runs while the copy is built. A mapping field must hold exactly a
-    dict, or exactly the read-only copy a Config stores holding exactly a
-    dict, with keys that are enum members or exact strs (game length keys
-    real ints) and values that are numbers; allowed_game_formats must be
-    exactly a frozenset or set of real tuple pairs, each a ScoringType
-    member or exact str and a real int; and a scalar field an exact bool,
-    an exact str, None, or a real int or float. Anything else raises
-    ConfigError. RatingEngine.cfg is that copy and is never the given
-    object. For a Config that was not rewritten, the copy is equal to it
-    and has the same fingerprint. For a rewritten one it can differ, since
-    the rewritten object's own methods read what it holds, not its real
-    values. Compare configs with == or fingerprint(), not is. The engine
-    trusts its own stored copy: rewriting it after the call is outside the
-    threat model. A caller's Config rewritten while replay or an evaluation
-    function reads matches and seed_players is rebuilt too, since those
-    build the copy after they read them. fingerprint(), to_dict(), and == called on a rewritten
-    Config itself read its rewritten values. fingerprint(),
-    to_dict(), and from_dict() use the fields of Config itself, not of the instance or a
-    subclass, so a subclass's extra fields do not change the fingerprint. So a built
-    config always gives plain JSON, and fingerprint(), ==, and hash()
-    never raise. The rules:
+    raises ConfigError. Mapping fields are stored as read-only copies, and
+    allowed_game_formats as a frozenset of (scoring type, whole number)
+    pairs. Two configs are equal exactly when their fingerprint payloads are
+    equal, so equal configs share a fingerprint and a hash.
 
-    - version is exactly a str. The three flags are exactly bools.
-    - Other scalar fields are numbers, except the day counts, the
-      repeat, carry, verified match, and connectivity counts, and
-      diversity_target, which are whole numbers.
-      connectivity_reliability_cap and the two gap filters are None or a
-      number.
-    - min_rating, max_rating, and default_rating are each at most 2**511
-      in magnitude, min_rating < max_rating, and default_rating lies
-      between them.
-    - Mapping values are numbers greater than 0, with exactly one key for
-      every scoring type or match type. game_length_weights keys are whole
-      numbers of at least 1, one for the points of every allowed format,
-      and no two keys name the same length.
-    - 0 <= k_min <= k_max, and the largest K, k_min + (k_max - k_min) *
-      1.0 as player_k computes it (it can round just above k_max), times
-      the largest match weight times max_information_multiplier is
-      finite in floats. A self-reported match's step weight can be an
-      exact int product: when the self-reported match weight,
-      max_information_multiplier, and self_reported_repeat_factor are all
-      ints, and information_multiplier can return
-      max_information_multiplier itself. The check counts it as
-      reachable when, for some (scoring, points) in allowed_game_formats,
-      game_length_weights[points] * (1.0 + game_count_bonus *
-      (sys.maxsize - 1)) is not below it (sys.maxsize is the most games
-      len() can report). No real match has that many games, so the check
-      can reject a config whose multiplier no real match reaches. When it
-      is reachable, the self-reported weight times the multiplier must
-      convert to a float, the largest K
-      times that float must be finite, and with an int
-      rd_shrink_per_match, rd_shrink_per_match times the exact product
-      must convert too.
-    - 0 < rd_min < rd_max <= 2**511, and rd_max - rd_min is greater
-      than 0 as computed (an int and a float that are equal once
-      converted are rejected). The three seed RDs lie within
-      rd_min..rd_max. rd_shrink_per_match >= 0, and rd_growth_per_day is
-      from 0 to 2**511.
-    - Some bounds apply to ints only, because exact int arithmetic raises
-      OverflowError where float arithmetic goes to inf: an int
-      rd_growth_per_day is at most 2**500, an int game_count_bonus at
-      most 2**511, and the exact self-reported step weight rule above.
-    - win_weight is from 0 to 1, game_count_bonus >= 0,
-      max_information_multiplier >= 1, self_reported_repeat_factor is in
-      (0, 1], and established_reliability_threshold and
-      connectivity_reliability_cap are from 0 to 100.
-    - replay_interval_days, diversity_window_days, and
-      self_reported_repeat_window_days are from 1 to 3,652,058 (the days
-      from date.min to date.max, which timedelta holds), and
-      import_reliability_max_age_days from 0 to that. A window that
-      reaches back before date.min from a match or reference date stops
-      at date.min instead of raising OverflowError. diversity_target,
-      self_reported_max_repeats, and the three connectivity counts are at
-      least 1;
-      import_reliability_carry_matches and
-      established_min_verified_matches at least 0.
-    - The gap filters are None or at least 0.
+    An entry point that takes a config accepts only an exact Config with
+    nothing in its instance __dict__ but its fields (or None, where it
+    allows one), and uses a fresh copy built from the given one's stored
+    field values. Compare configs with == or fingerprint(), not is.
+
+    Raises:
+        ConfigError: a field breaks its rule.
+
+    See docs/behavior.md, "Config validation", for every rule, and docs/model.md,
+    "Parameters", for what each field means.
     """
 
     version: str = __version__
@@ -1079,14 +985,19 @@ class Config:
     @classmethod
     def from_dict(cls, data: Mapping[str, object]) -> Config:
         """
-        Build a Config from to_dict() output, also after a round trip
-        through Python's json module.
+        Build a Config from to_dict() output, also after a round trip through Python's json module.
 
-        data must be exactly a dict (json.loads gives one; another mapping
-        type raises) with exactly the keys to_dict() gives, so a stored
-        config names every parameter. Raises ConfigError for data of
-        another type, a missing or unknown key, a value that cannot be
-        converted, or a value Config rejects.
+        Args:
+            data: Exactly a dict (json.loads gives one; another mapping type
+                raises) with exactly the keys to_dict() gives, so a stored config
+                names every parameter.
+
+        Returns:
+            The Config.
+
+        Raises:
+            ConfigError: data of another type, a missing or unknown key, a value
+                that cannot be converted, or a value Config rejects.
         """
         # Exactly dict: a mapping type runs its own code on every read, so
         # the checks below and Config could read different values.
@@ -1520,49 +1431,15 @@ class Match:
     One match: teams, game scores, date, format, provenance, and status.
 
     status (last field, default MatchStatus.COMPLETED) says how the match
-    ended. A completed match has at least one game and a decided winner. A
-    forfeit must have no games. A retired or incomplete match has zero or more
-    finished games, each valid in game_format, and no decided winner; a
-    partial game is not recorded. record never counts a match that is not
-    completed: after the match_id check (a processed or reserved match_id
-    gets DUPLICATE_MATCH_ID), it returns RejectionReason.MATCH_NOT_COMPLETED
-    and, like every rejected match, reserves the match_id: a later record
-    call for a match with it that does not raise returns DUPLICATE_MATCH_ID.
+    ended. A completed match has at least one game and a decided winner.
+    record never counts a match that is not completed.
 
-    The match must be a Match itself, not a subclass: record, replay, and
-    prequential_predictions (and so evaluate, fit_scale, and
-    fit_win_calibration) and ledger_order raise InvalidMatchError for a
-    subclass before they change any state or call its validate, and
-    Match.validate raises it for a subclass that does not override it. A
-    subclass could return one value to validation and another to rating.
-    The same calls raise it for a Match whose instance __dict__ holds
-    anything but its own fields, which could hide a method validate calls.
+    The match must be a Match itself, not a subclass, and validate raises
+    InvalidMatchError for a field of the wrong type. match_id, the team
+    player ids, and each member of confirmed_by must be a non-blank str,
+    exactly a str (not a subclass).
 
-    match_id, the team player ids, and each member of confirmed_by must be a
-    non-blank str, exactly a str (not a subclass); validate raises
-    InvalidMatchError otherwise.
-
-    validate checks the type of status, rating_format, match_type,
-    game_format, team_a, team_b, confirmed_by, played_on, played_at,
-    sequence, and best_of before it reads any of them, each exactly (a
-    subclass, or an object whose __class__ only claims the type, is
-    rejected; issue #116). It raises InvalidMatchError when status is not
-    exactly a MatchStatus, rating_format a RatingFormat, or match_type a
-    MatchType (a str is rejected, even one equal to a member's value);
-    when game_format is not exactly a GameFormat holding only its fields,
-    each of its exact type; when a team is not exactly a tuple; when
-    confirmed_by is not exactly a set or frozenset; when played_on is not
-    exactly a date; when played_at is not None or exactly a datetime, or
-    its tzinfo is set and not exactly datetime.timezone or exactly
-    zoneinfo.ZoneInfo (a subclass of either, or a custom tzinfo, is
-    rejected: convert one with played_at.astimezone(timezone(timedelta(
-    seconds=played_at.utcoffset().total_seconds())))); or when sequence or best_of is not exactly
-    an int (a bool, float, or int subclass is rejected). games and each
-    game in it must be exactly a tuple or list, and each score exactly an
-    int (a subclass of any of these is rejected). It also calls
-    GameFormat.validate on the format, through the class, and raises
-    InvalidMatchError with the same message for a ConfigError that call
-    raises.
+    See docs/behavior.md, "Match fields" and "Match status".
     """
 
     match_id: str
@@ -1842,15 +1719,25 @@ def ledger_order(match: Match) -> tuple[date, int, datetime, int, str]:
 
     Matches sort by played_on. Within one day, untimed matches come first,
     by sequence then match_id. Timed matches follow, by the UTC instant of
-    played_at, then sequence, then match_id. played_at must be
-    timezone-aware; a naive value raises InvalidMatchError, and so does a
-    match that is not exactly a Match (a subclass included), or whose
-    match_id, status, rating_format, match_type, game_format, teams,
-    confirmed_by, played_on, played_at, sequence, or best_of has the wrong
-    type, checked exactly as Match.validate checks them first (a played_at
-    tzinfo must be exactly datetime.timezone or zoneinfo.ZoneInfo). Value rules, such as a
-    nonnegative sequence, and the games, team ids, and confirmed_by
-    members are not checked.
+    played_at, then sequence, then match_id.
+
+    Args:
+        match: Exactly a Match.
+
+    Returns:
+        The match's sort key.
+
+    Raises:
+        InvalidMatchError: played_at must be timezone-aware; a naive value
+            raises InvalidMatchError, and so does a match that is not exactly
+            a Match (a subclass included), or whose match_id, status,
+            rating_format, match_type, game_format, teams, confirmed_by,
+            played_on, played_at, sequence, or best_of has the wrong type,
+            checked exactly as Match.validate checks them first (a played_at
+            tzinfo must be exactly datetime.timezone or zoneinfo.ZoneInfo).
+
+    Value rules, such as a nonnegative sequence, and the games, team ids,
+    and confirmed_by members are not checked.
     """
     _require_plain_match(match)
     Match._validate_field_types(match)
@@ -2029,46 +1916,17 @@ class MatchResult:
     reason is None when the match counted. deltas lists the rating changes.
     frozen and clamped list the players whose change was not fully applied.
     imbalance is the mean team A delta plus the mean team B delta, from the
-    unrounded changes, rounded to 5 places. Each delta is rounded on its
-    own, so imbalance can differ from the same sum of the rounded deltas by
-    up to 1.5e-5. imbalance is in team-average units, so a match adds
-    team_size * imbalance to the pool's total rating (twice the value in
-    doubles). It is 0.0 when both teams have the same mean K and no
-    player is clamped or frozen, and for a match that did not count. It can
-    be nonzero when the teams' mean K differ or a player is clamped or
-    frozen. A value of 0.0 does not mean nothing was clamped or frozen: read
-    clamped and frozen for that. parent holds the overall doubles update for
-    a category match, with its own imbalance.
+    unrounded changes, rounded to 5 places. parent holds the overall doubles
+    update for a category match, with its own imbalance.
 
     late is True for a counted match dated before a player's last match in
     this rating format, or before the date that player's rating in this
     format already reflects (for a category rating copied from overall
-    doubles). Frozen players count. Live recording applies matches in
-    arrival order, so the backend should check late and, for a category
-    match, parent.late, and schedule a replay when either is True. It
-    compares dates only, so a match on the same date as a player's last
-    match is not late. It is False for a match that did not count. parent
-    has its own value, measured against the overall doubles dates. A late
-    category match leaves its rd_as_of at the date that player's rating
-    already reflects, so later live category matches dated before that
-    date are late too.
+    doubles). possible_duplicate_of can name the earliest counted match the
+    engine has seen with the same content. Do not show it to
+    whoever submitted the match: it names another report.
 
-    possible_duplicate_of is the match_id of the earliest counted match the
-    engine has seen with the same content: the same played_on, the same two
-    teams (either side may be team A, in any player order), and the same
-    game scores read from the same side. Other fields, the match_id and
-    rating format included, are left out. It is None when there is no such
-    earlier match. Only a counted match and a match rejected with
-    RejectionReason.POSSIBLE_DUPLICATE (under
-    Config.reject_content_duplicates) carry it; it is None on every other
-    result and on parent. A real rematch on the same date with the same
-    scores is flagged too, so it is a signal for the backend to check, not
-    proof. Processing order alone decides which report is the copy, so the
-    flagged or rejected one can be the stronger report (see the module
-    docstring). A category copy of a doubles match also reaches overall
-    doubles through parent, whose possible_duplicate_of is None, so read
-    this top-level field. Do not show it to whoever submitted the match:
-    it names another report.
+    See docs/behavior.md, "Match results".
     """
 
     counted: bool
@@ -2093,35 +1951,13 @@ class NetworkConnectivity:
     Whether a player's pool connects to the wider network, in one format.
 
     Measured over Config.diversity_window_days at the summary's reference
-    date, from the partners and opponents stored in each rating state.
-    Two players with a state in the format are in contact when either
-    one's state lists the other with a date in the window. A group is a
-    set of players linked by contact. A group is a main network when it
-    has at least half as many players as the largest group, so two
-    separate networks of similar size are each a main network.
+    date, from the partners and opponents stored in each rating state. When
+    connected is False and Config.connectivity_reliability_cap is set (it is
+    None by default), PlayerSummary.reliability is at most that cap. It is
+    a label only and changes no rating.
 
-    Two players in contact are tied when they share at least
-    Config.connectivity_min_shared_contacts contacts and each of them is
-    in contact with those shared players on at least
-    Config.connectivity_min_contact_days distinct dates. A pool is a set
-    of players linked by ties; a player with no tie is a pool of one. The
-    pool's fringe is every player outside the pool who is in contact with
-    it and whose own contacts are all in the pool or in contact with it:
-    a drop-in who met only the pool and its other contacts. The pool's
-    outside players are the other players outside it in contact with it,
-    and outside_days counts the distinct contact dates between the pool
-    and them.
-
-    connected is True when the player has a contact in the window, their
-    group is a main network, and either the pool with its fringe holds
-    more than half the group's players, or the pool has at least
-    Config.connectivity_min_outside_players outside players on at least
-    Config.connectivity_min_contact_days outside days. When it is False
-    and Config.connectivity_reliability_cap is set (it is None by
-    default), PlayerSummary.reliability is at most that cap. It is a
-    label only and changes no rating. The rule can be gamed through
-    group sizes; see the network connectivity note in the module
-    docstring for its limits.
+    See docs/behavior.md, "Network connectivity", for each field, the rule, and its
+    limits.
     """
 
     pool_size: int  # players in the pool, this player included
@@ -2272,41 +2108,13 @@ class PlayerSummary:
 
     reliability is always OPEN-earned. imported_reliability is the imported
     external reliability, rounded to 1 place, while it is carried, otherwise
-    None. It is carried when it was captured on or before the reference date
-    (player_summary's as_of, else the later of the engine's calculated_as_of
-    and the player's last_played), is
-    fresh, is within the carry match limit, and is higher than the earned
-    value. It is shown separately and never replaces or converts into
-    reliability.
+    None. It is shown separately and never replaces or converts into
+    reliability. established and connectivity are labels and change no
+    rating. live_updates_since_recalculation counts the live updates since
+    the last replay that are in the state's rating. It is 0 right after a
+    replay.
 
-    When Config.connectivity_reliability_cap is set (None, off, by
-    default), reliability is at most the cap while connectivity.connected
-    is False (see NetworkConnectivity). connectivity, the last field, is
-    always reported.
-
-    established is True when reliability (as displayed, rounded to 1 place)
-    is at least Config.established_reliability_threshold and the state's
-    verified_matches_played (counted tournament, league, and recreational
-    verified matches) is at least Config.established_min_verified_matches.
-    Self-reported matches never count toward that minimum. Imported
-    reliability never counts toward established, and established is
-    measured at the same reference date as reliability, so it lapses with
-    inactivity unless the connectivity cap is set and connectivity
-    changes. A recently
-    captured imported rating can reach the threshold in fewer OPEN matches
-    because of its lower starting RD; see the module docstring for counts.
-    It is a label only and changes no rating. A rating that is not
-    established is what external rating systems usually call provisional.
-    That is different from OPEN's provisional live updates between replays
-    and from the open_provisional initial source. Evaluation's eligibility
-    rule (an imported baseline or at least burn_in_matches OPEN matches) is
-    a separate rule from established.
-
-    live_updates_since_recalculation counts the live updates since the last
-    replay that are in the state's rating: the state's own
-    live_updates_since_replay plus its inherited_live_updates, which for a
-    category state derived from overall doubles is the parent's live count
-    when the state was derived. It is 0 right after a replay.
+    See docs/behavior.md, "Player summaries", "Established", and "Network connectivity".
     """
 
     player_id: str
@@ -2442,9 +2250,18 @@ def expected_point_share(team_a_rating: float, team_b_rating: float, scale: floa
     1 / (1 + 10**((team_b_rating - team_a_rating) / scale)), with the
     exponent clamped to -12..12. See docs/model.md.
 
-    Raises EvaluationError unless each argument is exactly an int or a
-    float (not a bool or a subclass) that is finite as a float, and when
-    the rating difference divided by scale is too large to compute.
+    Args:
+        team_a_rating: Team A's rating.
+        team_b_rating: Team B's rating.
+        scale: The rating scale in the formula above.
+
+    Returns:
+        Team A's expected share of points.
+
+    Raises:
+        EvaluationError: unless each argument is exactly an int or a float
+            (not a bool or a subclass) that is finite as a float, and when
+            the rating difference divided by scale is too large to compute.
     """
     for name, value in (
         ("team_a_rating", team_a_rating),
@@ -2575,18 +2392,24 @@ def reliability(state: RatingState, cfg: Config, as_of: date) -> float:
     OPEN-earned reliability (0-100). Never a conversion of an external score.
 
     Combines rating certainty (from RD, inflated for inactivity) with rolling
-    partner/opponent variety. as_of is the date inactivity and variety are
-    measured at. See docs/model.md for the equation.
+    partner/opponent variety. See docs/model.md for the equation.
 
-    Raises EvaluationError unless state is exactly a RatingState whose rd
-    is exactly an int or float that is finite as a float, rd_as_of None or
-    exactly a date, and partners and opponents exactly dicts with exactly
-    str keys and exactly date values; ConfigError unless cfg is exactly a
-    Config with only its fields (it is rebuilt from its field values, see
-    Config, so a rewritten value it rejects raises too); and
-    ReferenceDateError unless as_of is
-    exactly a date. An rd too large to inflate for inactivity raises
-    EvaluationError too, instead of OverflowError.
+    Args:
+        state: Exactly a RatingState.
+        cfg: Exactly a Config with only its fields. It is rebuilt from its
+            field values.
+        as_of: The date inactivity and variety are measured at, exactly a date.
+
+    Returns:
+        The reliability, from 0 to 100.
+
+    Raises:
+        EvaluationError: state or a field it reads has the wrong type, or its
+            rd is too large to inflate for inactivity.
+        ConfigError: cfg is not valid.
+        ReferenceDateError: as_of is not exactly a date.
+
+    See docs/behavior.md, "Input types", for the exact types.
     """
     _check_reliability_state(state)
     return _reliability(state, _require_config(cfg), as_of)
@@ -5655,74 +5478,31 @@ def replay(
     Run on the published schedule (Config.replay_interval_days). Same ledger,
     seeds, config and as_of always produce the same result, whatever order
     the ledger rows arrive in. Every row is validated, even after as_of.
-    Rows that repeat a match_id and match in every field, in type and
-    value, are counted once; any other repeat raises LedgerConflictError, even when it
-    falls after as_of. Seeds must be
-    unplayed imported or provisional states that follow the seed rules (see
-    RatingEngine.add_player), dated on or before as_of.
 
-    Raises ReferenceDateError for an as_of that is not a plain date (a str,
-    a datetime, a date subclass, None, or any other type). It checks this
-    first, before whole_ledger, from_snapshot, the ledger rows, and the
-    seeds. Then it raises SnapshotError for a whole_ledger that is not
-    exactly a bool, and ConfigError unless cfg is None or exactly a Config
-    with only its fields, before matches, seed_players, and from_snapshot
-    are read. It reads matches and seed_players once each, into lists,
-    before any row or seed is checked. Only after reading them is cfg
-    rebuilt from its field values (see Config), so a
-    rewritten value it rejects raises ConfigError too, even one rewritten
-    while those iterables were read, and the result's cfg, replay_info
-    fingerprint, and snapshots come from that copy.
+    Args:
+        matches: The ledger rows, any iterable, read once into a list.
+        seed_players: Unplayed imported or provisional seeds that follow the
+            seed rules, dated on or before as_of; any iterable, read once.
+        cfg: None or exactly a Config with only its fields.
+        as_of: The replay date, a plain date.
+        from_snapshot: A checkpoint to resume from: the to_snapshot() output
+            of an earlier replay under the same cfg.
+        whole_ledger: Exactly a bool. True, with from_snapshot, promises the whole ledger.
 
-    Raises InvalidSeedError for a seed state that breaks the seed rules (see
-    add_player) or whose initial_source_date is after as_of, and PlayerError
-    when two seeds share a player id, an account_user_id, or a (source,
-    external id) pair. On resume, a seed that shares an identity with a
-    checkpoint player raises PlayerError too.
+    Returns:
+        The rebuilt RatingEngine.
 
-    from_snapshot resumes from a checkpoint: the to_snapshot() output (or
-    json.loads of its text) of an earlier replay under the same cfg. The
-    result equals a full replay to as_of of the ledger and seeds the rows
-    come from (the checkpoint's seeds plus seed_players), whether matches
-    holds the whole ledger or only the rows after the checkpoint date.
-    Rows dated on or before the checkpoint date are not recorded again:
-    each must be a row the checkpoint considered, unchanged. seed_players
-    then holds only seeds not in the checkpoint.
-    Take the checkpoint snapshot right after its replay, before any other
-    call on the engine. Every engine method that changes state clears the
-    snapshot's resumable mark; changing objects the engine returns
-    directly is not tracked and makes the snapshot unsafe to resume.
+    Raises:
+        ReferenceDateError: as_of is not a plain date. It is checked first.
+        ConfigError: cfg is not valid.
+        InvalidMatchError, LedgerConflictError: a row is not valid, or two
+            rows with one match_id differ.
+        InvalidSeedError, PlayerError: a seed breaks the seed or identity
+            rules, or is dated after as_of.
+        SnapshotError: whole_ledger is not valid, or a resume cannot match a
+            full replay.
 
-    whole_ledger=True (keyword only, with from_snapshot) promises that
-    matches holds the whole ledger, so resume also raises SnapshotError,
-    naming the ids sorted, for any row the checkpoint considered that is
-    missing from it: a row voided or deleted on or before the checkpoint
-    date. whole_ledger=True without from_snapshot raises SnapshotError,
-    and so does a whole_ledger that is not a bool (an int, str, or None is
-    a usage error of the resume API, not a ledger flag).
-
-    Resume raises instead of giving a different result. The rows are
-    checked in this order: LedgerConflictError for changed or reused rows,
-    then SnapshotError for rows not in the checkpoint, then (with
-    whole_ledger) SnapshotError for checkpointed rows that are missing.
-    - SnapshotError for a malformed snapshot or one taken under another
-      Config (see RatingEngine.from_snapshot), a snapshot not from a
-      replay, one with live updates or any other change since its replay
-      (resumable is false), an as_of before the checkpoint date, a row
-      dated on or before the checkpoint date that the checkpoint did not
-      consider, or a seed for a player named in a row the checkpoint
-      considered (even if every such row was rejected).
-    - LedgerConflictError for a row dated on or before the checkpoint date
-      that differs from the row the checkpoint considered under its
-      match_id, or a row dated after it that reuses one of those ids.
-    - PlayerError for a seed whose player is already in the snapshot.
-    - SnapshotError, with whole_ledger=True, for a checkpointed row missing
-      from matches.
-    Without whole_ledger, resume cannot see a row removed (voided) from the
-    ledger on or before the checkpoint date, and given only the newer rows
-    it cannot see a late row added on or before it either. With or without
-    whole_ledger, it cannot see a seed withdrawn or corrected after the
-    checkpoint. Those need a full replay.
+    See docs/behavior.md, "Replay and resume".
     """
     if not _is_plain_date(as_of):
         raise ReferenceDateError(f"replay as_of must be exactly a date, not {_type_name(as_of)}")
@@ -6023,42 +5803,33 @@ def prequential_predictions(
     """
     Predict each eligible match from ratings that have not seen it.
 
-    A match is eligible when every participant is established in its rating
-    format (imported baseline, or at least `burn_in_matches` OPEN matches),
-    its scoring equals `scoring` when given, it is played on or after
-    `score_from` when given, and its status is MatchStatus.COMPLETED (a
-    forfeit, retired, or incomplete row is recorded, which changes no
-    rating, but never predicted). Only matches that `record` counts are kept.
-    This "established" is not `PlayerSummary.established`.
+    Only matches that `record` counts are kept, and a match that is not
+    completed is never predicted.
 
-    "live" records every match live in one engine, in ledger order.
-    "scheduled" mirrors production: replay dates are
-    `anchor + k * cfg.replay_interval_days` (anchor defaults to the first
-    completed match date). A match on day d is predicted from replay(matches on or before s,
-    as_of=s) for the largest replay date s strictly before d, and matches in
-    that window are then predicted and recorded live in ledger order.
+    Args:
+        matches: The ledger rows, any iterable, read once into a list.
+        seed_players: Seeds that follow the seed rules; any iterable.
+        cfg: None or exactly a Config with only its fields.
+        scoring: None or exactly a ScoringType: the scoring to predict.
+        burn_in_matches: Exactly an int: the OPEN matches a participant with
+            no imported baseline needs before a match is predicted.
+        mode: Exactly "live" or "scheduled".
+        score_from: None or a plain date: predict only matches on or after it.
+        anchor: None or a plain date: in "scheduled" mode, replay dates are
+            anchor + k * cfg.replay_interval_days.
 
-    Every seed is validated up front, in both modes, by the seed rules (see
-    RatingEngine.add_player), and a seed whose initial_source_date is after
-    the last completed ledger match raises InvalidSeedError. A ledger with
-    no completed match has no seed date check and gives no predictions. A
-    repeated seed id, or two seeds that share an account_user_id or a
-    (source, external id) pair, raise PlayerError, as add_player does. A
-    seed captured mid-ledger is accepted: scheduled replays before its date
-    freeze it as usual.
+    Returns:
+        A list of PrequentialPrediction, one per eligible match.
 
-    A score_from or anchor that is not None and not a plain date (a str, a
-    datetime, a date subclass, or any other type) raises EvaluationError
-    naming the argument, before the ledger is read, in both modes and for
-    an empty ledger too. Then, also before the ledger is read, mode must
-    be exactly the str "live" or "scheduled", scoring None or exactly a
-    ScoringType, and burn_in_matches exactly an int (a bool or a subclass
-    is rejected), or it raises EvaluationError; and cfg must be None or
-    exactly a Config with only its fields, or it raises ConfigError. It
-    reads matches and seed_players once each, into lists, before any row or
-    seed is checked. Only then is cfg rebuilt from its field values (see
-    Config), so a rewritten value it rejects raises ConfigError too, even
-    one rewritten while those iterables were read.
+    Raises:
+        EvaluationError: score_from, anchor, mode, scoring, or burn_in_matches
+            is not valid. These are checked before the ledger is read.
+        ConfigError: cfg is not valid.
+        InvalidMatchError, LedgerConflictError: as replay raises them for rows.
+        InvalidSeedError, PlayerError: a seed breaks the seed or identity
+            rules, or is dated after the last completed ledger match.
+
+    See docs/behavior.md, "Prequential predictions".
     """
     shape = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
     rows = list(matches)
@@ -6185,6 +5956,17 @@ def evaluate(
     eligibility, mode, score_from and anchor rules, and checks every
     argument as prequential_predictions does, in the same order, for an
     empty ledger too.
+
+    Args:
+        matches, seed_players, cfg, scoring, burn_in_matches, mode,
+            score_from, anchor: As for prequential_predictions.
+
+    Returns:
+        An EvaluationReport.
+
+    Raises:
+        OpenEngineError: the subclass prequential_predictions raises for the
+            same arguments.
     """
     shape = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
     rows = list(matches)
@@ -6326,21 +6108,29 @@ def fit_scale(
     """
     Fit one scoring type's scale by minimizing prequential point-share MSE.
 
+    Coarse grid first, then golden-section search around the best grid point.
     The search compares unrounded MSE, so ties at the 6-decimal precision of
     EvaluationReport.mse do not decide the fit.
 
-    Coarse grid first, then golden-section search around the best grid point.
-    Publish the returned ScaleFit alongside the config that adopts it.
-    Raises EvaluationError, before any prediction work, unless low < high,
-    tolerance is finite and greater than 0, and 2 * low, 2 * high, and
-    (high - low) * 14 are finite; low, high, and tolerance must each be
-    exactly an int or a float (a bool or a subclass is rejected), checked
-    first. Then every other argument is checked as prequential_predictions
-    checks it, in the same order, for an empty ledger too, and scoring must
-    be exactly a ScoringType (None is rejected), all before any trial
-    config is built. A trial config is built from the fields of Config
-    itself, so a low of 0 or less then raises ConfigError. A trial never
-    goes through dataclasses.replace.
+    Args:
+        matches, seed_players, cfg, burn_in_matches, mode, score_from,
+            anchor: As for prequential_predictions.
+        scoring: Exactly a ScoringType (None is rejected).
+        low: The low end of the search, exactly an int or a float.
+        high: The high end of the search, exactly an int or a float.
+        tolerance: Exactly an int or a float, finite and greater than 0.
+
+    Returns:
+        A ScaleFit. Publish the returned ScaleFit alongside the config that
+        adopts it.
+
+    Raises:
+        EvaluationError: an argument is not valid. low, high, and tolerance
+            are checked before any prediction work.
+        ConfigError: cfg is not valid, or a trial config is not (a low of 0
+            or less).
+
+    See docs/behavior.md, "Calibration fits".
     """
     _check_search_bounds(low, high, tolerance)
     shape = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
@@ -6444,10 +6234,20 @@ def fit_win_calibration(
     Uses the raw win probabilities computed with cfg's scale, so fit the scale
     first. Predictions without a modeled win probability (win_by not 1 or 2)
     are skipped. Same search as fit_scale: coarse grid, then golden section.
-    Raises EvaluationError when no prediction remains, and, before any
-    prediction work, for the same low, high, and tolerance as fit_scale.
-    Then it checks every other argument as fit_scale does, in the same
-    order, for an empty ledger too.
+
+    Args:
+        matches, seed_players, cfg, burn_in_matches, mode, score_from,
+            anchor: As for prequential_predictions.
+        scoring: Exactly a ScoringType, as for fit_scale.
+        low, high, tolerance: The search range and tolerance, as for fit_scale.
+
+    Returns:
+        A WinCalibrationFit.
+
+    Raises:
+        EvaluationError: an argument is not valid, or no prediction remains.
+
+    See docs/behavior.md, "Calibration fits".
     """
     _check_search_bounds(low, high, tolerance)
     shape = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
