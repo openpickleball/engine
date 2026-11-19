@@ -12,6 +12,8 @@ The engine is a Python package (`openpickleball-engine`, imported as `open_engin
 
 A standard external rating system is the intended source of imported ratings, which seed a player's starting rating. An imported reliability is shown separately from OPEN-earned reliability. The engine uses none of that system's code or internals, and it is not a reproduction of any proprietary rating algorithm.
 
+[`docs/model.md`](docs/model.md) states the rating model: every equation the engine uses to move a rating, compute reliability, and predict and evaluate matches, with the function each comes from and a table of the `Config` parameters.
+
 ## Install
 
 A dev release is on TestPyPI, the Python test index. It is not on PyPI. Install it with:
