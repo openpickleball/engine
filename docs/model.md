@@ -4,7 +4,7 @@
 
 This page states every equation the engine uses to move a rating, to report reliability, and to predict and evaluate matches. It follows a match through the engine in the order the code processes it. Each equation names the function in `src/open_engine/engine.py` or `src/open_engine/winprob.py` that computes it, so you can check one against the other.
 
-The engine's edge cases (input types, ledger order, late matches, duplicates, snapshots, and the rest) are in the published behavior notes in the [`engine.py` module docstring](../src/open_engine/engine.py). This page does not repeat them. Where a rule here has an edge case, it links to the note.
+The engine's edge cases (input types, ledger order, late matches, duplicates, snapshots, and the rest) are in the published behavior notes in [`docs/behavior.md`](behavior.md). This page does not repeat them. Where a rule here has an edge case, it links to the note.
 
 In short: a rating is a performance-based Elo rating. Each match compares the share of points a team won with the share its rating predicted. Each player moves by their own K, which grows with their rating uncertainty (RD). Once a state has an `rd_as_of` (from its first counted match, an imported capture date, or, for a category state derived from overall doubles, the doubles state's `rd_as_of`), RD can grow with inactivity, up to `rd_max`. It can shrink with each counted match, down to `rd_min`. A frozen player's RD does not change. Reliability, a 0 to 100 label, combines RD with the variety of a player's partners and opponents.
 
@@ -47,7 +47,7 @@ Each player has a separate `RatingState` in each rating format: singles, overall
 | `last_played` | The date of the player's latest counted match in this format. |
 | `partners`, `opponents` | The latest date this player played with or against each other player. |
 
-A counted match can move the rating. A frozen player gets 0.0, and a player at a rating bound can stay put. A new seed can also replace an unplayed state: `seed_external_rating(..., replace_unplayed_seed=True)` can replace an unplayed seed, and under `cfg.category_feeds_parent` a new overall doubles seed replaces each stored, unplayed category state derived from doubles (`initial_source` `open_parent:doubles`). `seed_external_rating` refuses in several cases, including a derived `open_parent:` state, a format where a counted match included the player (even frozen, so `matches_played` can still be 0), and a format with a rejected update a seed could change. Its docstring lists the full rules.
+A counted match can move the rating. A frozen player gets 0.0, and a player at a rating bound can stay put. A new seed can also replace an unplayed state: `seed_external_rating(..., replace_unplayed_seed=True)` can replace an unplayed seed, and under `cfg.category_feeds_parent` a new overall doubles seed replaces each stored, unplayed category state derived from doubles (`initial_source` `open_parent:doubles`). `seed_external_rating` refuses in several cases, including a derived `open_parent:` state, a format where a counted match included the player (even frozen, so `matches_played` can still be 0), and a format with a rejected update a seed could change. [External seeds](behavior.md#external-seeds) lists the full rules.
 
 ## Starting states
 
@@ -102,7 +102,7 @@ Then, for each rating format the match updates (`_compute`):
 8. In singles, with `cfg.max_singles_rating_gap` set, `abs(R_A - R_B)` is above it: `SINGLES_RATING_GAP`.
 9. In any doubles format, with `cfg.max_doubles_partner_gap` set, the two ratings on either team differ by more than it: `DOUBLES_PARTNER_GAP`.
 
-The module docstring's notes on duplicates, match status, and resubmission cover what each rejection reserves and when a corrected match can be sent again.
+The behavior notes on [duplicates](behavior.md#likely-duplicates), [match status](behavior.md#match-status), and [resubmission](behavior.md#match-ids-rejections-and-resubmission) cover what each rejection reserves and when a corrected match can be sent again.
 
 ## Team rating
 
@@ -137,7 +137,7 @@ S = (1 - cfg.win_weight) * P + cfg.win_weight * W
 surprise = S - E
 ```
 
-The default `win_weight` is 0.0, so `S` is the pooled point share. A team can win and still lose rating when it wins by less than its expected share, or wins a best of 3 with fewer total points. The [match performance note](../src/open_engine/engine.py) in the module docstring states the full policy, including what holds and what does not across game formats and game counts.
+The default `win_weight` is 0.0, so `S` is the pooled point share. A team can win and still lose rating when it wins by less than its expected share, or wins a best of 3 with fewer total points. The [match performance note](behavior.md#match-performance) states the full policy, including what holds and what does not across game formats and game counts.
 
 ## Evidence weight
 
@@ -208,7 +208,7 @@ verified_matches_played += 1                   for a tournament, league, or rec_
 partners[p], opponents[p] = the later of the stored date and played_on
 ```
 
-Dates never move back, so a late live match counts but does not rewind inactivity (see the late match note in the module docstring).
+Dates never move back, so a late live match counts but does not rewind inactivity (see the [late match note](behavior.md#late-live-matches)).
 
 **Frozen players.** A player is frozen when `played_on <= initial_source_date`: the imported rating already reflects the match. A frozen player's rating counts in the team rating, but their change is 0.0 and their state is not written. Their teammates move by their own K.
 
@@ -219,7 +219,7 @@ applied_i = rating_new_i - rating_i            0.0 for a frozen player
 imbalance = mean(applied_i on team A) + mean(applied_i on team B)
 ```
 
-The mean divides by the full team size, frozen players included. `MatchResult.imbalance` is this value rounded to 5 places. A match adds `team_size * imbalance`, with the unrounded imbalance, to the pool's total rating. `ReplayInfo.net_rating_created` totals it per rating format: `_replay` takes `math.fsum` of the unrounded `applied_i` of each counted update and adds those sums with `+=` in ledger order. In exact arithmetic the changes cancel when the two teams have the same mean K and no player is clamped or frozen. Unequal K, a clamp, or a frozen player can make imbalance nonzero. So can float rounding when a rating is far larger than its change, which needs a rating range far wider than the default: the new rating can then drop part of the change without a clamp. The module docstring's K and imbalance notes cover the rest, including why the backend should monitor the total.
+The mean divides by the full team size, frozen players included. `MatchResult.imbalance` is this value rounded to 5 places. A match adds `team_size * imbalance`, with the unrounded imbalance, to the pool's total rating. `ReplayInfo.net_rating_created` totals it per rating format: `_replay` takes `math.fsum` of the unrounded `applied_i` of each counted update and adds those sums with `+=` in ledger order. In exact arithmetic the changes cancel when the two teams have the same mean K and no player is clamped or frozen. Unequal K, a clamp, or a frozen player can make imbalance nonzero. So can float rounding when a rating is far larger than its change, which needs a rating range far wider than the default: the new rating can then drop part of the change without a clamp. The [K and imbalance notes](behavior.md#k-and-imbalance) cover the rest, including why the backend should monitor the total.
 
 `MatchResult` reports `expected_a = E`, `actual_a = S`, `surprise`, `effective_weight = weight`, and each player's delta, each rounded to 5 places. The stored rating keeps full precision.
 
@@ -262,11 +262,11 @@ A player with no variety keeps 60 percent of their certainty. Partners and oppon
 
 `player_summary` (`RatingEngine.player_summary`) adds three labels on top. None of them changes a rating, an RD, K, a prediction, or an evaluation:
 
-- With `cfg.connectivity_reliability_cap` set, a player who is not connected has reliability at most the cap, shown rounded down to 1 place. The network connectivity note in the module docstring defines connected and its limits.
+- With `cfg.connectivity_reliability_cap` set, a player who is not connected has reliability at most the cap, shown rounded down to 1 place. The [network connectivity note](behavior.md#network-connectivity) defines connected and its limits.
 - `established` is true when the displayed reliability is at least `cfg.established_reliability_threshold` and `verified_matches_played` is at least `cfg.established_min_verified_matches`.
-- `imported_reliability` shows the imported value, rounded to 1 place, while it is carried. The rules for carrying it are in the `PlayerSummary` docstring.
+- `imported_reliability` shows the imported value, rounded to 1 place, while it is carried. The rules for carrying it are in [`PlayerSummary` fields](behavior.md#playersummary-fields).
 
-The summary also reports `rating` rounded to 3 places and `rd` (RD inflated to the reference date) rounded to 4. The notes on `player_summary`'s reference date and on `established` in the module docstring explain which date a summary is measured at.
+The summary also reports `rating` rounded to 3 places and `rd` (RD inflated to the reference date) rounded to 4. The notes on [reference dates](behavior.md#reference-dates) and on [`established`](behavior.md#established) explain which date a summary is measured at.
 
 ## Win probability
 
@@ -380,7 +380,7 @@ Every `Config` field the math reads, with its default. Status says what the defa
 | `connectivity_min_contact_days` | 3 | Distinct dates for a tie or for outside contact. | Label |
 | `connectivity_min_outside_players` | 8 | Outside players for a pool to be connected. | Label |
 
-`version` names the release and is in the fingerprint. The valid range of each field is in the `Config` docstring.
+`version` names the release and is in the fingerprint. The valid range of each field is in [Config validation](behavior.md#config-validation).
 
 The engine also has fixed constants in `engine.py`, each with a comment saying why it has its value: the expected-share exponent clamp (12), the reliability blend (0.60 and 0.40), the clamp detection tolerance (1e-12), and the reported decimal places (5 for `MatchResult` numbers, 3 for `PlayerSummary.rating`, 4 for `PlayerSummary.rd`, 1 for reliability). The win probability clip (1e-6) is `PROBABILITY_CLIP` in `winprob.py`. They are not `Config` fields, so the fingerprint does not record them. A change to one changes the engine itself, so it needs a release and a changelog entry.
 

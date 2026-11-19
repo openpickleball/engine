@@ -13,496 +13,20 @@ overall doubles rating, match-source weighting, game format weighting,
 inactivity-based uncertainty, rolling partner/opponent diversity, scale
 calibration, and deterministic historical replay.
 
-Published behavior notes:
-- Every public entry point takes exact input types for each argument it
-  checks (issues #116, #118, #119), with three carve-outs: Config(...)
-  numbers, mappings, and allowed_game_formats, seed state numbers,
-  ExternalRatingSnapshot numbers, and snapshot numbers are read once and
-  converted to plain values (issue #107); matches and seed_players may be
-  any iterable, read once into a list; and output dataclasses are not
-  inputs. A subclass, or an object whose __class__ only claims the type,
-  raises the entry point's OpenEngineError subclass before any state
-  changes: a subclass can give a check one value and rating another, or
-  run caller code while it is read. A plain date in these notes means
-  exactly a date: a datetime or a date subclass is not one. An enum
-  argument must be one of its enum's members, by identity: an object of
-  the enum's own type that is not a member is rejected. Numbers are
-  exactly int or float (a bool is rejected where a number is expected),
-  enums exactly their class (a str equal to a member's value is
-  rejected), flags exactly bool, a Config exactly a Config, and a
-  GameFormat exactly a GameFormat, each holding nothing in its instance
-  __dict__ but its own fields. An entry point that takes a Config builds a
-  fresh copy from its stored field values, checked again as Config(...)
-  checks them, and uses only that copy (issue #122; see Config).
-  Match.played_at, when set, must be exactly
-  a datetime whose tzinfo is exactly datetime.timezone or exactly
-  zoneinfo.ZoneInfo (standard library C code that runs no caller code;
-  its offsets come from its tz data, the tz database or the file given to
-  ZoneInfo.from_file), with an offset that is exactly a timedelta of less
-  than a day. On a Python build that uses the pure Python zoneinfo
-  fallback, ZoneInfo instances have a __dict__ and are rejected. Any
-  other tzinfo, a subclass of either included, and a timezone built from
-  a timedelta subclass raise InvalidMatchError: the engine reads only the
-  UTC instant and offset, so convert one with
-  played_at.astimezone(timezone(timedelta(
-  seconds=played_at.utcoffset().total_seconds()))), which gives plain
-  values with the same instant and offset, and so the same ledger
-  digest. Where an earlier release converts a number
-  to its plain value (Config numbers and mappings, seed state numbers,
-  ExternalRatingSnapshot numbers, and snapshot numbers, issue #107), that
-  conversion stays. replay and the evaluation functions read the matches
-  and seed_players iterables once, into lists, before any row is checked.
-  A snapshot passed in memory must use exactly dict for every object and
-  exactly list or tuple for every list. A Config built exactly and then
-  rewritten with object.__setattr__ is rebuilt from its field values at
-  each entry point that takes it, so a rewritten value is checked again
-  (issue #122). A GameFormat's field values are checked again, by type
-  and by GameFormat's own rules, each time an entry point reads it.
-- Each player moves by their own K (from their RD after inactivity):
-  `sign * K * effective_weight * surprise`. A partner's or opponent's
-  uncertainty never changes a player's step. Team average movement is not
-  always zero-sum. Every MatchResult reports the net as `imbalance` (mean
-  team A delta plus mean team B delta). When both teams have the same mean
-  K and nothing is clamped or frozen, it is 0.0. It can be nonzero for
-  three reasons:
-    1. Unequal K: the team with the higher mean K moves more.
-    2. `clamped`: a player hit the rating floor or ceiling, so part of their
-       change was not applied.
-    3. `frozen`: the match is on or before a player's imported baseline date.
-       The imported rating already reflects that match, so that player's
-       rating is used for the expectation but does not move. Their teammates
-       move by their own K only, so the team moves less.
-  It is also 0.0 when the result matched the expectation, or when clamps or
-  freezes on both teams cancel. So an imbalance of 0.0 does not mean nothing
-  was clamped or frozen: read `clamped` and `frozen` for that.
-- Because team movement is not zero-sum, matches between high-K and low-K
-  players can add rating to the pool or remove it. Colluding accounts can
-  exploit this: a new account can gain rating by beating a low-K account
-  again and again, or lose rating faster on purpose. `imbalance` is a
-  per-match value in team-average units, so a match adds
-  `team_size * imbalance` to the pool's total rating (twice the value in
-  doubles). Each replay totals it per rating format in
-  `ReplayInfo.net_rating_created`, from the unrounded changes, a category
-  match adding to its own format and, when category_feeds_parent is on
-  and its parent update counts, to doubles. The backend should store and
-  monitor that total. Between replays it can add `team_size * imbalance`
-  of each live MatchResult (and its parent); that running total is
-  approximate, since imbalance is rounded to 5 places, and the next
-  replay gives the exact total. The engine reports the total but does
-  not limit it.
-- Match performance is team A's share of all points across the match's
-  games, blended with the match result by Config.win_weight:
-  `(1 - win_weight) * point_share + win_weight * (1 if A won else 0)`.
-  The default win_weight is 0.0, pure pooled point share. So a team can
-  win and still lose rating when it wins by less than its expected share
-  (a 5.0 team beating a 4.0 team 11-9 in doubles). It can also happen
-  when it wins a best of 3 (or 5) with fewer total points. There is no
-  floor on a winner's change, other than the rating range (min_rating to
-  max_rating). For one engine state, raising a team's point share by
-  changing only the match's game scores, with the same number of games
-  and the same result, never gives that team a worse change. Longer
-  games and more games can carry more weight (up to
-  Config.max_information_multiplier), so across game formats and game
-  counts a slightly wider winning margin can still cost more rating.
-  win_weight = 1.0 scores the result only, so a winner never loses
-  rating. Values between 0 and 1 make a rating loss less likely. Only
-  values close to 1 rule it out, and how close depends on the rating
-  range and scale and on the lowest point share a winner can have. The
-  default is a declared choice, not a validated one. It changes only
-  when out-of-sample evaluation shows another value predicts better.
-- Authoritative ratings come from scheduled replays (see
-  `Config.replay_interval_days`). Live updates between replays are
-  provisional and are labeled with the count of live updates since the last
-  recalculation, including the live updates a category rating copied when
-  it was derived from overall doubles (`RatingState.inherited_live_updates`).
-  A replay gives the same ratings as recording the same ledger live in
-  ledger order: the replay date labels the result but never changes an
-  update. Inactivity widens RD (`inflated_rd`) but never shrinks
-  or discounts an old match's update.
-- Live recording applies matches in arrival order. Only a replay gives play
-  order. A live match is late when it is dated before a player's last
-  match in its format, or before the date that player's rating in that
-  format already reflects (for a category rating copied from overall
-  doubles). It still counts, but it never moves last_played, rd_as_of, or
-  a partner or opponent date back, and its MatchResult has `late` set to
-  True. The backend should check `late` and, for a category match,
-  `parent.late`, and schedule a replay when either is True. The engine
-  stores dates, not times, so two matches on the same date that arrive
-  out of played_at order are not flagged. Because dates never move back,
-  a future-dated live match holds every date of its players at that
-  future date until the next replay (see the production notes).
-- PlayerSummary.reliability is always OPEN-earned. An imported external
-  reliability is shown separately, in PlayerSummary.imported_reliability,
-  only until OPEN-earned reliability exceeds it or the carry limits in
-  Config are reached; otherwise that field is None. It is not carried
-  before its capture date, measured at the same reference date as
-  reliability (see the next note), so an unplayed import captured after
-  the last replay is not shown by default; replay rejects such seeds. An
-  external reliability never sets OPEN RD: an imported seed's RD is always
-  Config.external_seed_rd.
-- player_summary measures inactivity, RD, and reliability at a reference
-  date. With no as_of, it is the later of the last replay date
-  (calculated_as_of) and the player's last match. So a stale player is
-  measured at the replay date and loses reliability from RD and variety
-  as replays move forward (with the connectivity cap set, connectivity
-  can still change; see its note), and a player with live matches since is measured at their last
-  match. Players in one engine can be measured at different dates. With no
-  as_of on an engine that was never replayed, it raises
-  ReferenceDateError, as it does for an as_of that is not a plain date.
-  An as_of earlier than the player's last match does not rebuild past
-  state: RD and partner variety stay as of the stored state. `reliability`
-  takes as_of as a required argument. The engine never reads the wall
-  clock.
-- PlayerSummary.established is True when OPEN-earned reliability, as
-  displayed (rounded to 1 place), is at least
-  Config.established_reliability_threshold (60 by default) and the state
-  has at least Config.established_min_verified_matches (3 by default)
-  counted tournament, league, or recreational verified matches
-  (RatingState.verified_matches_played). Self-reported matches never
-  count toward that minimum, and neither does a match in which the
-  player was frozen. So while the minimum is above 0, a player with
-  fewer counted verified matches in the format than the minimum is not
-  established at any reliability. A category state derived from overall
-  doubles starts its count at 0, as it starts matches_played at 0. With
-  a minimum of 0 the rule is reliability alone. Imported
-  reliability never counts toward established, and established is
-  measured at the same reference date as reliability, so it lapses with
-  inactivity unless the connectivity cap is set and connectivity changes
-  (see its note). Under
-  the defaults, a new
-  player with no imported rating, playing one match a week with varied
-  partners and opponents, becomes established after about 10 to 13
-  tournament, league, or recreational verified matches (10 tournament, 11
-  league, or 13 recreational verified matches of one game, fewer for best
-  of 3), and after about twice as many against the same players.
-  Self-reported matches raise reliability past the threshold after about
-  20 to 25 with varied players (never against the same players, because
-  repeat matches are discounted and then rejected), but such a player is
-  established only once they also have the minimum of counted verified
-  matches. A player seeded from a recently captured
-  imported rating starts at a lower RD (Config.external_seed_rd) and is
-  established after about 3 to 4 tournament, league, or recreational
-  verified matches. RD grows from the capture date, so an older import
-  gives less of a head start, and a very old one none. The imported rating
-  and its reliability value do not change the count. A rating that is not
-  established is what external rating systems usually call provisional.
-  That is different from OPEN's provisional live updates between replays
-  and from the open_provisional initial source. The threshold is a label
-  only, and so is the minimum: neither changes any rating, prediction,
-  evaluate, prequential_predictions, fit_scale, or fit_win_calibration
-  output. Evaluation has its own eligibility rule: it scores a match only when
-  every participant has an imported baseline or at least burn_in_matches
-  OPEN matches. That rule is separate from PlayerSummary.established.
-  With Config.connectivity_reliability_cap set, the counts above are for
-  a player whose network connectivity is connected (see the next note).
-- Network connectivity (PlayerSummary.connectivity, a NetworkConnectivity):
-  RD and variety cannot see whether a player's partners and opponents
-  ever play anyone outside their own group, so a closed pool that plays
-  only itself could reach full variety, low RD, and established on its
-  own private scale. player_summary measures it per rating format, at
-  the reference date, over Config.diversity_window_days, from the
-  partners and opponents stored in each rating state (no other data, so
-  a snapshot or a resume carries it and it needs no snapshot field). Two
-  players with a state in the format are in contact when either one's
-  state lists the other with a date in the window. A group is a set of
-  players linked by contact, and it is a main network when it has at
-  least half as many players as the largest group, so two separate
-  networks of similar size are each a main network. The label depends
-  on group sizes alone. Two players in contact are
-  tied when they share at least Config.connectivity_min_shared_contacts
-  (4) contacts and each of them is in contact with those shared players
-  on at least Config.connectivity_min_contact_days (3) distinct dates.
-  A pool is a set of players linked by ties; a player with no tie is a
-  pool of one. The pool's fringe is every player outside it in contact
-  with it whose own contacts are all in the pool or in contact with it,
-  such as a drop-in who met only the pool. Its outside players are the
-  other players in contact with it. A player is connected when they
-  have a contact in the window, their group is a main network, and
-  either the pool with its fringe holds more than half the group, or
-  the pool has at least Config.connectivity_min_outside_players (8)
-  outside players on at least connectivity_min_contact_days distinct
-  contact dates with them. connectivity is always reported. When
-  Config.connectivity_reliability_cap is set (it is None, off, by
-  default), a player who is not connected has PlayerSummary.reliability
-  at most the cap, shown rounded down to 1 place, so with a cap below
-  the established threshold they are not established. The cap is off by
-  default because the rule can be gamed through group sizes (the limits
-  below) and can cap players in a real but smaller network; it waits
-  for out-of-sample review of real ledgers. The cap changes the displayed
-  reliability only: `reliability()` gives the value from RD and
-  variety, and no rating, RD, K, prediction, evaluate,
-  prequential_predictions, fit_scale, or fit_win_calibration output
-  reads either. connectivity is built for every summary, with the cap
-  on or off. Limits: a pool in a main network that with its fringe
-  holds more than half its group is that group's own scale, which no
-  ledger can place on another, so a club in a main network that
-  outnumbers the players it met is not capped and can leave them
-  capped; pools that play each other but not
-  the rest of their group count each other's players as outside
-  players; accounts the backend has not verified can pose as outside
-  players if they also play players the pool never met, and a cluster
-  of accounts more than twice the size of a real network makes that
-  network no longer a main network; drop-in accounts, or one match
-  between two closed groups, can make a closed group large enough to be
-  a main network or to hold more than half its group; a player whose
-  only contacts are a closed group can count its members as outside
-  players when they have not tied with that player (for example when
-  the group plays so densely that every contact keeps one last date); a
-  single match between two real networks can make the smaller one no
-  longer a main network; a state keeps only the last date
-  per contact, so repeated contact with the same player counts one
-  date; contacts leave the window as the reference date moves on, so
-  connectivity can change with no new match, and a player can become
-  connected (with the cap set, reliability then rises up to the value
-  from RD and variety) when the groups that outnumbered theirs drop out of the
-  window; and, as for variety, an as_of earlier than the stored state
-  does not rebuild past contacts. A summary for a format the player has
-  no state in is measured as if the starting state RatingEngine.state
-  returns were stored: a player with no contacts, so not connected. The result
-  for one format and reference date is rebuilt after each state change
-  (the engine keeps the 16 most recent),
-  which costs about the sum over players of their contacts times their
-  contacts' contacts.
-- Ledger order: `replay` and `prequential_predictions` sort matches by
-  `played_on` first. Within one `played_on` date, untimed matches come
-  first (by `sequence`, then `match_id`), then timed matches (by the UTC
-  instant of `played_at`, then `sequence`, then `match_id`). Every row
-  passed in is validated, including rows after `as_of`, so a naive
-  `played_at` raises InvalidMatchError wherever it sits. Rows that repeat a
-  `match_id` collapse to one only when every field matches in type and
-  value (recursively, so each member of a tuple, list, set, or frozenset
-  must match in type too), with `played_at` compared by its UTC instant
-  and UTC offset; any
-  other repeat raises `LedgerConflictError`, even after `as_of`. The
-  result never depends on input order.
-- Errors: every error the engine raises on purpose is an `OpenEngineError`,
-  which is a `ValueError`. `ConfigError` covers Config values and a
-  GameFormat reached other than through a match (`GameFormat.validate`,
-  the win probability functions, and
-  `RatingEngine.predict_win_probability`), `InvalidMatchError` covers
-  matches, teams, scores, `played_at`, and a match's GameFormat,
-  `InvalidSeedError` covers external and replay seeds (a
-  seed state that breaks the seed rules in `RatingEngine.add_player`,
-  including a field of the wrong type (a str or dict subclass, or a
-  Player or RatingState subclass, counts as the wrong type), a blank id,
-  a blank `initial_source`, `initial_external_player_id`, or
-  `initial_evidence_reference`, an `external_ids` source or an
-  `initial_source` that starts with the reserved prefix `open_` (such
-  an `initial_source` is allowed only as `open_provisional` or a
-  category's `open_parent:` name under the rules listed in
-  `RatingEngine.add_player`), an external player id
-  the seed's own `external_ids` does not link under its `initial_source`,
-  or a rating or initial rating outside the bounds, raised by
-  `add_player`, `replay`, and `prequential_predictions`, and so by
-  `evaluate`, `fit_scale`, and `fit_win_calibration`; `replay` also
-  rejects a seed dated after `as_of`, and `prequential_predictions` one
-  dated after its last completed ledger match, and
-  `RatingEngine.seed_external_rating` rejects a snapshot that is not
-  exactly an `ExternalRatingSnapshot`, a source, external id, or
-  `evidence_reference` that is not exactly a str (a str subclass
-  included, and None allowed for the external id and evidence
-  reference), a blank or whitespace-only source, external id, or
-  evidence reference, and a source that starts with `open_`; it and
-  `add_player` also reject a seed that could change an update `record`
-  rejected for a reason that reads a seed, see `RejectionReason`),
-  `PlayerError` covers player identities, including a seed whose
-  account or external identity another player holds and an
-  `attach_external_id` source that starts with `open_` (its subclass
-  `UnknownPlayerError` covers a read of a player id with no player
-  record), `EvaluationError` covers
-  evaluation, fits and win probabilities, `LedgerConflictError` covers
-  conflicting ledger rows, `SnapshotError` covers snapshots that cannot
-  be loaded or resumed from, and `ReferenceDateError` covers a
-  `player_summary` call with no date to measure at, and a
-  `player_summary` or `replay` call with an as_of that is not a plain
-  date.
-- Snapshots and checkpoints: `RatingEngine.to_snapshot()` gives the whole
-  engine state as JSON-safe data (schema version 8) with sorted keys and
-  lists, and `RatingEngine.from_snapshot` loads it back after validating
-  every key, type, and range and checking the config version and
-  fingerprint. A replay's snapshot is a checkpoint:
-  `replay(..., from_snapshot=snapshot)` records only rows dated after the
-  checkpoint date and equals a full replay of the same ledger, given the
-  whole ledger or only the newer rows. It checks every row first and
-  raises instead of differing: SnapshotError for a snapshot not from a
-  replay, with live updates, or changed in any other way after its replay
-  (the snapshot's `resumable` mark, which replay sets and every engine
-  method that changes state clears; changing objects the engine returns,
-  such as players, rating states, or processed_match_ids, directly is not
-  tracked and makes the snapshot unsafe to resume), an as_of before the
-  checkpoint, a row on or before the checkpoint date that the checkpoint
-  did not consider (compared by a digest that mirrors the ledger's
-  duplicate rule), or a seed for a player the checkpoint's rows named;
-  LedgerConflictError for such a row that changed or a later row that
-  reuses its id. With `whole_ledger=True` the caller passes the whole
-  ledger, and resume also raises SnapshotError for a checkpointed row
-  missing from it (a void or deletion). Without it, resume cannot see a
-  voided row on or before the checkpoint, and given only the newer rows
-  it cannot see a backdated row either. No flag lets it see a seed
-  withdrawn or corrected after the checkpoint. Those need a full replay.
-- Likely duplicates: the same match can be reported twice under different
-  match ids. Two matches have the same content when they have the same
-  `played_on`, the same two teams as sets of players (either side may be
-  team A), and the same game scores in order, read from the same side.
-  The match_id, match type, rating format, game format, best_of,
-  played_at, sequence, and confirmed_by are left out, since two reports
-  of one match often disagree on labels. The later match in processing
-  order is the possible duplicate: arrival order live, ledger order in a
-  replay, so a replay gives the same answer whatever order rows arrive
-  in. Under the default `Config.reject_content_duplicates=False` it is
-  not rejected for this: it goes through the other checks and, if it
-  counts, its MatchResult has `possible_duplicate_of` set to the match_id
-  of the first counted match with that content. With True it is not
-  counted, with `RejectionReason.POSSIBLE_DUPLICATE` and
-  `possible_duplicate_of` set. Only counted matches are compared against,
-  so a third copy points to the first, and a match that was rejected for
-  any reason is not a target. A real rematch on the same date between
-  the same teams with the same scores looks the same: the default flags
-  it, and True does not count it, so keep the default where that matters
-  and let the backend confirm. Reports that disagree on the date are not
-  caught. RatingEngine.possible_duplicates maps each match flagged or
-  rejected as a copy to the match_id it repeats, live and after a replay.
-  An entry never clears: a counted copy's match_id is processed, and a
-  rejected copy's match_id is reserved (see the next note).
-  Which report wins is set by processing order alone. With True, the
-  report that survives is the first one to count in processing order
-  (arrival order live; in a replay, ledger order as in the ledger order
-  note: untimed rows on a date first, by sequence then match_id, then
-  timed rows by the UTC instant of played_at, then sequence and
-  match_id),
-  whatever its match type, rating format, or game format. So a weaker or
-  relabeled copy (for example an untimed self-report of a timed
-  tournament match, or a mixed doubles copy of a doubles row) can count
-  while the stronger report is rejected, a category copy that counts
-  first can keep the other row from updating its rating format, and live
-  recording and a replay can keep different rows. Under the default the
-  same order decides which report is flagged, so the flagged row can be
-  the stronger one. Use True only when the backend trusts who files
-  reports; otherwise resolve flags in the backend. Under the default, a
-  category copy of a doubles match can count twice in overall doubles: once
-  directly and once through its `parent` update. `parent` has
-  `possible_duplicate_of` None, so read the top-level field.
-- `record` validates every match first. A valid match whose `match_id` was
-  already processed or reserved returns a result that is not counted,
-  with `RejectionReason.DUPLICATE_MATCH_ID`, instead of raising, unless
-  its `as_of` is invalid (not a plain date, or earlier than `played_on`),
-  which raises `InvalidMatchError` first. Every other match that
-  `record` does not count, whatever its RejectionReason, reserves its
-  match_id: every later `record` call for a match with that id that does
-  not raise returns DUPLICATE_MATCH_ID, with the same content or not.
-  That matches replay, where a match_id names one row: a second,
-  different row with it is a LedgerConflictError, and an identical one
-  collapses into the first. So a corrected resubmission needs a new
-  match_id, live and in the ledger. Resubmit only after a rejection that
-  comes from the row itself (GAME_FORMAT_NOT_ACCEPTED,
-  SELF_REPORTED_UNCONFIRMED, MATCH_NOT_COMPLETED): for example a
-  self-reported match resubmitted after confirmation, or a match
-  corrected to an accepted game format. Under the same Config, replay
-  never counts a row rejected for one of those, in any order. The other
-  rejections depend on engine state, seeds, or other rows, so a row
-  rejected live can count in a replay, and a copy of it under a new
-  match_id could then count too. Do not resubmit those. For
-  POSSIBLE_DUPLICATE, the ledger already holds a row with the same
-  content. A live reservation
-  clears the snapshot's resumable mark. A match with
-  the same content as an earlier counted match under another match_id is
-  flagged or, by config, rejected (see the note on likely duplicates).
-- Match status: `Match.status` is a MatchStatus, and `games` is a tuple
-  or list for every status. COMPLETED (the default) needs at least one
-  game and a decided winner. A FORFEIT must have no games. RETIRED and
-  INCOMPLETE take zero or more finished games, each valid in the game
-  format, and no decided winner, so in a best of 1 they have no games; a
-  partial game is not recorded. A match that is not completed is never
-  rated: `record` returns `RejectionReason.MATCH_NOT_COMPLETED` after the
-  match_id check (a processed or reserved match_id gets
-  DUPLICATE_MATCH_ID). It changes no rating, count, or content key, and
-  is not marked processed, but like any rejected match it reserves its
-  match_id (see the note above), so a forfeit relabeled as completed
-  needs a new match_id live.
-  `replay` accepts such a row: it counts toward
-  `ReplayInfo.matches_considered`, not `matches_counted`. A full replay
-  gives each player the same rating states as a full replay of the
-  ledger without those rows. Like any rejected row, a checkpoint tracks
-  the row's digest and players, so resume raises SnapshotError for a new
-  seed for a player named only in such a row. Replacing the row with a
-  completed one under the same match_id is an edited row: on or before a
-  checkpoint date it needs a full replay (resume raises
-  LedgerConflictError when given it). In one ledger, a non-completed row
-  and a completed row with the same match_id conflict
-  (LedgerConflictError). `prequential_predictions` (and so `evaluate`,
-  `fit_scale`, and `fit_win_calibration`) never predicts a match that is
-  not completed, and takes its seed date limit and default anchor from
-  completed rows only.
-  Rating a retirement on its finished games would change how ratings
-  move, so it is not done; it would need a declared Config parameter
-  backed by out-of-sample evaluation.
+The module holds the enums and game formats, Config, Match, Player, and the
+rating state; RatingEngine, which records matches and takes and loads
+snapshots; replay and resume from a snapshot; and evaluation and calibration
+(prequential_predictions, evaluate, fit_scale, and fit_win_calibration).
 
-Production notes:
-- Persist the match ledger and player identities in a database. This module's
-  in-memory dictionaries are an engine, not a persistence layer.
-- Do not show `possible_duplicate_of` (or possible_duplicates) to whoever
-  submitted the match. It reveals another report's match_id and that
-  those players played that result on that date.
-- Verify a match's status as you verify its scores. A status other than
-  completed keeps a match from moving any rating, so a team could report
-  a loss as a forfeit, retirement, or unfinished match to avoid it. The
-  engine cannot tell; the backend must. The engine does not record which
-  team forfeited or retired, so the backend stores that.
-- Set match_type from organizer, league, or club provenance, and never
-  let whoever submits a match choose a verified type (tournament, league,
-  or rec_verified). match_type sets a match's weight and decides whether
-  it counts toward PlayerSummary.established, so a self-reported match
-  relabeled as verified would let players report their way to
-  established. The engine cannot tell; the backend must.
-- Assign match_ids in the backend. A party that can choose a match_id
-  can submit a match that gets rejected under it first (for example one
-  that is not completed or not confirmed), and then the real match with
-  that id never counts live (replay raises LedgerConflictError for the
-  pair). DUPLICATE_MATCH_ID does not say whether the id was counted or
-  reserved.
-- Give a corrected resubmission a new match_id. Once `record` has
-  considered a match_id, counted or not, a later match with it is never
-  counted live, and a different ledger row with it conflicts in replay.
-  Keep the rejected row in the ledger as it was. Resubmit only after a
-  rejection that comes from the row itself (GAME_FORMAT_NOT_ACCEPTED,
-  SELF_REPORTED_UNCONFIRMED, MATCH_NOT_COMPLETED). Do not resubmit after
-  any other rejection: a replay can count the original row, and a copy
-  under a new match_id could then count too. A replay under a different
-  Config (a new allowed_game_formats or self_reported_requires_both_teams)
-  can count rows rejected for game format or confirmation, so after such
-  a change, review resubmitted rows before the replay.
-- Require verified identity and authorized evidence before importing an
-  external rating. An external refresh can never overwrite an OPEN-earned
-  rating once OPEN matches have been processed.
-- Store each replay's `ReplayInfo` (as_of date, config version, config
-  fingerprint, counts, net_rating_created) for auditability. Watch
-  net_rating_created for a pool that grows or shrinks: colluding accounts
-  with different K can create rating, and the engine does not cap it.
-- Reject a match whose `played_on` is after the date it was submitted.
-  The engine never reads the clock, so it cannot tell. A future-dated
-  live match, by typo or on purpose, holds last_played, rd_as_of, and
-  partner and opponent dates at that future date for every player in it
-  until the next replay: RD stops growing, reliability is held up, and
-  player_summary's default reference date jumps ahead. A later honest
-  match with those players that counts in the same rating format comes
-  back with `late` set to True. For a category match, `parent.late` covers the
-  overall doubles rating.
-- To avoid replaying the whole ledger every time, persist the snapshot of
-  each scheduled replay and resume the next one from it. Take the
-  snapshot right after the replay, before any other call on the engine.
-  Store a match before the replay that covers its date. Pass the whole
-  ledger with `whole_ledger=True` so resume raises for a voided or
-  deleted row on or before the checkpoint. Given only the newer rows,
-  resume cannot see a removed row or a backdated one, so a void, an
-  edit, or a backdated row then needs a full replay. A seed withdrawn or
-  corrected after the checkpoint needs a full replay too, with or
-  without whole_ledger, since the checkpoint already holds the old seed.
-  A snapshot does not
-  replace the ledger: keep the ledger as the source of truth and run a
-  full replay when in doubt.
-- A stored snapshot sets every rating when it is loaded, so give it the
-  same write protection as the ratings themselves. from_snapshot checks
-  its shape and the engine's invariants, not that it is authentic.
+docs/model.md states the rating model: each equation the engine uses, with the
+function it comes from. docs/behavior.md holds the published behavior notes
+(input types, errors, ledger order, duplicates, late matches, imbalance,
+reliability display, snapshots, and the rest) and the requirements the backend
+must meet. Many public docstrings name the section of docs/behavior.md that
+holds their edge cases. Neither page ships with the package. They are
+at https://github.com/openpickleball/engine/blob/main/docs/model.md and
+https://github.com/openpickleball/engine/blob/main/docs/behavior.md, and each
+docstring's "docs/behavior.md" means the second page.
 """
 
 from __future__ import annotations
@@ -617,7 +141,7 @@ class MatchStatus(_StrEnum):
     decided. INCOMPLETE: stopped for another reason, such as time or
     weather. A retired or incomplete match records only the games that were
     finished, and no decided winner. record never counts a match that is not
-    completed (see the module docstring).
+    completed (see docs/behavior.md, "Match status").
     """
 
     COMPLETED = "completed"
@@ -649,6 +173,10 @@ class GameFormat:
         through the class (GameFormat.validate(fmt)), never through the
         instance. Match.validate calls it and raises a ConfigError from it
         as InvalidMatchError with the same message.
+
+        Raises:
+            ConfigError: the format is not exactly a GameFormat with only its four
+                fields, a field has the wrong type, or a value is out of range.
         """
         problem = _game_format_broken(self)
         if problem is not None:
@@ -664,10 +192,18 @@ class GameFormat:
         """
         Raise InvalidMatchError when a game score cannot end a game in this format.
 
-        Raises ConfigError when the format is not exactly a GameFormat with
-        only its fields, and InvalidMatchError when a score is not exactly
-        an int (a bool or an int subclass is rejected), before any score
-        is compared.
+        Args:
+            score_a: Team A's points, exactly an int.
+            score_b: Team B's points, exactly an int.
+
+        Raises:
+            ConfigError: the format is not exactly a GameFormat with only its
+                fields.
+            InvalidMatchError: a score is not exactly an int (a bool or an int
+                subclass is rejected), or the score cannot end a game in this
+                format.
+
+        Both type checks run before any score is compared.
         """
         problem = _game_format_broken(self)
         if problem is not None:
@@ -989,127 +525,27 @@ class Config:
     """
     Every rating parameter. Frozen, so a config cannot change during a replay.
 
-    The defaults are uncalibrated placeholders. fingerprint() identifies the
-    exact parameter set behind published ratings.
-
-    Mapping fields are stored as read-only copies whose values must be
-    finite numbers, and allowed_game_formats as a frozenset of (scoring
-    type, whole number) pairs. Keys and pairs are stored as their own
-    types: a ScoringType or MatchType key given as its exact str value
-    becomes the enum member (a str subclass, or a non-member object of the
-    enum's type, raises ConfigError; each key is read once), and an int
-    subclass becomes the plain int of its own value (not what its __int__
-    returns). Changing
-    the dict or set a config was built from does not change the config,
-    and changing the config's own raises
-    TypeError. Two configs are equal exactly when their fingerprint payloads
-    are equal, so equal configs share a fingerprint and a hash, and a Config
-    can be a dict key or a set member. to_dict() and from_dict() store and
-    load a config.
+    Each default is an uncalibrated placeholder, a declared choice, or a label
+    that changes no rating, as the parameter table in docs/model.md marks it.
+    fingerprint() identifies the exact parameter set behind published ratings.
+    to_dict() and from_dict() store and load a config.
 
     Every field is checked when the config is built, and any failure
-    raises ConfigError. A number is an int or a float, never a bool, that
-    is finite as a float: not NaN or infinite, and not an int too large to
-    convert. A whole number is an int that is also a number. Where a
-    number is allowed, an int or float subclass is accepted, and where a
-    whole number is required (the whole-number fields, game_length_weights
-    keys, and allowed_game_formats points), an int subclass is. Each is
-    converted to the plain int or float of its own value (int.__int__ or
-    float.__float__) before any range or cross-field check, and stored
-    that way, so for an exact Config the range checks, fingerprint(), and
-    rating code read that plain value (issue #107). A value whose
-    __class__ claims int or float while its real type is neither is
-    rejected. Config itself can be subclassed, but a subclass's own
-    methods, such as an overriding __post_init__, could store other
-    values, so every entry point that takes a config (RatingEngine,
-    RatingEngine.from_snapshot, replay, prequential_predictions, evaluate,
-    fit_scale, fit_win_calibration, and reliability) raises ConfigError
-    for a subclass, for any other object that is not None (a falsy one
-    included), and for an exact Config whose instance __dict__ holds
-    anything but its fields (issue #118). An exact Config can still be
-    rewritten with object.__setattr__ after it was built, so each of those
-    entry points builds a fresh Config from the given one's stored field
-    values (issue #122) and uses only that copy. Every check and the
-    plain-value conversion run again: a rewritten value Config would reject
-    raises ConfigError, and an int or float subclass becomes its plain
-    value. Each stored value is read by its real type alone, so no caller
-    code runs while the copy is built. A mapping field must hold exactly a
-    dict, or exactly the read-only copy a Config stores holding exactly a
-    dict, with keys that are enum members or exact strs (game length keys
-    real ints) and values that are numbers; allowed_game_formats must be
-    exactly a frozenset or set of real tuple pairs, each a ScoringType
-    member or exact str and a real int; and a scalar field an exact bool,
-    an exact str, None, or a real int or float. Anything else raises
-    ConfigError. RatingEngine.cfg is that copy and is never the given
-    object. For a Config that was not rewritten, the copy is equal to it
-    and has the same fingerprint. For a rewritten one it can differ, since
-    the rewritten object's own methods read what it holds, not its real
-    values. Compare configs with == or fingerprint(), not is. The engine
-    trusts its own stored copy: rewriting it after the call is outside the
-    threat model. A caller's Config rewritten while replay or an evaluation
-    function reads matches and seed_players is rebuilt too, since those
-    build the copy after they read them. fingerprint(), to_dict(), and == called on a rewritten
-    Config itself read its rewritten values. fingerprint(),
-    to_dict(), and from_dict() use the fields of Config itself, not of the instance or a
-    subclass, so a subclass's extra fields do not change the fingerprint. So a built
-    config always gives plain JSON, and fingerprint(), ==, and hash()
-    never raise. The rules:
+    raises ConfigError. Mapping fields are stored as read-only copies, and
+    allowed_game_formats as a frozenset of (scoring type, whole number)
+    pairs. Two configs are equal exactly when their fingerprint payloads are
+    equal, so equal configs share a fingerprint and a hash.
 
-    - version is exactly a str. The three flags are exactly bools.
-    - Other scalar fields are numbers, except the day counts, the
-      repeat, carry, verified match, and connectivity counts, and
-      diversity_target, which are whole numbers.
-      connectivity_reliability_cap and the two gap filters are None or a
-      number.
-    - min_rating, max_rating, and default_rating are each at most 2**511
-      in magnitude, min_rating < max_rating, and default_rating lies
-      between them.
-    - Mapping values are numbers greater than 0, with exactly one key for
-      every scoring type or match type. game_length_weights keys are whole
-      numbers of at least 1, one for the points of every allowed format,
-      and no two keys name the same length.
-    - 0 <= k_min <= k_max, and the largest K, k_min + (k_max - k_min) *
-      1.0 as player_k computes it (it can round just above k_max), times
-      the largest match weight times max_information_multiplier is
-      finite in floats. A self-reported match's step weight can be an
-      exact int product: when the self-reported match weight,
-      max_information_multiplier, and self_reported_repeat_factor are all
-      ints, and information_multiplier can return
-      max_information_multiplier itself. The check counts it as
-      reachable when, for some (scoring, points) in allowed_game_formats,
-      game_length_weights[points] * (1.0 + game_count_bonus *
-      (sys.maxsize - 1)) is not below it (sys.maxsize is the most games
-      len() can report). No real match has that many games, so the check
-      can reject a config whose multiplier no real match reaches. When it
-      is reachable, the self-reported weight times the multiplier must
-      convert to a float, the largest K
-      times that float must be finite, and with an int
-      rd_shrink_per_match, rd_shrink_per_match times the exact product
-      must convert too.
-    - 0 < rd_min < rd_max <= 2**511, and rd_max - rd_min is greater
-      than 0 as computed (an int and a float that are equal once
-      converted are rejected). The three seed RDs lie within
-      rd_min..rd_max. rd_shrink_per_match >= 0, and rd_growth_per_day is
-      from 0 to 2**511.
-    - Some bounds apply to ints only, because exact int arithmetic raises
-      OverflowError where float arithmetic goes to inf: an int
-      rd_growth_per_day is at most 2**500, an int game_count_bonus at
-      most 2**511, and the exact self-reported step weight rule above.
-    - win_weight is from 0 to 1, game_count_bonus >= 0,
-      max_information_multiplier >= 1, self_reported_repeat_factor is in
-      (0, 1], and established_reliability_threshold and
-      connectivity_reliability_cap are from 0 to 100.
-    - replay_interval_days, diversity_window_days, and
-      self_reported_repeat_window_days are from 1 to 3,652,058 (the days
-      from date.min to date.max, which timedelta holds), and
-      import_reliability_max_age_days from 0 to that. A window that
-      reaches back before date.min from a match or reference date stops
-      at date.min instead of raising OverflowError. diversity_target,
-      self_reported_max_repeats, and the three connectivity counts are at
-      least 1;
-      import_reliability_carry_matches and
-      established_min_verified_matches at least 0.
-    - The gap filters are None or at least 0.
+    An entry point that takes a config accepts only an exact Config with
+    nothing in its instance __dict__ but its fields (or None, where it
+    allows one), and uses a fresh copy built from the given one's stored
+    field values. Compare configs with == or fingerprint(), not is.
+
+    Raises:
+        ConfigError: a field breaks its rule.
+
+    See docs/behavior.md, "Config validation", for every rule, and docs/model.md,
+    "Parameters", for what each field means.
     """
 
     version: str = __version__
@@ -1161,8 +597,8 @@ class Config:
     # points. 1.0 scores the result only, so a winner never loses rating.
     # There is no floor on a winner's change, other than the rating range.
     # The default changes only when out-of-sample evaluation supports
-    # another value (issue #20). See the match performance note in the
-    # module docstring for the full policy.
+    # another value (issue #20). See "Match performance" in
+    # docs/behavior.md for the full policy.
     win_weight: float = 0.0
 
     # Evidence quality. These are OPEN policy choices.
@@ -1213,7 +649,7 @@ class Config:
     # only flags. Under True the first report to count in processing order
     # survives, whatever its match type or format, so a weaker or
     # relabeled copy can win. Use True only when the backend trusts who
-    # files reports. See the likely duplicates note in the module docstring.
+    # files reports. See "Likely duplicates" in docs/behavior.md.
     reject_content_duplicates: bool = False
 
     # Imported reliability display.
@@ -1558,14 +994,19 @@ class Config:
     @classmethod
     def from_dict(cls, data: Mapping[str, object]) -> Config:
         """
-        Build a Config from to_dict() output, also after a round trip
-        through Python's json module.
+        Build a Config from to_dict() output, also after a round trip through Python's json module.
 
-        data must be exactly a dict (json.loads gives one; another mapping
-        type raises) with exactly the keys to_dict() gives, so a stored
-        config names every parameter. Raises ConfigError for data of
-        another type, a missing or unknown key, a value that cannot be
-        converted, or a value Config rejects.
+        Args:
+            data: Exactly a dict (json.loads gives one; another mapping type
+                raises) with exactly the keys to_dict() gives, so a stored config
+                names every parameter.
+
+        Returns:
+            The Config.
+
+        Raises:
+            ConfigError: data of another type, a missing or unknown key, a value
+                that cannot be converted, or a value Config rejects.
         """
         # Exactly dict: a mapping type runs its own code on every read, so
         # the checks below and Config could read different values.
@@ -1999,49 +1440,15 @@ class Match:
     One match: teams, game scores, date, format, provenance, and status.
 
     status (last field, default MatchStatus.COMPLETED) says how the match
-    ended. A completed match has at least one game and a decided winner. A
-    forfeit must have no games. A retired or incomplete match has zero or more
-    finished games, each valid in game_format, and no decided winner; a
-    partial game is not recorded. record never counts a match that is not
-    completed: after the match_id check (a processed or reserved match_id
-    gets DUPLICATE_MATCH_ID), it returns RejectionReason.MATCH_NOT_COMPLETED
-    and, like every rejected match, reserves the match_id: a later record
-    call for a match with it that does not raise returns DUPLICATE_MATCH_ID.
+    ended. A completed match has at least one game and a decided winner.
+    record never counts a match that is not completed.
 
-    The match must be a Match itself, not a subclass: record, replay, and
-    prequential_predictions (and so evaluate, fit_scale, and
-    fit_win_calibration) and ledger_order raise InvalidMatchError for a
-    subclass before they change any state or call its validate, and
-    Match.validate raises it for a subclass that does not override it. A
-    subclass could return one value to validation and another to rating.
-    The same calls raise it for a Match whose instance __dict__ holds
-    anything but its own fields, which could hide a method validate calls.
+    The match must be a Match itself, not a subclass, and validate raises
+    InvalidMatchError for a field of the wrong type. match_id, the team
+    player ids, and each member of confirmed_by must be a non-blank str,
+    exactly a str (not a subclass).
 
-    match_id, the team player ids, and each member of confirmed_by must be a
-    non-blank str, exactly a str (not a subclass); validate raises
-    InvalidMatchError otherwise.
-
-    validate checks the type of status, rating_format, match_type,
-    game_format, team_a, team_b, confirmed_by, played_on, played_at,
-    sequence, and best_of before it reads any of them, each exactly (a
-    subclass, or an object whose __class__ only claims the type, is
-    rejected; issue #116). It raises InvalidMatchError when status is not
-    exactly a MatchStatus, rating_format a RatingFormat, or match_type a
-    MatchType (a str is rejected, even one equal to a member's value);
-    when game_format is not exactly a GameFormat holding only its fields,
-    each of its exact type; when a team is not exactly a tuple; when
-    confirmed_by is not exactly a set or frozenset; when played_on is not
-    exactly a date; when played_at is not None or exactly a datetime, or
-    its tzinfo is set and not exactly datetime.timezone or exactly
-    zoneinfo.ZoneInfo (a subclass of either, or a custom tzinfo, is
-    rejected: convert one with played_at.astimezone(timezone(timedelta(
-    seconds=played_at.utcoffset().total_seconds())))); or when sequence or best_of is not exactly
-    an int (a bool, float, or int subclass is rejected). games and each
-    game in it must be exactly a tuple or list, and each score exactly an
-    int (a subclass of any of these is rejected). It also calls
-    GameFormat.validate on the format, through the class, and raises
-    InvalidMatchError with the same message for a ConfigError that call
-    raises.
+    See docs/behavior.md, "Match fields" and "Match status".
     """
 
     match_id: str
@@ -2321,15 +1728,25 @@ def ledger_order(match: Match) -> tuple[date, int, datetime, int, str]:
 
     Matches sort by played_on. Within one day, untimed matches come first,
     by sequence then match_id. Timed matches follow, by the UTC instant of
-    played_at, then sequence, then match_id. played_at must be
-    timezone-aware; a naive value raises InvalidMatchError, and so does a
-    match that is not exactly a Match (a subclass included), or whose
-    match_id, status, rating_format, match_type, game_format, teams,
-    confirmed_by, played_on, played_at, sequence, or best_of has the wrong
-    type, checked exactly as Match.validate checks them first (a played_at
-    tzinfo must be exactly datetime.timezone or zoneinfo.ZoneInfo). Value rules, such as a
-    nonnegative sequence, and the games, team ids, and confirmed_by
-    members are not checked.
+    played_at, then sequence, then match_id.
+
+    Args:
+        match: Exactly a Match.
+
+    Returns:
+        The match's sort key.
+
+    Raises:
+        InvalidMatchError: played_at must be timezone-aware; a naive value
+            raises InvalidMatchError, and so does a match that is not exactly
+            a Match (a subclass included), or whose match_id, status,
+            rating_format, match_type, game_format, teams, confirmed_by,
+            played_on, played_at, sequence, or best_of has the wrong type,
+            checked exactly as Match.validate checks them first (a played_at
+            tzinfo must be exactly datetime.timezone or zoneinfo.ZoneInfo).
+
+    Value rules, such as a nonnegative sequence, and the games, team ids,
+    and confirmed_by members are not checked.
     """
     _require_plain_match(match)
     Match._validate_field_types(match)
@@ -2474,7 +1891,7 @@ class RejectionReason(_StrEnum):
     read the players' seeded ratings or dates, so record also keeps the
     players of an update rejected for one of them, and
     RatingEngine.seed_external_rating and RatingEngine.add_player refuse a
-    seed that could change it (see seed_external_rating).
+    seed that could change it (see docs/behavior.md, "External seeds").
     """
 
     DUPLICATE_MATCH_ID = "duplicate_match_id"
@@ -2508,46 +1925,17 @@ class MatchResult:
     reason is None when the match counted. deltas lists the rating changes.
     frozen and clamped list the players whose change was not fully applied.
     imbalance is the mean team A delta plus the mean team B delta, from the
-    unrounded changes, rounded to 5 places. Each delta is rounded on its
-    own, so imbalance can differ from the same sum of the rounded deltas by
-    up to 1.5e-5. imbalance is in team-average units, so a match adds
-    team_size * imbalance to the pool's total rating (twice the value in
-    doubles). It is 0.0 when both teams have the same mean K and no
-    player is clamped or frozen, and for a match that did not count. It can
-    be nonzero when the teams' mean K differ or a player is clamped or
-    frozen. A value of 0.0 does not mean nothing was clamped or frozen: read
-    clamped and frozen for that. parent holds the overall doubles update for
-    a category match, with its own imbalance.
+    unrounded changes, rounded to 5 places. parent holds the overall doubles
+    update for a category match, with its own imbalance.
 
     late is True for a counted match dated before a player's last match in
     this rating format, or before the date that player's rating in this
     format already reflects (for a category rating copied from overall
-    doubles). Frozen players count. Live recording applies matches in
-    arrival order, so the backend should check late and, for a category
-    match, parent.late, and schedule a replay when either is True. It
-    compares dates only, so a match on the same date as a player's last
-    match is not late. It is False for a match that did not count. parent
-    has its own value, measured against the overall doubles dates. A late
-    category match leaves its rd_as_of at the date that player's rating
-    already reflects, so later live category matches dated before that
-    date are late too.
+    doubles). possible_duplicate_of can name the earliest counted match the
+    engine has seen with the same content. Do not show it to
+    whoever submitted the match: it names another report.
 
-    possible_duplicate_of is the match_id of the earliest counted match the
-    engine has seen with the same content: the same played_on, the same two
-    teams (either side may be team A, in any player order), and the same
-    game scores read from the same side. Other fields, the match_id and
-    rating format included, are left out. It is None when there is no such
-    earlier match. Only a counted match and a match rejected with
-    RejectionReason.POSSIBLE_DUPLICATE (under
-    Config.reject_content_duplicates) carry it; it is None on every other
-    result and on parent. A real rematch on the same date with the same
-    scores is flagged too, so it is a signal for the backend to check, not
-    proof. Processing order alone decides which report is the copy, so the
-    flagged or rejected one can be the stronger report (see the module
-    docstring). A category copy of a doubles match also reaches overall
-    doubles through parent, whose possible_duplicate_of is None, so read
-    this top-level field. Do not show it to whoever submitted the match:
-    it names another report.
+    See docs/behavior.md, "Match results".
     """
 
     counted: bool
@@ -2572,35 +1960,13 @@ class NetworkConnectivity:
     Whether a player's pool connects to the wider network, in one format.
 
     Measured over Config.diversity_window_days at the summary's reference
-    date, from the partners and opponents stored in each rating state.
-    Two players with a state in the format are in contact when either
-    one's state lists the other with a date in the window. A group is a
-    set of players linked by contact. A group is a main network when it
-    has at least half as many players as the largest group, so two
-    separate networks of similar size are each a main network.
+    date, from the partners and opponents stored in each rating state. When
+    connected is False and Config.connectivity_reliability_cap is set (it is
+    None by default), PlayerSummary.reliability is at most that cap. It is
+    a label only and changes no rating.
 
-    Two players in contact are tied when they share at least
-    Config.connectivity_min_shared_contacts contacts and each of them is
-    in contact with those shared players on at least
-    Config.connectivity_min_contact_days distinct dates. A pool is a set
-    of players linked by ties; a player with no tie is a pool of one. The
-    pool's fringe is every player outside the pool who is in contact with
-    it and whose own contacts are all in the pool or in contact with it:
-    a drop-in who met only the pool and its other contacts. The pool's
-    outside players are the other players outside it in contact with it,
-    and outside_days counts the distinct contact dates between the pool
-    and them.
-
-    connected is True when the player has a contact in the window, their
-    group is a main network, and either the pool with its fringe holds
-    more than half the group's players, or the pool has at least
-    Config.connectivity_min_outside_players outside players on at least
-    Config.connectivity_min_contact_days outside days. When it is False
-    and Config.connectivity_reliability_cap is set (it is None by
-    default), PlayerSummary.reliability is at most that cap. It is a
-    label only and changes no rating. The rule can be gamed through
-    group sizes; see the network connectivity note in the module
-    docstring for its limits.
+    See docs/behavior.md, "Network connectivity", for each field, the rule, and its
+    limits.
     """
 
     pool_size: int  # players in the pool, this player included
@@ -2751,41 +2117,13 @@ class PlayerSummary:
 
     reliability is always OPEN-earned. imported_reliability is the imported
     external reliability, rounded to 1 place, while it is carried, otherwise
-    None. It is carried when it was captured on or before the reference date
-    (player_summary's as_of, else the later of the engine's calculated_as_of
-    and the player's last_played), is
-    fresh, is within the carry match limit, and is higher than the earned
-    value. It is shown separately and never replaces or converts into
-    reliability.
+    None. It is shown separately and never replaces or converts into
+    reliability. established and connectivity are labels and change no
+    rating. live_updates_since_recalculation counts the live updates since
+    the last replay that are in the state's rating. It is 0 right after a
+    replay.
 
-    When Config.connectivity_reliability_cap is set (None, off, by
-    default), reliability is at most the cap while connectivity.connected
-    is False (see NetworkConnectivity). connectivity, the last field, is
-    always reported.
-
-    established is True when reliability (as displayed, rounded to 1 place)
-    is at least Config.established_reliability_threshold and the state's
-    verified_matches_played (counted tournament, league, and recreational
-    verified matches) is at least Config.established_min_verified_matches.
-    Self-reported matches never count toward that minimum. Imported
-    reliability never counts toward established, and established is
-    measured at the same reference date as reliability, so it lapses with
-    inactivity unless the connectivity cap is set and connectivity
-    changes. A recently
-    captured imported rating can reach the threshold in fewer OPEN matches
-    because of its lower starting RD; see the module docstring for counts.
-    It is a label only and changes no rating. A rating that is not
-    established is what external rating systems usually call provisional.
-    That is different from OPEN's provisional live updates between replays
-    and from the open_provisional initial source. Evaluation's eligibility
-    rule (an imported baseline or at least burn_in_matches OPEN matches) is
-    a separate rule from established.
-
-    live_updates_since_recalculation counts the live updates since the last
-    replay that are in the state's rating: the state's own
-    live_updates_since_replay plus its inherited_live_updates, which for a
-    category state derived from overall doubles is the parent's live count
-    when the state was derived. It is 0 right after a replay.
+    See docs/behavior.md, "Player summaries", "Established", and "Network connectivity".
     """
 
     player_id: str
@@ -2921,9 +2259,18 @@ def expected_point_share(team_a_rating: float, team_b_rating: float, scale: floa
     1 / (1 + 10**((team_b_rating - team_a_rating) / scale)), with the
     exponent clamped to -12..12. See docs/model.md.
 
-    Raises EvaluationError unless each argument is exactly an int or a
-    float (not a bool or a subclass) that is finite as a float, and when
-    the rating difference divided by scale is too large to compute.
+    Args:
+        team_a_rating: Team A's rating.
+        team_b_rating: Team B's rating.
+        scale: The rating scale in the formula above.
+
+    Returns:
+        Team A's expected share of points.
+
+    Raises:
+        EvaluationError: unless each argument is exactly an int or a float
+            (not a bool or a subclass) that is finite as a float, and when
+            the rating difference divided by scale is too large to compute.
     """
     for name, value in (
         ("team_a_rating", team_a_rating),
@@ -3054,18 +2401,27 @@ def reliability(state: RatingState, cfg: Config, as_of: date) -> float:
     OPEN-earned reliability (0-100). Never a conversion of an external score.
 
     Combines rating certainty (from RD, inflated for inactivity) with rolling
-    partner/opponent variety. as_of is the date inactivity and variety are
-    measured at. See docs/model.md for the equation.
+    partner/opponent variety. See docs/model.md for the equation.
 
-    Raises EvaluationError unless state is exactly a RatingState whose rd
-    is exactly an int or float that is finite as a float, rd_as_of None or
-    exactly a date, and partners and opponents exactly dicts with exactly
-    str keys and exactly date values; ConfigError unless cfg is exactly a
-    Config with only its fields (it is rebuilt from its field values, see
-    Config, so a rewritten value it rejects raises too); and
-    ReferenceDateError unless as_of is
-    exactly a date. An rd too large to inflate for inactivity raises
-    EvaluationError too, instead of OverflowError.
+    Args:
+        state: Exactly a RatingState.
+        cfg: Exactly a Config with only its fields. It is rebuilt from its
+            field values.
+        as_of: The date inactivity and variety are measured at, exactly a date.
+
+    Returns:
+        The reliability, from 0 to 100.
+
+    Raises:
+        EvaluationError: state is not exactly a RatingState whose rd is
+            exactly an int or float that is finite as a float, rd_as_of None
+            or exactly a date, and partners and opponents exactly dicts with
+            exactly str keys and exactly date values; or its rd is too large
+            to inflate for inactivity.
+        ConfigError: cfg is not valid.
+        ReferenceDateError: as_of is not exactly a date.
+
+    See docs/behavior.md, "Input types".
     """
     _check_reliability_state(state)
     return _reliability(state, _require_config(cfg), as_of)
@@ -4892,12 +4248,19 @@ class RatingEngine:
         """
         An empty engine under cfg (default Config()).
 
-        Raises ConfigError unless cfg is None or exactly a Config (not a
-        subclass) holding only its own fields, before anything is built.
         The engine keeps a fresh copy of cfg, rebuilt from its field values
-        and checked again as Config(...) checks them (issue #122), so
-        self.cfg is never cfg. For a Config that was not rewritten after it
-        was built, self.cfg equals cfg and has the same fingerprint.
+        and checked again as Config(...) checks them, so self.cfg is never
+        cfg. For a Config that was not rewritten after it was built, self.cfg
+        equals cfg and has the same fingerprint.
+
+        Args:
+            cfg: None or exactly a Config (not a subclass) holding only its own
+                fields.
+
+        Raises:
+            ConfigError: cfg is not None or exactly a Config holding only its own
+                fields, before anything is built, or a value in it fails Config's
+                checks when it is rebuilt.
         """
         self._start(_config_or_default(cfg))
 
@@ -4978,56 +4341,19 @@ class RatingEngine:
         and RatingEngine.from_snapshot rebuilds the engine from it, or from
         json.loads of its text. Every dict is emitted with sorted keys and
         every list in a fixed order, so the same state always gives the same
-        text. Numbers keep their type: an int stays an int.
-
-        Keys: snapshot_version (8), engine_version (informational),
-        config_version and config_fingerprint (of this engine's Config),
-        calculated_as_of (ISO date or null), replay_info (null, or its
-        fields with as_of as an ISO date and net_rating_created as format
-        value to float), players (sorted by id: id,
-        account_user_id, external_ids, and ratings by format value, each
-        state with every RatingState field, dates as ISO text, and partners
-        and opponents as id to ISO date), processed_match_ids (sorted),
-        reserved_match_ids (sorted ids of matches record considered and did
-        not count, for any reason other than DUPLICATE_MATCH_ID; a later
-        record call for a match with one of these ids that does not raise
-        returns DUPLICATE_MATCH_ID),
-        self_reported_log (sorted by format then teams: rating_format,
-        teams as two sorted id lists, and dates in stored order),
-        content_keys (the content key digest of each counted match, see
-        MatchResult.possible_duplicate_of, to the match_id first counted
-        with it, sorted by digest), possible_duplicates (sorted by
-        match_id: each match flagged or rejected as a possible duplicate,
-        to the match_id it repeats; an entry never clears),
-        ledger_digests (match_id to the SHA-256 digest of every row any
-        replay behind this engine considered, cumulative across resumes),
-        ledger_player_ids (sorted ids of every player named in those rows,
-        counted or not), seed_sensitive_rejections (sorted by match_id:
-        each update record rejected for BEFORE_IMPORTED_BASELINE,
-        SINGLES_RATING_GAP, or DOUBLES_PARTNER_GAP, live or in a replay,
-        as players, the sorted ids of the match's players, and
-        rating_format, the format of the rejected update: the match's own,
-        or overall doubles for the doubles update of a counted category
-        match; the seed methods refuse a seed that could change one, and
-        an entry never clears), and resumable (true only while the engine
-        is exactly what a replay produced). The README lists the schema in
-        full.
+        text. The README lists the schema in full.
 
         To use the snapshot as a checkpoint, take it right after replay,
-        before any other call on the engine. Every engine method that
-        changes state (creating a player or rating state, a seed, an
-        identity link, a live match) sets resumable to false, and resume refuses it.
-        Changing objects the engine returns (players, rating states,
-        processed_match_ids and the like) directly is not tracked, and
-        makes the snapshot unsafe to resume. A stored snapshot sets
-        every rating when loaded, so protect it from writes as you protect
-        the ratings themselves: from_snapshot checks its shape and the
-        engine's invariants, not that it is authentic.
+        before any other call on the engine.
 
-        The snapshot is checked with the rules from_snapshot applies, so
-        state that could not load back (a value of the wrong type, a
-        rating out of bounds) raises SnapshotError naming the field
-        instead of being returned.
+        Returns:
+            The snapshot, as plain JSON data.
+
+        Raises:
+            SnapshotError: the state could not load back (a value of the wrong
+                type, a rating out of bounds); the message names the field.
+
+        See docs/behavior.md, "Snapshot schema and checks".
         """
         info = self.replay_info
         replay_info: object = None
@@ -5069,139 +4395,27 @@ class RatingEngine:
         """
         Rebuild an engine from to_snapshot() output, or json.loads of its text.
 
-        cfg must be the Config the snapshot was taken under (default
-        Config()): its version and fingerprint must equal the snapshot's.
-        cfg must be None or exactly a Config with no attributes beyond its
-        fields, or it raises ConfigError before the snapshot is read. The
-        engine keeps a copy of cfg rebuilt from its field values (see
-        Config), and the fingerprint check reads that copy.
-        The whole snapshot is validated before anything is built: exactly
-        a dict for every object and exactly a list or tuple for every list
-        (another container type, a dict subclass included, is rejected),
-        exactly a bool for resumable, exactly
-        the schema's keys at every level, snapshot_version 8, dates as
-        YYYY-MM-DD text, non-blank str ids with no repeated player or match
-        id (ids, external_ids sources and ids, and provenance strs exactly
-        str, not a subclass), RatingFormat values as format keys, ratings
-        within min_rating and max_rating, RD within rd_min and rd_max, an imported
-        reliability between 0 and 100, nonnegative int counts no larger
-        than 2**63 - 1 (an int or float subclass where a number is allowed,
-        or an int subclass for a count, is checked and stored as the plain
-        int or float of its own value, except net_rating_created, which
-        must be exactly a float), replay_info present exactly when calculated_as_of
-        is and consistent with it (its net_rating_created a finite float,
-        not a negative zero, for every RatingFormat, 0.0 for every format when matches_counted
-        is 0 and for a format in which no player has a played state),
-        self-reported matchups of two disjoint
-        teams of the format's size, content keys and ledger digests of 64
-        lowercase hex characters, content keys that each name a different
-        processed match id, possible duplicates that each name another
-        match that is a content_keys value and whose own id is not one, a
-        possible duplicate id that is a processed match id under the
-        default config and is not one under reject_content_duplicates (and,
-        in a resumable snapshot, is a ledger_digests id), reserved match
-        ids with no repeats and none in processed_match_ids (and, in a
-        resumable snapshot, each a ledger_digests id), every
-        possible_duplicates key a reserved id under
-        reject_content_duplicates, every ledger_digests id processed or
-        reserved, and a bool resumable that is false without a replay.
-        Each seed_sensitive_rejections entry has a RatingFormat value as
-        rating_format and, as players, exactly twice that format's team
-        size of non-blank str ids, sorted with no repeats. Its match_id is
-        a reserved id that is not a possible_duplicates key, or a processed
-        id with rating_format doubles under category_feeds_parent whose
-        every named player is in players, one of them with a played
-        category state that has one other named player as a partner and
-        the other two as opponents. With no gap rule for its format
-        (max_singles_rating_gap for singles, max_doubles_partner_gap for
-        the others), every named player has a state with an
-        initial_source_date there or, with none stored, under
-        category_feeds_parent in a category format, an overall doubles
-        state with one. In a resumable snapshot every named
-        player is in ledger_player_ids.
-        Every state must be one an engine release can produce: initial_rating
-        within the rating bounds; an unplayed state with RD new_player_rd,
-        external_seed_rd, or at least category_seed_rd, and no partners,
-        opponents, or live updates; matches_played 0 exactly when
-        last_played is null; live updates and verified matches no more
-        than matches played; no
-        player their own partner or opponent; an imported reliability only
-        with an initial_source_date; a nonzero inherited_live_updates only
-        on a category state derived from its parent (category_feeds_parent
-        on, initial_source "open_parent:" plus the parent's value) with a
-        parent state, no more than the parent state's live updates, the
-        parent's initial_source_date, and no imported reliability, external
-        player id, or evidence reference; while such a state is unplayed,
-        also an RD of at least category_seed_rd and an rd_as_of that is set
-        and no later than the parent state's. This engine no longer creates
-        an unplayed state with a nonzero inherited_live_updates (issue
-        #112); these rules accept one as an earlier release's
-        seed_provisional_rating stored it, so its snapshots still load.
-        Every partner, opponent, and
-        self-reported team member is a player in the snapshot. Each state's
-        matches_played - verified_matches_played (its self-reported updates)
-        is at most the self-reported log dates in its format that name the
-        player, plus, for doubles under category_feeds_parent, those in the
-        category formats. For a state with no initial_source_date, and for
-        every state of a resumable snapshot counting only log dates after
-        its initial_source_date, an overall doubles count under
-        category_feeds_parent with max_doubles_partner_gap set is at least
-        the logged doubles matches, since the gap can reject a category
-        match's doubles update; every other such count equals the logged
-        matches in its format, plus, for doubles under
-        category_feeds_parent, the logged category matches. A snapshot
-        that is not resumable does not record when each seed was set, so
-        for a state with an initial_source_date there only the upper bound
-        is checked. For each self-reported log entry's latest date, every
-        named player has a baseline dated on or after it (the state's
-        initial_source_date in the entry's format or, with no state stored
-        there, under category_feeds_parent in a category format, the
-        overall doubles state's), or a played state in that format whose
-        last_played is on or after it and that records every teammate in
-        partners and every player of the other team in opponents, each
-        dated on or after it; and at least one named player has no
-        baseline on or after it. A snapshot edited in several
-        fields can still load, for example: one that is not resumable
-        where a played state gets an initial_source_date before every
-        logged date that moved it and verified_matches_played raised to
-        match (with an external initial_source, or an "open_parent:" one
-        dated with its parent; a dated "open_provisional" state does not
-        load); the dated-state edits the resumable rules below reject, in
-        a snapshot that is not resumable; in a resumable snapshot, a state
-        dated on or after an earlier match that moved it, with
-        verified_matches_played raised to match, when its last_played and
-        every partner and opponent date are still after the new date (for
-        example, because it met the same partners and opponents again
-        later), since those maps keep only the latest date; a log name
-        swapped to a player who later played in that format with the same
-        teammates and opponents, on or after the entry's latest date, with
-        the verified counts adjusted to match; a whole log entry deleted
-        with the named players' verified counts raised, since the snapshot
-        does not tie a match id to its match type; and edits that also
-        rewrite the partner and opponent names or dates to match. Identities
-        follow the seed and link rules: account_user_id is null or a
-        non-blank str, every external_ids source and id is a non-blank str,
-        and no two players hold the same account or the same (source,
-        external id) pair. No external_ids source starts with "open_".
-        Every state's initial_source is a non-blank str, and one that starts
-        with "open_" follows the reserved-name rules in add_player, checked
-        under cfg (an "open_parent:" state may also be played, and is then
-        undated only with a played parent state, with no RD rule). Every
-        state's initial_evidence_reference is null or a non-blank str, and
-        its initial_external_player_id is null or a non-blank str that
-        the same player's external_ids links under initial_source. A
-        resumable snapshot also holds no date after calculated_as_of, no
-        played state with an initial_source_date whose last_played, or
-        any partner or opponent date, is on or before that date (a replay
-        adds every seed before any row, and a row on or before a state's
-        date freezes it), no
-        nonzero live_updates_since_replay or inherited_live_updates, no
-        processed match id without a ledger digest, and no player with a
-        played state missing from ledger_player_ids, and its replay_info
-        counts equal the number of ledger digests and processed match ids.
-        These checks cover shape and invariants, not authenticity. Raises
-        SnapshotError naming the first bad value. The engine shares no state with the
-        snapshot.
+        The whole snapshot is validated before anything is built, and the engine
+        shares no state with the snapshot. These checks cover shape and
+        invariants, not authenticity.
+
+        Args:
+            snapshot: to_snapshot() output, or json.loads of its text.
+            cfg: The Config the snapshot was taken under (default Config()): its
+                version and fingerprint must equal the snapshot's. The engine keeps
+                a copy of cfg rebuilt from its field values.
+
+        Returns:
+            The rebuilt RatingEngine.
+
+        Raises:
+            ConfigError: cfg is not None or exactly a Config with no attributes
+                beyond its fields (checked before the snapshot is read), or a value
+                in it fails Config's checks when it is rebuilt.
+            SnapshotError: the snapshot breaks a rule; the message names the first
+                bad value.
+
+        See docs/behavior.md, "Snapshot schema and checks", for every rule.
         """
         engine = cls(cfg)
         _load_snapshot(engine, snapshot)
@@ -5213,13 +4427,20 @@ class RatingEngine:
         """
         The player record for player_id. Read-only: it never creates a player.
 
-        Raises PlayerError for a player_id that is blank or not exactly a
-        str (a subclass is rejected), and UnknownPlayerError when no player
-        record exists for it. A player is created by add_player,
-        seed_provisional_rating, seed_external_rating, link_account,
-        attach_external_id, or a counted record (and so replay). An id named
-        only in uncounted rows, or in rows after a replay's as_of, has no
-        player record.
+        A player is created by add_player, seed_provisional_rating,
+        seed_external_rating, link_account, attach_external_id, or a counted
+        record (and so replay). An id named only in uncounted rows, or in rows
+        after a replay's as_of, has no player record.
+
+        Args:
+            player_id: The player's id, exactly a str (a subclass is rejected).
+
+        Returns:
+            The stored Player record.
+
+        Raises:
+            PlayerError: player_id is blank or not exactly a str.
+            UnknownPlayerError: no player record exists for it.
         """
         if not _is_id(player_id):
             raise PlayerError("player_id is required")
@@ -5238,100 +4459,19 @@ class RatingEngine:
         """
         Add a copy of a player record as a seed.
 
-        Seed rules, checked for the seed and every rating state:
-        - The seed is a Player with a str id that is not blank or
-          whitespace only, its ratings are a dict, every key is a
-          RatingFormat, and every value is a RatingState. Its external_ids
-          are a dict of str to str with no blank or whitespace-only source
-          or id, and its account_user_id is None or a str that is not blank
-          or whitespace only. The seed must be exactly a Player and each
-          state exactly a RatingState, and every str and dict here, the
-          provenance strs below, and partners and opponents must be
-          exactly str and dict, not a subclass.
-        - rating, rd, initial_rating, and an imported reliability are ints
-          or finite floats (not bool), the counts are ints, partners and
-          opponents are dicts, dates are dates, initial_source is a str,
-          and initial_external_player_id and initial_evidence_reference
-          are each a str or None. An int or float subclass in rating, rd,
-          initial_rating, or an imported reliability, and an int subclass
-          in a count, is accepted, and is checked and stored as the plain
-          int or float of its own value (int.__int__ or float.__float__,
-          issue #107). A value whose __class__ claims int or float while
-          its real type is neither is rejected. The caller's Player and
-          RatingState are not changed.
-        - initial_source is not blank or whitespace only, and neither is
-          an initial_external_player_id or initial_evidence_reference
-          that is set.
-        - No external_ids source starts with "open_", the prefix reserved
-          for provenance the engine writes. The prefix is matched exactly,
-          so "OPEN_x" or " open_x" is not reserved. An initial_source that
-          starts with it has no imported reliability,
-          initial_external_player_id, or initial_evidence_reference, and
-          is one of two names. "open_provisional" (RatingState's default)
-          has no initial_source_date, so a dated seed must set its own
-          initial_source. In a category format, "open_parent:" plus that
-          format's parent's value (doubles) needs Config.category_feeds_parent
-          on, a doubles state in the same seed, an initial_source_date
-          when that doubles state has one and none when it has none (the
-          two dates may differ: the engine creates a derived state only at
-          the player's first category match, with the doubles date, and
-          then refuses a doubles reseed, and a doubles reseed refreshes an
-          unplayed derived state a seed or snapshot holds; but a seed or
-          snapshot made before that refresh existed, or built by a caller,
-          can hold another date), and an RD of at least
-          Config.category_seed_rd. An undated one also needs a played
-          doubles state, which a seed cannot have, so such a seed is
-          always rejected. A seed taken from an engine with
-          category_feeds_parent on is rejected by one with it off when it
-          holds an "open_parent:" state. These rules do not check the
-          rating or the date against the doubles state's, so a seed can
-          still claim a derived state with any rating in range, and an
-          "open_provisional" seed can carry any rating in range.
-        - An initial_external_player_id that is set is linked in the seed's
-          own external_ids under initial_source, so the uniqueness check
-          below covers it. Since the seed must be exactly a Player, each
-          state exactly a RatingState, and these ids exactly str and dict,
-          a seed cannot carry another player's external identity as its
-          provenance.
-        - No matches, last_played, partners, opponents, or live updates:
-          matches_played, verified_matches_played,
-          live_updates_since_replay, and inherited_live_updates are 0.
-        - rating and initial_rating are within Config.min_rating and
-          Config.max_rating.
-        - A provisional state (no initial_source_date) has RD new_player_rd,
-          no rd_as_of, and no imported reliability.
-        - An imported state, or a category state derived from one, has RD
-          external_seed_rd or max(external_seed_rd, category_seed_rd),
-          rd_as_of equal to initial_source_date, and an imported reliability
-          that is None or between 0 and 100.
-        Played states are rebuilt through replay instead.
-        - The seed has no state in the format of an update record rejected
-          for BEFORE_IMPORTED_BASELINE, SINGLES_RATING_GAP, or
-          DOUBLES_PARTNER_GAP that names the seed's id, nor, under
-          Config.category_feeds_parent, in that format's parent, as
-          seed_external_rating refuses. Only add_player checks this, after
-          the other seed rules and the duplicate id check and before the
-          account and external identity uniqueness checks: replay adds its seeds before any row, and
-          resume refuses a seed for any player in a row its checkpoint
-          considered.
-        add_player has no reference date, so it does not check that
-        initial_source_date is in the past: replay rejects a seed dated after
-        its as_of, and prequential_predictions one dated after its last match.
-        Under Config.category_feeds_parent, an unplayed category state in a
-        seed fixes where that category starts: it does not follow later
-        changes to the doubles state from matches, and an "open_provisional"
-        one does not follow a later doubles seed either (only an unplayed
-        "open_parent:doubles" one is refreshed by a doubles reseed). A
-        replay without that seed can then differ from live recording (issue
-        #112).
+        The seed and every rating state in it must follow the seed rules. Played
+        states are rebuilt through replay instead. The caller's Player and
+        RatingState are not changed.
 
-        Raises InvalidSeedError for a seed that breaks these rules (a seed
-        that is not exactly a Player (a subclass included), or has a blank
-        id or one that is not a str (a str subclass included), is checked
-        before the duplicate id), and PlayerError if the id exists, or if
-        another player already holds the seed's account_user_id or one of
-        its (source, external id) pairs, with the messages link_account and
-        attach_external_id use. Nothing changes when either is raised.
+        Args:
+            player: The seed, exactly a Player (not a subclass).
+
+        Raises:
+            InvalidSeedError: the seed breaks the seed rules.
+            PlayerError: the id exists, or another player already holds the
+                seed's account_user_id or one of its (source, external id) pairs.
+
+        Nothing changes when either is raised. See docs/behavior.md, "Seed rules".
         """
         self._add_seed(player, self._held_identities(), check_rejections=True)
 
@@ -5417,11 +4557,17 @@ class RatingEngine:
         """
         Claim an existing external-only player profile for an OPEN account.
 
-        player_id and account_user_id must be exactly str (not a subclass).
-        Raises PlayerError for a blank or non-str player id, a blank,
-        whitespace-only, or non-str account, or when the player or the
-        account is already linked elsewhere. Every check runs before anything changes, so a failed
-        call creates no player.
+        Args:
+            player_id: The player, exactly a str (not a subclass).
+            account_user_id: The OPEN account, exactly a str (not a subclass).
+
+        Raises:
+            PlayerError: a blank or non-str player id, a blank, whitespace-only,
+                or non-str account, or when the player or the account is already
+                linked elsewhere.
+
+        Every check runs before anything changes, so a failed call creates no
+        player.
         """
         self._check_account(player_id, account_user_id)
         player = self._player_or_new(player_id)
@@ -5432,14 +4578,22 @@ class RatingEngine:
         """
         Link an external identity to a player. Each identity links to one player.
 
-        player_id, source, and external_player_id must be exactly str (not
-        a subclass). Raises PlayerError for a blank or non-str player id, a
-        blank, whitespace-only, or non-str source or external id, a source
-        that starts with "open_" (the prefix reserved for provenance the
-        engine writes), when the player already has a different id from
-        that source, or when the identity is linked to another player.
-        Every check runs before anything changes, so a failed call creates
-        no player.
+        Args:
+            player_id: The player, exactly a str (not a subclass).
+            source: The external source, exactly a str (not a subclass). It must
+                not start with "open_", the prefix reserved for provenance the
+                engine writes.
+            external_player_id: The id at that source, exactly a str (not a
+                subclass).
+
+        Raises:
+            PlayerError: a blank or non-str player id, a blank, whitespace-only,
+                or non-str source or external id, a source that starts with
+                "open_", when the player already has a different id from that
+                source, or when the identity is linked to another player.
+
+        Every check runs before anything changes, so a failed call creates no
+        player.
         """
         self._check_external_id(player_id, source, external_player_id)
         player = self._player_or_new(player_id)
@@ -5461,91 +4615,31 @@ class RatingEngine:
 
         The external rating is an initial condition, not a live dependency.
         Once OPEN matches exist, external refreshes cannot overwrite the rating.
-        That holds in every rating format: it refuses to replace a category
-        state derived from overall doubles (initial_source "open_parent:"
-        plus the parent's value; an import through this method cannot take
-        that name, since a source that starts with "open_" is rejected),
-        and it refuses to seed a format in which a counted OPEN update
-        included the player, even one in which the player was frozen, with
-        or without a stored state in that format.
-        For overall doubles, that includes the doubles update of a category
-        match. Under category_feeds_parent, it also refuses to seed overall
-        doubles when a counted category match included the player, whatever
-        the player's state in that category is: a new doubles seed could
-        change whether that match's doubles update counts, or the state a
-        replay starts the category from. Otherwise a new seed rating or
-        date could change a counted match, so live ratings and a replay
-        could disagree. It also refuses to seed a player named in an
-        update record rejected for BEFORE_IMPORTED_BASELINE,
-        SINGLES_RATING_GAP, or DOUBLES_PARTNER_GAP (a match's own update,
-        or the doubles update of a counted category match; see
-        seed_sensitive_rejections in to_snapshot) when the seed's format
-        is that update's format or, under category_feeds_parent, its
-        parent. Those reasons read the players' ratings or dates, and a
-        replay adds every seed before any row, so a new seed could make
-        the replay count an update live rejected. This holds with or
-        without replace_unplayed_seed, and for a player with no record
-        yet. A rejection for another reason is not recorded and blocks no
-        seed. A category format with no stored state, no counted match,
-        and no such rejected update can still be seeded, even when the
-        player has an overall doubles rating.
-        Under category_feeds_parent, a successful seed of overall doubles
-        also replaces each of the player's stored category states that is
-        unplayed and derived from overall doubles (initial_source
-        "open_parent:doubles") with the state a category match would start
-        from right after the seed: the new rating and date, with an RD of
-        at least Config.category_seed_rd. Other category states, imported
-        or provisional, are not changed. Such a stored derived state comes
-        from a seed (add_player, replay seeds) or a loaded snapshot:
-        seed_provisional_rating does not store one (issue #112). An
-        unplayed category state that a seed (add_player, replay seeds) or a
-        loaded snapshot holds fixes where that category starts: it does not
-        follow later changes to the doubles state from matches, and an
-        "open_provisional" one does not follow a later doubles seed either
-        (only an unplayed "open_parent:doubles" one is refreshed by a
-        doubles reseed). A replay without that seed can then differ from
-        live recording.
-        The seed's RD is always Config.external_seed_rd: an external
-        reliability is kept for display (imported_reliability), never turned
-        into OPEN RD. There is no reference date here, so a snapshot captured
-        in the future is accepted; the next replay with an earlier as_of
-        rejects the seed.
+        The seed's RD is always Config.external_seed_rd.
 
-        rating_format must be exactly a RatingFormat (a str is not
-        converted), replace_unplayed_seed exactly a bool (0, 1, and None are
-        rejected),
-        snapshot must be exactly an ExternalRatingSnapshot (not a subclass),
-        and the snapshot is checked before anything changes: captured_on is
-        exactly a date (not a datetime or a date subclass), source is a str
-        that is not blank or whitespace only and does not start with
-        "open_" (the prefix reserved for provenance the engine writes,
-        matched exactly), external_player_id is None or a str that is not
-        blank or whitespace only,
-        evidence_reference is None or a str that is not blank or whitespace
-        only (each of these strs exactly a str, not a subclass; the same
-        evidence reference may be used for many seeds), rating is an int or finite float
-        (not bool) within the rating bounds, and reliability is None or an int
-        or finite float (not bool) between 0 and 100. An int or float
-        subclass rating or reliability is checked and stored as the plain
-        int or float of its own value, and a value whose __class__ only
-        claims int or float is rejected; the caller's snapshot is not
-        changed. An external_player_id
-        links the (source, external_player_id) pair to the player, and None
-        links nothing. So every state seeded here passes the seed rules in
-        add_player.
+        Args:
+            player_id: The player to seed, exactly a str that is not blank.
+            rating_format: Exactly a RatingFormat (a str is not converted).
+            snapshot: Exactly an ExternalRatingSnapshot (not a subclass).
+            replace_unplayed_seed: Exactly a bool. Without True, a state the player
+                already has in rating_format is not replaced.
 
-        Raises InvalidSeedError when the rating format, the snapshot or a
-        checked snapshot field, the existing rating, or the player's OPEN
-        matches (counted, or rejected for a reason a seed can change) do
-        not allow the seed. Once the rating format and snapshot
-        fields pass their checks, it raises PlayerError when player_id is
-        blank or not a str (a str subclass included). Once any existing
-        rating and the player's OPEN matches also allow the seed, it
-        raises PlayerError when the snapshot's external identity is already
-        linked to another player, or when the player already has a
-        different id from that source.
-        Every check runs before anything changes, so a failed call creates
-        no player.
+        Returns:
+            The new stored RatingState.
+
+        Raises:
+            InvalidSeedError: first, the rating format, then replace_unplayed_seed
+                (exactly a bool), then the snapshot or a checked snapshot field;
+                after the player id, the existing rating or the player's OPEN
+                matches (counted, or rejected for a reason a seed can change) do
+                not allow the seed.
+            PlayerError: player_id is blank or not a str (checked after the
+                snapshot); or, last, the snapshot's external identity is linked to
+                another player or the player already has a different id from that
+                source.
+
+        Every check runs before anything changes, so a failed call creates no
+        player. See docs/behavior.md, "External seeds".
         """
         cfg = self.cfg
         # The same type rules the seed check applies, so every state seeded
@@ -5721,29 +4815,28 @@ class RatingEngine:
 
     def seed_provisional_rating(self, player_id: str, rating_format: RatingFormat) -> RatingState:
         """
-        The player's state in a format. Stores a new unplayed state if it is missing,
-        except in a category format under Config.category_feeds_parent.
+        The player's state; stores a missing one, except in a category under category_feeds_parent.
 
-        Creates an empty player record for an unknown player_id. A state
-        the player already has in the format is returned as stored. For a
-        format the player has none in, it builds the starting state the
-        player's first match in that format would use if played now, as
-        state does. In singles and overall doubles, and in a category
-        format (mixed, men's, or women's doubles) while
-        category_feeds_parent is off, it stores that state and returns the
-        stored object. In a category format while category_feeds_parent is
-        on, it returns the state without storing it (issue #112): that
-        state starts from the player's overall doubles state, and a stored
-        copy would not follow later changes to doubles, so live recording
-        and a replay of the same matches could disagree. The returned
-        object is then a new copy each call, not engine state, and changing
-        it changes nothing; the engine state is unchanged apart from the
-        player record created for an unknown id.
+        Creates an empty player record for an unknown player_id. A state the
+        player already has in the format is returned as stored. Otherwise it
+        returns the starting state the player's first match in that format would
+        use if played now, as state does, and stores it, except in a category
+        format while Config.category_feeds_parent is on.
 
-        Raises InvalidSeedError when rating_format is not exactly a
-        RatingFormat (a str is not converted), and PlayerError for a player_id that is
-        blank or not exactly a str (a subclass is rejected). Both are
-        checked before anything changes, so a failed call creates no player.
+        Args:
+            player_id: The player, exactly a str (a subclass is rejected).
+            rating_format: Exactly a RatingFormat (a str is not converted).
+
+        Returns:
+            The stored state, or, in a category format while category_feeds_parent
+            is on, a new copy that is not engine state.
+
+        Raises:
+            InvalidSeedError: rating_format is not exactly a RatingFormat.
+            PlayerError: player_id is blank or not exactly a str.
+
+        Both are checked before anything changes, so a failed call creates no
+        player. See docs/behavior.md, "Provisional states".
         """
         if not _is_member(rating_format, RatingFormat):
             raise InvalidSeedError("rating_format must be a RatingFormat")
@@ -5808,10 +4901,18 @@ class RatingEngine:
         stores it in singles and overall doubles, and in a category format
         while Config.category_feeds_parent is off; in a category format while
         it is on, seed_provisional_rating returns it without storing it.
-        Raises UnknownPlayerError when no
-        player record exists for the id, and PlayerError for an id that is
-        blank or not exactly a str (a subclass is rejected), and then for a
-        rating_format that is not exactly a RatingFormat.
+
+        Args:
+            player_id: The player, exactly a str (a subclass is rejected).
+            rating_format: Exactly a RatingFormat.
+
+        Returns:
+            The stored state, or the starting state described above.
+
+        Raises:
+            UnknownPlayerError: no player record exists for the id.
+            PlayerError: the id is blank or not exactly a str, and then a
+                rating_format that is not exactly a RatingFormat.
         """
         player = self.player(player_id)
         _check_lookup_format(rating_format)
@@ -5831,10 +4932,18 @@ class RatingEngine:
         """
         Expected share of points won by team A, from current team-average ratings.
 
-        Raises InvalidMatchError unless team_a and team_b are each exactly a
-        tuple or list of distinct non-blank str ids of the format's team
-        size, rating_format is exactly a RatingFormat, and scoring exactly
-        a ScoringType (a str is rejected).
+        Args:
+            team_a: Team A's ids, exactly a tuple or list of distinct non-blank
+                str ids of the format's team size.
+            team_b: Team B's ids, under the same rule.
+            rating_format: Exactly a RatingFormat.
+            scoring: Exactly a ScoringType (a str is rejected).
+
+        Returns:
+            Team A's expected share of points.
+
+        Raises:
+            InvalidMatchError: an argument breaks its rule above.
         """
         self._validate_teams(team_a, team_b, rating_format)
         if not _is_member(scoring, ScoringType):
@@ -5860,10 +4969,23 @@ class RatingEngine:
         """
         Calibrated probability that team A wins the match.
 
-        Raises ConfigError when game_format is not valid (GameFormat.validate:
-        it must be exactly a GameFormat), InvalidMatchError for the teams
-        and rating_format as predict_point_share does, and EvaluationError
-        unless best_of is exactly an int that is positive and odd.
+        Args:
+            team_a: Team A's ids, as for predict_point_share.
+            team_b: Team B's ids, as for predict_point_share.
+            rating_format: Exactly a RatingFormat.
+            game_format: The game format, exactly a GameFormat (see
+                GameFormat.validate).
+            best_of: Exactly an int that is positive and odd.
+
+        Returns:
+            The calibrated probability that team A wins the match.
+
+        Raises:
+            ConfigError: game_format is not valid.
+            InvalidMatchError: the teams or rating_format, as predict_point_share
+                checks them.
+            EvaluationError: best_of is not exactly an int that is positive and
+                odd.
         """
         GameFormat.validate(game_format)
         # Before any prediction work (issue #119).
@@ -5901,45 +5023,25 @@ class RatingEngine:
         Process one match exactly once.
 
         Leave `as_of` unset for live processing (labeled provisional until the
-        next replay). replay() passes a fixed as_of for authoritative rebuilds.
-        `as_of` only labels the update as part of a replay and must not be
-        earlier than the match date; the update itself does not depend on it.
-        An as_of that is not a plain date (a datetime or a date subclass is
-        not one), or one
-        earlier than played_on, raises InvalidMatchError right after the
-        match is validated, before any check that rejects the match.
-        A match_id already processed or reserved returns
-        RejectionReason.DUPLICATE_MATCH_ID and changes nothing. Any other
-        match that does not count reserves its match_id, whatever the
-        reason: it is not marked processed and moves no rating, count, or
-        content key, but every later call for a match with that id that
-        does not raise returns DUPLICATE_MATCH_ID, as replay never counts a
-        second row with one id. A corrected resubmission (for example a
-        self-reported match after confirmation) needs a new match_id; see
-        the module notes for which rejections allow one. A match rejected as
-        a possible duplicate is also recorded in possible_duplicates. A
-        match rejected for BEFORE_IMPORTED_BASELINE, SINGLES_RATING_GAP, or
-        DOUBLES_PARTNER_GAP is also recorded, with its players and format,
-        in seed_sensitive_rejections (see to_snapshot), and so is a counted
-        category match whose overall doubles update is rejected for one of
-        those, under doubles. Each of these changes clears the snapshot's
-        resumable mark. A match whose status
-        is not MatchStatus.COMPLETED is never counted: after the match_id
-        check, it returns RejectionReason.MATCH_NOT_COMPLETED.
-        Live results apply in
-        arrival order: MatchResult.late (and parent.late, for a category
-        match) flags a match dated before a player's last match in that
-        format, or before the date that player's rating in that format
-        already reflects (for a category rating copied from overall
-        doubles). Stored dates never move back.
+        next replay). A match that does not count is not an error: the result
+        names its RejectionReason. Live results apply in arrival order.
 
-        A match with the same content as an earlier counted match (same
-        played_on, teams, and scores; see MatchResult.possible_duplicate_of)
-        goes through the other checks by default and, if it counts, has
-        possible_duplicate_of set. With Config.reject_content_duplicates it
-        is not counted, with RejectionReason.POSSIBLE_DUPLICATE. That check runs after the
-        match_id and game format checks and before the self-reported
-        checks, so a rejected duplicate never enters the self-reported log.
+        Args:
+            match: The match, exactly a Match. It is validated before any state
+                changes.
+            as_of: None for live processing. replay() passes a fixed as_of for
+                authoritative rebuilds. It only labels the update and must not be
+                earlier than the match date.
+
+        Returns:
+            A MatchResult. Its reason is None when the match counted.
+
+        Raises:
+            InvalidMatchError: the match is not valid, or as_of is not a plain
+                date or is earlier than played_on.
+
+        See docs/behavior.md, "Recording a match" and "Match ids, rejections, and
+        resubmission".
         """
         return self._record(match, as_of=as_of)[0]
 
@@ -6231,46 +5333,31 @@ class RatingEngine:
         """
         The player's rating, reliability, and provenance in one format.
 
-        as_of sets the reference date that inactivity and reliability are
-        measured at. With no as_of, it is the later of calculated_as_of (the
-        last replay date) and the player's last_played. So a stale player is
-        measured at the replay date, and a player with live matches since at
-        their last match. Players in one engine can be measured at different
-        dates by default. A late live match never moves last_played back.
-        The engine never reads the wall clock.
-
-        An as_of earlier than the player's last match does not rebuild past
-        state: RD and partner variety stay as of the stored state.
-
-        connectivity is measured at the same reference date over every
-        player's stored state in the format (see NetworkConnectivity), and
-        when Config.connectivity_reliability_cap is set, reliability is at
-        most the cap when it is not connected. The result for one format
-        and date is cached until the next state change through the
-        engine's own methods, for the 16 most recent dates; changing
-        objects the engine returns directly is not tracked.
-
-        imported_reliability is not carried when the import's capture date is
-        after the reference date. So an unplayed import captured after the
-        last replay is not shown by default until the next replay or an
-        explicit as_of.
-
-        live_updates_since_recalculation labels the provisional movement in
-        the rating: the state's own live updates since the last replay, plus,
-        for a category state derived from overall doubles, the parent's live
-        updates already in the rating it copied (see PlayerSummary).
-
         It never changes engine state; it only fills a private cache of
-        connectivity results, derived from the stored states. For a known player with no state in
-        the format, it reports the starting state the player's first match in
-        that format would use if played now (see state), without storing it.
+        connectivity results, derived from the stored states. The engine never
+        reads the wall clock.
 
-        Raises ReferenceDateError when as_of is None and the engine was never
-        replayed, or when as_of is not a plain date (a datetime is not one).
-        These checks come first. Then it raises UnknownPlayerError when no
-        player record exists for the id, and PlayerError for an id that is
-        blank or not exactly a str (a subclass is rejected), and then for a
-        rating_format that is not exactly a RatingFormat.
+        Args:
+            player_id: The player, exactly a str (a subclass is rejected).
+            rating_format: Exactly a RatingFormat.
+            as_of: The reference date that inactivity and reliability are
+                measured at. With no as_of, it is the later of calculated_as_of
+                (the last replay date) and the player's last_played.
+
+        Returns:
+            A PlayerSummary. For a known player with no state in the format, it
+            reports the starting state that format's first match would use if
+            played now, without storing it.
+
+        Raises:
+            ReferenceDateError: as_of is None and the engine was never replayed,
+                or as_of is not a plain date. These checks come first.
+            UnknownPlayerError: no player record exists for the id.
+            PlayerError: the id is blank or not exactly a str, and then, once the
+                player is found, a rating_format that is not exactly a
+                RatingFormat.
+
+        See docs/behavior.md, "Player summaries" and "Reference dates".
         """
         if as_of is not None and not _is_plain_date(as_of):
             raise ReferenceDateError(
@@ -6409,77 +5496,34 @@ def replay(
     """
     Rebuild authoritative ratings from seeds plus the immutable match ledger.
 
-    Run on the published schedule (Config.replay_interval_days). Same ledger,
-    seeds, config and as_of always produce the same result, whatever order
-    the ledger rows arrive in. Every row is validated, even after as_of.
-    Rows that repeat a match_id and match in every field, in type and
-    value, are counted once; any other repeat raises LedgerConflictError, even when it
-    falls after as_of. Seeds must be
-    unplayed imported or provisional states that follow the seed rules (see
-    RatingEngine.add_player), dated on or before as_of.
+    Same ledger, seeds, config and as_of always produce the same result.
 
-    Raises ReferenceDateError for an as_of that is not a plain date (a str,
-    a datetime, a date subclass, None, or any other type). It checks this
-    first, before whole_ledger, from_snapshot, the ledger rows, and the
-    seeds. Then it raises SnapshotError for a whole_ledger that is not
-    exactly a bool, and ConfigError unless cfg is None or exactly a Config
-    with only its fields, before matches, seed_players, and from_snapshot
-    are read. It reads matches and seed_players once each, into lists,
-    before any row or seed is checked. Only after reading them is cfg
-    rebuilt from its field values (see Config), so a
-    rewritten value it rejects raises ConfigError too, even one rewritten
-    while those iterables were read, and the result's cfg, replay_info
-    fingerprint, and snapshots come from that copy.
+    Args:
+        matches: The ledger rows, any iterable, read once into a list.
+        seed_players: Seeds that follow the seed rules, dated on or before
+            as_of; any iterable, read once.
+        cfg: None or exactly a Config with only its fields.
+        as_of: The replay date, a plain date.
+        from_snapshot: An earlier replay's to_snapshot() output, to resume from.
+        whole_ledger: Exactly a bool. True, with from_snapshot, promises the whole ledger.
 
-    Raises InvalidSeedError for a seed state that breaks the seed rules (see
-    add_player) or whose initial_source_date is after as_of, and PlayerError
-    when two seeds share a player id, an account_user_id, or a (source,
-    external id) pair. On resume, a seed that shares an identity with a
-    checkpoint player raises PlayerError too.
+    Returns:
+        The rebuilt RatingEngine.
 
-    from_snapshot resumes from a checkpoint: the to_snapshot() output (or
-    json.loads of its text) of an earlier replay under the same cfg. The
-    result equals a full replay to as_of of the ledger and seeds the rows
-    come from (the checkpoint's seeds plus seed_players), whether matches
-    holds the whole ledger or only the rows after the checkpoint date.
-    Rows dated on or before the checkpoint date are not recorded again:
-    each must be a row the checkpoint considered, unchanged. seed_players
-    then holds only seeds not in the checkpoint.
-    Take the checkpoint snapshot right after its replay, before any other
-    call on the engine. Every engine method that changes state clears the
-    snapshot's resumable mark; changing objects the engine returns
-    directly is not tracked and makes the snapshot unsafe to resume.
+    Raises:
+        ReferenceDateError: as_of is not a plain date. It is checked first.
+        SnapshotError: whole_ledger is not exactly a bool, then is True without
+            from_snapshot (both before cfg); later, a malformed snapshot, one
+            under another Config, or a resume that cannot equal a full replay.
+        ConfigError: cfg is not valid: its type before matches, seed_players,
+            and from_snapshot are read; its values after matches and
+            seed_players are read and before from_snapshot is.
+        InvalidMatchError, InvalidSeedError, PlayerError: a bad row or seed, a
+            seed after as_of, or a shared identity, also with a checkpoint player.
+        LedgerConflictError: rows with one match_id differ, including, on
+            resume, an edited checkpoint row or a later row reusing its id.
 
-    whole_ledger=True (keyword only, with from_snapshot) promises that
-    matches holds the whole ledger, so resume also raises SnapshotError,
-    naming the ids sorted, for any row the checkpoint considered that is
-    missing from it: a row voided or deleted on or before the checkpoint
-    date. whole_ledger=True without from_snapshot raises SnapshotError,
-    and so does a whole_ledger that is not a bool (an int, str, or None is
-    a usage error of the resume API, not a ledger flag).
-
-    Resume raises instead of giving a different result. The rows are
-    checked in this order: LedgerConflictError for changed or reused rows,
-    then SnapshotError for rows not in the checkpoint, then (with
-    whole_ledger) SnapshotError for checkpointed rows that are missing.
-    - SnapshotError for a malformed snapshot or one taken under another
-      Config (see RatingEngine.from_snapshot), a snapshot not from a
-      replay, one with live updates or any other change since its replay
-      (resumable is false), an as_of before the checkpoint date, a row
-      dated on or before the checkpoint date that the checkpoint did not
-      consider, or a seed for a player named in a row the checkpoint
-      considered (even if every such row was rejected).
-    - LedgerConflictError for a row dated on or before the checkpoint date
-      that differs from the row the checkpoint considered under its
-      match_id, or a row dated after it that reuses one of those ids.
-    - PlayerError for a seed whose player is already in the snapshot.
-    - SnapshotError, with whole_ledger=True, for a checkpointed row missing
-      from matches.
-    Without whole_ledger, resume cannot see a row removed (voided) from the
-    ledger on or before the checkpoint date, and given only the newer rows
-    it cannot see a late row added on or before it either. With or without
-    whole_ledger, it cannot see a seed withdrawn or corrected after the
-    checkpoint. Those need a full replay.
+    See docs/behavior.md, "Replay and resume".
     """
     if not _is_plain_date(as_of):
         raise ReferenceDateError(f"replay as_of must be exactly a date, not {_type_name(as_of)}")
@@ -6780,42 +5824,34 @@ def prequential_predictions(
     """
     Predict each eligible match from ratings that have not seen it.
 
-    A match is eligible when every participant is established in its rating
-    format (imported baseline, or at least `burn_in_matches` OPEN matches),
-    its scoring equals `scoring` when given, it is played on or after
-    `score_from` when given, and its status is MatchStatus.COMPLETED (a
-    forfeit, retired, or incomplete row is recorded, which changes no
-    rating, but never predicted). Only matches that `record` counts are kept.
-    This "established" is not `PlayerSummary.established`.
+    Only matches that `record` counts are kept, and a match that is not
+    completed is never predicted.
 
-    "live" records every match live in one engine, in ledger order.
-    "scheduled" mirrors production: replay dates are
-    `anchor + k * cfg.replay_interval_days` (anchor defaults to the first
-    completed match date). A match on day d is predicted from replay(matches on or before s,
-    as_of=s) for the largest replay date s strictly before d, and matches in
-    that window are then predicted and recorded live in ledger order.
+    Args:
+        matches: The ledger rows, any iterable, read once into a list.
+        seed_players: Seeds that follow the seed rules; any iterable.
+        cfg: None or exactly a Config with only its fields.
+        scoring: None or exactly a ScoringType: the scoring to predict.
+        burn_in_matches: Exactly an int: the OPEN matches a participant with
+            no imported baseline needs before a match is predicted.
+        mode: Exactly "live" or "scheduled".
+        score_from: None or a plain date: predict only matches on or after it.
+        anchor: None or a plain date: in "scheduled" mode, replay dates are
+            anchor + k * cfg.replay_interval_days.
 
-    Every seed is validated up front, in both modes, by the seed rules (see
-    RatingEngine.add_player), and a seed whose initial_source_date is after
-    the last completed ledger match raises InvalidSeedError. A ledger with
-    no completed match has no seed date check and gives no predictions. A
-    repeated seed id, or two seeds that share an account_user_id or a
-    (source, external id) pair, raise PlayerError, as add_player does. A
-    seed captured mid-ledger is accepted: scheduled replays before its date
-    freeze it as usual.
+    Returns:
+        A list of PrequentialPrediction, one per eligible match that `record`
+        counts.
 
-    A score_from or anchor that is not None and not a plain date (a str, a
-    datetime, a date subclass, or any other type) raises EvaluationError
-    naming the argument, before the ledger is read, in both modes and for
-    an empty ledger too. Then, also before the ledger is read, mode must
-    be exactly the str "live" or "scheduled", scoring None or exactly a
-    ScoringType, and burn_in_matches exactly an int (a bool or a subclass
-    is rejected), or it raises EvaluationError; and cfg must be None or
-    exactly a Config with only its fields, or it raises ConfigError. It
-    reads matches and seed_players once each, into lists, before any row or
-    seed is checked. Only then is cfg rebuilt from its field values (see
-    Config), so a rewritten value it rejects raises ConfigError too, even
-    one rewritten while those iterables were read.
+    Raises:
+        EvaluationError: score_from, anchor, mode, scoring, or burn_in_matches
+            is not valid. These are checked before the ledger is read.
+        ConfigError: cfg is not valid.
+        InvalidMatchError, LedgerConflictError: as replay raises them for rows.
+        InvalidSeedError, PlayerError: a seed breaks the seed or identity
+            rules, or is dated after the last completed ledger match.
+
+    See docs/behavior.md, "Prequential predictions".
     """
     shape = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
     rows = list(matches)
@@ -6942,6 +5978,18 @@ def evaluate(
     eligibility, mode, score_from and anchor rules, and checks every
     argument as prequential_predictions does, in the same order, for an
     empty ledger too.
+
+    Args:
+        matches, seed_players, cfg, scoring, burn_in_matches, mode,
+            score_from, anchor: As for prequential_predictions.
+
+    Returns:
+        An EvaluationReport.
+
+    Raises:
+        OpenEngineError: the subclass prequential_predictions raises for the
+            same arguments, in the same order.
+        EvaluationError: no established match remains to evaluate.
     """
     shape = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
     rows = list(matches)
@@ -7083,21 +6131,33 @@ def fit_scale(
     """
     Fit one scoring type's scale by minimizing prequential point-share MSE.
 
+    Coarse grid first, then golden-section search around the best grid point.
     The search compares unrounded MSE, so ties at the 6-decimal precision of
     EvaluationReport.mse do not decide the fit.
 
-    Coarse grid first, then golden-section search around the best grid point.
-    Publish the returned ScaleFit alongside the config that adopts it.
-    Raises EvaluationError, before any prediction work, unless low < high,
-    tolerance is finite and greater than 0, and 2 * low, 2 * high, and
-    (high - low) * 14 are finite; low, high, and tolerance must each be
-    exactly an int or a float (a bool or a subclass is rejected), checked
-    first. Then every other argument is checked as prequential_predictions
-    checks it, in the same order, for an empty ledger too, and scoring must
-    be exactly a ScoringType (None is rejected), all before any trial
-    config is built. A trial config is built from the fields of Config
-    itself, so a low of 0 or less then raises ConfigError. A trial never
-    goes through dataclasses.replace.
+    Args:
+        matches, seed_players, cfg, burn_in_matches, mode, score_from,
+            anchor: As for prequential_predictions.
+        scoring: Exactly a ScoringType (None is rejected).
+        low, high: The search range, each exactly an int or a float.
+        tolerance: Exactly an int or a float, finite and greater than 0.
+
+    Returns:
+        A ScaleFit. Publish the returned ScaleFit alongside the config that
+        adopts it.
+
+    Raises:
+        EvaluationError: low, high, or tolerance is not valid (checked first,
+            before any prediction work), another argument fails a check
+            prequential_predictions makes, scoring is None (checked after cfg's
+            type and before cfg is rebuilt), or no established match remains.
+        ConfigError, InvalidMatchError, InvalidSeedError, PlayerError,
+            LedgerConflictError: as prequential_predictions raises them, in its
+            order. The first trial config, at scale low, is built after the cfg
+            rebuild and before any row or seed is checked; Config's check that
+            scales are positive raises ConfigError there for a low of 0 or less.
+
+    See docs/behavior.md, "Calibration fits".
     """
     _check_search_bounds(low, high, tolerance)
     shape = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
@@ -7201,10 +6261,27 @@ def fit_win_calibration(
     Uses the raw win probabilities computed with cfg's scale, so fit the scale
     first. Predictions without a modeled win probability (win_by not 1 or 2)
     are skipped. Same search as fit_scale: coarse grid, then golden section.
-    Raises EvaluationError when no prediction remains, and, before any
-    prediction work, for the same low, high, and tolerance as fit_scale.
-    Then it checks every other argument as fit_scale does, in the same
-    order, for an empty ledger too.
+
+    Args:
+        matches, seed_players, cfg, burn_in_matches, mode, score_from,
+            anchor: As for prequential_predictions.
+        scoring: Exactly a ScoringType, as for fit_scale.
+        low, high, tolerance: The search range and tolerance, as for fit_scale.
+
+    Returns:
+        A WinCalibrationFit.
+
+    Raises:
+        EvaluationError: low, high, or tolerance is not valid, as for
+            fit_scale; another argument fails a check prequential_predictions
+            makes; scoring is None (checked after cfg's type and before cfg is
+            rebuilt); or no prediction remains.
+        ConfigError, InvalidMatchError, InvalidSeedError, PlayerError,
+            LedgerConflictError: as prequential_predictions raises them, in its
+            order. No trial config is built, so a low of 0 or less raises no
+            ConfigError.
+
+    See docs/behavior.md, "Calibration fits".
     """
     _check_search_bounds(low, high, tolerance)
     shape = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
