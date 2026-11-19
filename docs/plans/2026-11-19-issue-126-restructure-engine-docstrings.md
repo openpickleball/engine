@@ -48,6 +48,14 @@ Move, do not rewrite. A long edge-case paragraph moves verbatim (reflowed only) 
 - Ruff line length (100) and docstring formatting in reflowed text. Mitigation: the gate.
 - The README already repeats the Config validation and error rules almost verbatim. This change leaves that as is; a third copy is not added (docstrings point to `docs/behavior.md`).
 
+Departures made during the work:
+
+- The README needed two more reference fixes than the one link: its `InvalidSeedError` entry pointed to "the seed rules in `add_player`'s docstring" twice, and those rules now live in `docs/behavior.md`, "Seed rules". Both now point there. The README's long sections are otherwise unchanged.
+- `docs/behavior.md` has more entry-point sections than the examples named: "Config validation", "Match fields", "Recording a match", "Match results", "Seed rules", "External seeds", "Provisional states", "Player summaries" (with `NetworkConnectivity` and `PlayerSummary` field notes), "Replay and resume", "Snapshot schema and checks", "Prequential predictions", and "Calibration fits".
+- Criterion 4 holds for the docstrings, which refer to `docs/behavior.md` instead of repeating the type rules. Inside `docs/behavior.md`, the type paragraphs moved with their entry point's text (for example the Config rebuild under "Config validation", `played_at` time zones under "Match fields", snapshot container types under "Snapshot schema and checks"), so some general rules from "Input types" appear again there. Removing those repeats means rewriting moved text, which the move-not-rewrite rule leaves to a follow-up.
+- Public docstrings that already fit the layout and the 30-line limit and take no parameters (`ReplayInfo`, `RejectionReason`, `MatchStatus` apart from its pointer, `Config.to_dict`, `GameFormat.validate`, and the short ones) are unchanged.
+- Issue numbers in private docstrings and comments are unchanged: the plan limits private changes to pointers at the module docstring.
+
 Not done here: shortening the README's long sections (a follow-up issue can make them link to `docs/behavior.md`), aligning the `Config` docstring's "uncalibrated placeholders" wording with `docs/model.md` beyond what the move requires (do align it if the `Config` docstring is rewritten anyway: some defaults are declared choices or labels), splitting the module (#127), breaking up functions (#128).
 
 ## Proof
