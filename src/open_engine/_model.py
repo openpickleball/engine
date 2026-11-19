@@ -426,8 +426,8 @@ class MatchResult:
     A player is clamped when the new rating, after the range clamp, differs
     from the rounded sum old rating + raw delta by more than 1e-12, or when
     the applied change differs from the raw delta by at least 5e-6 (half a
-    unit in the fifth place). A smaller loss is not listed, including a
-    range cut that float rounding of that sum absorbs first.
+    unit in the fifth place). A loss that meets neither rule is not
+    listed, including a range cut that float rounding of that sum absorbs first.
     imbalance is the mean team A delta plus the mean team B delta, from the
     unrounded changes, rounded to 5 places. parent holds the overall doubles
     update for a category match, with its own imbalance.
