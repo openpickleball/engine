@@ -811,21 +811,39 @@ def _as_float(value: float) -> float:
 _N = TypeVar("_N")
 
 
+class _SpoofedNumber:
+    """Stands in for a value whose __class__ claims int or float but is not."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<not a number>"
+
+
+_SPOOFED_NUMBER = _SpoofedNumber()
+
+
 def _plain_number(value: _N) -> _N:
     """
     An int or float as exactly int or float, from its own value (issue #107).
 
-    An int subclass gives int.__int__(value) and a float subclass
-    float.__float__(value), so a subclass's operators never reach a check,
-    the fingerprint, or rating code. A bool or anything that is not an int
-    or float is returned as is, for the caller's type check to reject.
+    It tests the value's real type, not isinstance, which a __class__
+    property can fool. A bool is returned as is, a real int subclass gives
+    int.__int__(value), and a real float subclass float.__float__(value),
+    so a subclass's operators never reach the caller's checks. A value that
+    only claims to be an int or float is replaced with a marker that is
+    neither, so the caller's type check rejects it. Anything else is
+    returned as is, for the caller's type check to reject.
     """
-    if isinstance(value, bool):
+    real = type(value)
+    if issubclass(real, bool):
         return value
-    if isinstance(value, int):
-        return cast(_N, int.__int__(value))
-    if isinstance(value, float):
-        return cast(_N, float.__float__(value))
+    if issubclass(real, int):
+        return cast(_N, int.__int__(cast(int, value)))
+    if issubclass(real, float):
+        return cast(_N, float.__float__(cast(float, value)))
+    if isinstance(value, (int, float)):
+        return cast(_N, _SPOOFED_NUMBER)
     return value
 
 
@@ -1108,26 +1126,27 @@ class Config:
         # copies. Keys and format entries are stored as their own types (an
         # enum member, a plain int), so the fingerprint never depends on how
         # an equal key prints or whether JSON can hold it.
+        # One read of each caller's mapping, as (key, plain value) pairs;
+        # every check below and the stored copy read these pairs, never the
+        # caller's mapping, and no key is hashed before its own checks.
+        pairs: dict[str, list[tuple[object, object]]] = {}
         for name in _CONFIG_MAPPING_FIELDS:
             value = getattr(self, name)
             if not isinstance(value, Mapping):
                 raise ConfigError(f"{name} must be a mapping")
-            # One read of the caller's mapping, with plain values; every
-            # check below and the stored copy read this dict.
-            value = {key: _plain_number(item) for key, item in value.items()}
-            object.__setattr__(self, name, value)
-            if not all(_is_config_number(item) for item in value.values()):
+            pairs[name] = [(key, _plain_number(item)) for key, item in value.items()]
+            if not all(_is_config_number(item) for _, item in pairs[name]):
                 raise ConfigError(f"{name} values must be finite numbers")
-        if not all(_is_config_whole(key) for key in self.game_length_weights):
+        # Each game length key as its plain int, from its own value.
+        length_pairs = [(_plain_number(key), item) for key, item in pairs["game_length_weights"]]
+        if not all(_is_config_whole(key) for key, _ in length_pairs):
             raise ConfigError("game_length_weights keys must be whole numbers")
-        # int.__int__ gives the int's own value, whatever a subclass's
-        # __int__ says.
         lengths: dict[int, float] = {}
-        for key, item in self.game_length_weights.items():
-            points = int.__int__(key)
+        for key, item in length_pairs:
+            points = cast(int, key)
             if points in lengths:
                 raise ConfigError(f"game_length_weights repeats the game length {points}")
-            lengths[points] = item
+            lengths[points] = cast(float, item)
         object.__setattr__(self, "game_length_weights", _FrozenMapping(lengths))
         if any(key < 1 for key in self.game_length_weights):
             raise ConfigError("game_length_weights keys must be at least 1")
@@ -1139,30 +1158,27 @@ class Config:
         # subclass cannot show the check one pair and the stored set another.
         formats: set[tuple[ScoringType, int]] = set()
         for entry in self.allowed_game_formats:
-            if not (isinstance(entry, tuple) and tuple.__len__(entry) == 2):
+            if not (issubclass(type(entry), tuple) and tuple.__len__(entry) == 2):
                 raise ConfigError(
                     "allowed_game_formats entries must be (scoring type, whole number) pairs"
                 )
             entry_scoring = tuple.__getitem__(entry, 0)
-            entry_points = tuple.__getitem__(entry, 1)
+            entry_points = _plain_number(tuple.__getitem__(entry, 1))
             if not (entry_scoring in _SCORING_VALUES and _is_config_whole(entry_points)):
                 raise ConfigError(
                     "allowed_game_formats entries must be (scoring type, whole number) pairs"
                 )
-            formats.add(
-                (ScoringType(cast(str, entry_scoring)), int.__int__(cast(int, entry_points)))
-            )
+            formats.add((ScoringType(cast(str, entry_scoring)), cast(int, entry_points)))
         object.__setattr__(self, "allowed_game_formats", frozenset(formats))
         for name, kind, label in (
             ("scale_by_scoring", ScoringType, "scoring type"),
             ("win_calibration_by_scoring", ScoringType, "scoring type"),
             ("match_weights", MatchType, "match type"),
         ):
-            value = getattr(self, name)
-            if set(value) != set(kind):
+            if {key for key, _ in pairs[name]} != set(kind):
                 raise ConfigError(f"{name} needs a value for every {label}")
             try:
-                keyed = {kind(key): item for key, item in value.items()}
+                keyed = {kind(cast(str, key)): item for key, item in pairs[name]}
             except ValueError as exc:
                 raise ConfigError(f"{name} has an unknown key") from exc
             object.__setattr__(self, name, _FrozenMapping(keyed))
@@ -1375,7 +1391,8 @@ class Config:
         """
         if not isinstance(data, Mapping):
             raise ConfigError("Config data must be a mapping")
-        names = [f.name for f in fields(cls)]
+        # The fields of Config itself, as to_dict() gives them.
+        names = [f.name for f in fields(Config)]
         missing = sorted(set(names) - set(data))
         if missing:
             raise ConfigError(f"Config data has missing keys: {', '.join(missing)}")
@@ -2753,16 +2770,23 @@ def _plain_seed(player: Player) -> Player:
     if type(player.ratings) is not dict:
         return player
     ratings = {
-        fmt: (
-            replace(
-                state, **{name: _plain_number(getattr(state, name)) for name in _SEED_NUMBER_FIELDS}
-            )
-            if type(state) is RatingState
-            else state
-        )
+        fmt: _plain_state(state) if type(state) is RatingState else state
         for fmt, state in player.ratings.items()
     }
-    return replace(player, ratings=ratings)
+    # Fields read from the class, not dataclasses.replace, which reads an
+    # instance __dataclass_fields__ that the caller can set.
+    copied: dict[str, object] = {f.name: getattr(player, f.name) for f in fields(Player)}
+    copied["ratings"] = ratings
+    return Player(**copied)  # type: ignore[arg-type]
+
+
+def _plain_state(state: RatingState) -> RatingState:
+    """A copy of a rating state with plain int and float number fields."""
+    copied: dict[str, object] = {}
+    for f in fields(RatingState):
+        value = getattr(state, f.name)
+        copied[f.name] = _plain_number(value) if f.name in _SEED_NUMBER_FIELDS else value
+    return RatingState(**copied)  # type: ignore[arg-type]
 
 
 def _validate_seed(player: Player, cfg: Config) -> None:
@@ -3027,8 +3051,9 @@ def _snap_opt_date(value: object, path: str) -> date | None:
 
 
 def _snap_number(value: object, path: str) -> float:
+    value = _plain_number(value)
     if isinstance(value, (int, float)) and _is_finite_number(value):
-        return _plain_number(value)
+        return value
     raise SnapshotError(f"{path} must be a finite number (an int or float, not bool)")
 
 
@@ -3037,10 +3062,8 @@ _MAX_COUNT = 2**63 - 1
 
 
 def _snap_count(value: object, path: str) -> int:
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise SnapshotError(f"{path} must be a nonnegative int no larger than 2**63 - 1")
-    count = int.__int__(value)
-    if not 0 <= count <= _MAX_COUNT:
+    count = _plain_number(value)
+    if not _is_whole_number(count) or not 0 <= count <= _MAX_COUNT:
         raise SnapshotError(f"{path} must be a nonnegative int no larger than 2**63 - 1")
     return count
 
@@ -3119,13 +3142,12 @@ def _snap_state_fields(value: object, path: str, cfg: Config) -> RatingState:
     rd = _snap_number(raw["rd"], f"{path}.rd")
     if not cfg.rd_min <= rd <= cfg.rd_max:
         raise SnapshotError(f"{path}.rd must be between rd_min and rd_max")
-    imported = raw["initial_source_reliability"]
+    imported = _plain_number(raw["initial_source_reliability"])
     if imported is not None:
         if not isinstance(imported, (int, float)) or not _is_finite_number(imported):
             raise SnapshotError(
                 f"{path}.initial_source_reliability must be a finite number or null"
             )
-        imported = _plain_number(imported)
         if not 0 <= imported <= 100:
             raise SnapshotError(f"{path}.initial_source_reliability must be between 0 and 100")
     return RatingState(
@@ -4782,11 +4804,14 @@ class RatingEngine:
             raise InvalidSeedError("snapshot must be an ExternalRatingSnapshot")
         # A new snapshot with plain numbers: the checks and the stored state
         # read the same values, and the caller's snapshot is not changed.
-        snapshot = replace(
-            snapshot,
-            rating=_plain_number(snapshot.rating),
-            reliability=_plain_number(snapshot.reliability),
-        )
+        # Fields read from the class, not dataclasses.replace, which reads
+        # an instance __dataclass_fields__ that the caller can set.
+        copied: dict[str, object] = {
+            f.name: getattr(snapshot, f.name) for f in fields(ExternalRatingSnapshot)
+        }
+        copied["rating"] = _plain_number(snapshot.rating)
+        copied["reliability"] = _plain_number(snapshot.reliability)
+        snapshot = ExternalRatingSnapshot(**copied)  # type: ignore[arg-type]
         if not _is_plain_date(snapshot.captured_on):
             raise InvalidSeedError("External snapshot captured_on must be a date")
         if not _is_plain_str(snapshot.source):

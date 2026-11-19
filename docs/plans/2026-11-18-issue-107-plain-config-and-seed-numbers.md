@@ -41,6 +41,17 @@ Command: `python scratchpad/repro107.py` (the issue's two reproductions plus a f
 - `README.md`: the "Config values" section and the `InvalidSeedError` / seed text where they describe number types: say an int or float subclass is accepted and stored as the plain value of its own value. Only where current text becomes wrong or silent on a rule a reader needs.
 - `CHANGELOG.md`: new `**Breaking:**` entry under `### Security` (issue #107) with Migration; update the #96 entry's "Not covered" sentence.
 
+## Review changes (departures from the plan above)
+
+Review of the first implementation found five defects, fixed with tests in `tests/test_plain_numbers_review.py`:
+
+- `_plain_number` tests the real type (`issubclass(type(value), ...)`), not `isinstance`, which a `__class__` property can fool. A real int or float subclass is converted; a value that only claims int or float is replaced with a private marker that is neither, so the usual type checks raise `ConfigError`, `InvalidSeedError`, or `SnapshotError` instead of a raw `TypeError`. `_snap_number`, `_snap_count`, and the imported reliability in the snapshot loader convert before any check.
+- Mapping fields: instead of a plain `dict` keyed by the caller's keys, `__post_init__` reads `items()` once into a list of (key, plain value) pairs. `game_length_weights` keys are converted with `_plain_number` and checked on the pairs, then keyed by their plain int in the repeat loop, so colliding or unhashable keys and repeated items give the same results and messages as before. The enum-keyed fields read the same pairs.
+- `allowed_game_formats` tests `issubclass(type(entry), tuple)` and converts points with `_plain_number`.
+- `Config.from_dict` reads `fields(Config)`, like `_payload`, so a `Config` subclass round trips through `to_dict()`.
+- `_plain_seed`, `_plain_state`, and `seed_external_rating` build their copies with explicit constructor calls over `fields(Player)`, `fields(RatingState)`, and `fields(ExternalRatingSnapshot)`, not `dataclasses.replace`, which reads an instance `__dataclass_fields__`.
+- Not covered: a `Config` subclass that overrides `__post_init__` or sets a field after it (issue #118).
+
 ## Order of work
 
 1. Commit this plan alone.
