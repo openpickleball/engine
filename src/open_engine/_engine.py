@@ -107,6 +107,50 @@ def _check_lookup_format(rating_format: object) -> None:
         )
 
 
+def _imported_reliability(
+    state: RatingState, cfg: Config, reference: date, earned: float
+) -> float | None:
+    """
+    player_summary's imported_reliability: the imported value, rounded to 1 place, or None.
+
+    It is carried while the state has an initial_source_reliability and an
+    initial_source_date, has fewer than import_reliability_carry_matches
+    matches, was captured on or before reference and at most
+    import_reliability_max_age_days before it, and, rounded, is above earned.
+    """
+    # Imported reliability is shown, separately, only while it is fresh,
+    # higher than what OPEN has earned, and within the carry match limit.
+    # Both values are compared as displayed, rounded to 1 place.
+    imported: float | None = None
+    seed_reliability = state.initial_source_reliability
+    if (
+        seed_reliability is not None
+        and state.initial_source_date is not None
+        and state.matches_played < cfg.import_reliability_carry_matches
+        and 0 <= (reference - state.initial_source_date).days <= cfg.import_reliability_max_age_days
+        and round(float(seed_reliability), _RELIABILITY_PLACES) > earned
+    ):
+        imported = round(float(seed_reliability), _RELIABILITY_PLACES)
+    return imported
+
+
+def _frozen_players(match: Match, ids: tuple[str, ...], work: dict[str, RatingState]) -> set[str]:
+    """
+    _compute's frozen players: ids whose working state is dated on or after the match.
+
+    A state is dated by its initial_source_date, the imported baseline.
+    """
+    # A player whose imported baseline is dated on or after this match
+    # already has it reflected in that baseline: use, but do not move.
+    frozen = {
+        pid
+        for pid in ids
+        if (baseline_date := work[pid].initial_source_date) is not None
+        and match.played_on <= baseline_date
+    }
+    return frozen
+
+
 class RatingEngine:
     """
     Holds players and processed matches, and records matches one at a time.
@@ -1062,6 +1106,30 @@ class RatingEngine:
             else:
                 self._note_seed_sensitive(match, primary.parent)
 
+        self._apply_counted(
+            match, primary_updates, parent_format, parent_updates, live, matchup, content_key, twin
+        )
+        return primary, net
+
+    def _apply_counted(
+        self,
+        match: Match,
+        primary_updates: dict[str, RatingState],
+        parent_format: RatingFormat | None,
+        parent_updates: dict[str, RatingState] | None,
+        live: bool,
+        matchup: MatchupKey | None,
+        content_key: str,
+        twin: str | None,
+    ) -> None:
+        """
+        _consider's commit of a counted match, after every update is computed.
+
+        In order: the match's own format's states, the parent format's
+        states when that update counted, the self-reported log, the content
+        key (kept for the first match with it), the possible duplicate, and
+        the processed match_id.
+        """
         self._commit(match.rating_format, primary_updates, live)
         if parent_updates and parent_format is not None:
             self._commit(parent_format, parent_updates, live)
@@ -1071,7 +1139,6 @@ class RatingEngine:
         if twin is not None:
             self.possible_duplicates[match.match_id] = twin
         self.processed_match_ids.add(match.match_id)
-        return primary, net
 
     def _self_reported_factor(
         self, match: Match
@@ -1142,14 +1209,7 @@ class RatingEngine:
         ids = match.team_a + match.team_b
         work = {pid: _clone_state(self._peek_state(pid, rating_format)) for pid in ids}
 
-        # A player whose imported baseline is dated on or after this match
-        # already has it reflected in that baseline: use, but do not move.
-        frozen = {
-            pid
-            for pid in ids
-            if (baseline_date := work[pid].initial_source_date) is not None
-            and match.played_on <= baseline_date
-        }
+        frozen = _frozen_players(match, ids, work)
         if len(frozen) == len(ids):
             return (
                 MatchResult(False, rating_format, RejectionReason.BEFORE_IMPORTED_BASELINE),
@@ -1429,21 +1489,7 @@ class RatingEngine:
                 shown = round(shown - _RELIABILITY_STEP, _RELIABILITY_PLACES)
             earned = min(earned, shown)
 
-        # Imported reliability is shown, separately, only while it is fresh,
-        # higher than what OPEN has earned, and within the carry match limit.
-        # Both values are compared as displayed, rounded to 1 place.
-        imported: float | None = None
-        seed_reliability = state.initial_source_reliability
-        if (
-            seed_reliability is not None
-            and state.initial_source_date is not None
-            and state.matches_played < cfg.import_reliability_carry_matches
-            and 0
-            <= (reference - state.initial_source_date).days
-            <= cfg.import_reliability_max_age_days
-            and round(float(seed_reliability), _RELIABILITY_PLACES) > earned
-        ):
-            imported = round(float(seed_reliability), _RELIABILITY_PLACES)
+        imported = _imported_reliability(state, cfg, reference, earned)
 
         return PlayerSummary(
             player_id=player.id,

@@ -8,7 +8,7 @@ ratings, and the API may change without notice.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, fields
 from datetime import date
 from typing import Literal
@@ -186,6 +186,47 @@ def prequential_predictions(
     )
 
 
+def _check_prequential_seeds(seeds: list[Player], cfg: Config, completed: list[Match]) -> None:
+    """
+    _prequential's seed checks, before any rating work.
+
+    Each seed in order goes through add_player's checks on a scratch
+    engine (against the earlier seeds too), then, when the ledger has a
+    completed match, the check that it is not dated after the last one.
+    """
+    # add_player on a scratch engine applies every seed check, against the
+    # earlier seeds too, in the same order and with the same messages, so
+    # both modes reject the same seeds before any rating work.
+    scratch = _engine_under(cfg)
+    held = scratch._held_identities()
+    for player in seeds:
+        scratch._add_seed(player, held)
+        if completed:
+            _check_seed_date(player, completed[-1].played_on, "the last completed ledger match")
+
+
+def _prequential_windows(
+    ordered: list[Match], anchor: date, interval: int
+) -> tuple[dict[str, int], dict[int, list[Match]]]:
+    """
+    _prequential's scheduled windows: each match's window k, and each window's matches.
+
+    The matches keep ledger order within a window.
+    """
+    # Each match goes in window k, the largest k with anchor + k * interval
+    # strictly before played_on, and is predicted from a replay to that grid
+    # date. The matches dated on or before it are exactly those in earlier
+    # windows. Windows are keyed by k, not by date, because the first grid
+    # date can fall before date.min (issue #92). Only that one can, and no
+    # match is before it, so its replay date is clamped at date.min without
+    # adding a match dated date.min to the replay that predicts it.
+    window_of = {m.match_id: ((m.played_on - anchor).days - 1) // interval for m in ordered}
+    windows: dict[int, list[Match]] = {}
+    for match in ordered:
+        windows.setdefault(window_of[match.match_id], []).append(match)
+    return window_of, windows
+
+
 def _prequential(
     matches: Iterable[Match],
     seed_players: Iterable[Player],
@@ -212,15 +253,7 @@ def _prequential(
     # Non-completed rows move no rating: they stay in the replays and
     # windows, but never set the seed date limit or the default anchor.
     completed = [m for m in ordered if m.status is MatchStatus.COMPLETED]
-    # add_player on a scratch engine applies every seed check, against the
-    # earlier seeds too, in the same order and with the same messages, so
-    # both modes reject the same seeds before any rating work.
-    scratch = _engine_under(cfg)
-    held = scratch._held_identities()
-    for player in seeds:
-        scratch._add_seed(player, held)
-        if completed:
-            _check_seed_date(player, completed[-1].played_on, "the last completed ledger match")
+    _check_prequential_seeds(seeds, cfg, completed)
     predictions: list[PrequentialPrediction] = []
 
     def step(engine: RatingEngine, match: Match) -> None:
@@ -249,17 +282,7 @@ def _prequential(
     interval = cfg.replay_interval_days
     if anchor is None:
         anchor = completed[0].played_on
-    # Each match goes in window k, the largest k with anchor + k * interval
-    # strictly before played_on, and is predicted from a replay to that grid
-    # date. The matches dated on or before it are exactly those in earlier
-    # windows. Windows are keyed by k, not by date, because the first grid
-    # date can fall before date.min (issue #92). Only that one can, and no
-    # match is before it, so its replay date is clamped at date.min without
-    # adding a match dated date.min to the replay that predicts it.
-    window_of = {m.match_id: ((m.played_on - anchor).days - 1) // interval for m in ordered}
-    windows: dict[int, list[Match]] = {}
-    for match in ordered:
-        windows.setdefault(window_of[match.match_id], []).append(match)
+    window_of, windows = _prequential_windows(ordered, anchor, interval)
 
     for k, window in sorted(windows.items()):
         if score_from is not None and all(m.played_on < score_from for m in window):
@@ -433,6 +456,42 @@ class ScaleFit:
     at_bound: bool = False  # fitted scale within tolerance of low or high
 
 
+def _scale_search(
+    run: Callable[[float], tuple[EvaluationReport, float]],
+    low: float,
+    high: float,
+    tolerance: float,
+) -> float:
+    """
+    fit_scale's search: the fitted scale, the bracket midpoint rounded to 3 places.
+
+    run gives a scale's report and unrounded MSE. The coarse grid of
+    _SEARCH_STEPS + 1 points runs first, in order from low; then a
+    golden-section search within one grid step of the best point, until
+    the bracket is no wider than tolerance or stops shrinking.
+    """
+    steps = _SEARCH_STEPS
+    grid = [low + (high - low) * i / steps for i in range(steps + 1)]
+    best = min(grid, key=lambda s: run(s)[1])
+    step = (high - low) / steps
+    a, b = max(low, best - step), min(high, best + step)
+
+    ratio = (math.sqrt(5) - 1) / 2
+    c, d = b - ratio * (b - a), a + ratio * (b - a)
+    while b - a > tolerance:
+        width = b - a
+        if run(c)[1] <= run(d)[1]:
+            b, d = d, c
+            c = b - ratio * (b - a)
+        else:
+            a, c = c, d
+            d = a + ratio * (b - a)
+        if b - a >= width:
+            break  # the bracket hit float spacing above a tiny tolerance
+    fitted_scale = round((a + b) / 2, 3)
+    return fitted_scale
+
+
 def fit_scale(
     matches: Iterable[Match],
     seed_players: Iterable[Player] = (),
@@ -510,25 +569,7 @@ def fit_scale(
             cache[key] = _report_from_predictions(predictions, trial, scoring)
         return cache[key]
 
-    steps = _SEARCH_STEPS
-    grid = [low + (high - low) * i / steps for i in range(steps + 1)]
-    best = min(grid, key=lambda s: run(s)[1])
-    step = (high - low) / steps
-    a, b = max(low, best - step), min(high, best + step)
-
-    ratio = (math.sqrt(5) - 1) / 2
-    c, d = b - ratio * (b - a), a + ratio * (b - a)
-    while b - a > tolerance:
-        width = b - a
-        if run(c)[1] <= run(d)[1]:
-            b, d = d, c
-            c = b - ratio * (b - a)
-        else:
-            a, c = c, d
-            d = a + ratio * (b - a)
-        if b - a >= width:
-            break  # the bracket hit float spacing above a tiny tolerance
-    fitted_scale = round((a + b) / 2, 3)
+    fitted_scale = _scale_search(run, low, high, tolerance)
 
     default_scale = checked.scale_by_scoring[scoring]
     fitted = run(fitted_scale)[0]

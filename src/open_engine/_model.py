@@ -196,6 +196,16 @@ class Match:
             if score_a < 0 or score_b < 0 or score_a == score_b:
                 raise InvalidMatchError("Game scores must be nonnegative and cannot be tied")
             GameFormat.validate_game(self.game_format, score_a, score_b)
+        Match._validate_result(self, completed)
+
+    def _validate_result(self, completed: bool) -> None:
+        """
+        Raise InvalidMatchError unless the games decide the match as its status requires.
+
+        validate's last checks, after every game score passed. In order: no
+        game follows the game that decided the match, a completed match has
+        a decided winner, and a match that is not completed has none.
+        """
         wins_needed = self.best_of // 2 + 1
         running_a = running_b = 0
         for index, (score_a, score_b) in enumerate(self.games):
@@ -260,6 +270,20 @@ class Match:
             raise InvalidMatchError(
                 f"played_on must be a plain date (not a datetime), not {_type_name(self.played_on)}"
             )
+        Match._validate_played_at_type(self)
+        for name, number in (("sequence", self.sequence), ("best_of", self.best_of)):
+            if type(number) is not int:
+                raise InvalidMatchError(f"{name} must be an int, not {_type_name(number)}")
+
+    def _validate_played_at_type(self) -> None:
+        """
+        Raise InvalidMatchError when played_at, its tzinfo, or its offset has the wrong type.
+
+        _validate_field_types's played_at checks, after played_on. In order:
+        played_at is None or exactly a datetime; its tzinfo is None or a
+        plain zone (_is_plain_zone); and, for a tzinfo, the UTC offset its
+        zone gives is less than a day and exactly a timedelta.
+        """
         if self.played_at is not None:
             if type(self.played_at) is not datetime:
                 raise InvalidMatchError(
@@ -290,9 +314,6 @@ class Match:
                         f"played_at offset must be exactly a timedelta, not {_type_name(offset)}; "
                         f"convert with {_PLAYED_AT_RECIPE}"
                     )
-        for name, number in (("sequence", self.sequence), ("best_of", self.best_of)):
-            if type(number) is not int:
-                raise InvalidMatchError(f"{name} must be an int, not {_type_name(number)}")
 
 
 # The conversion a rejected played_at message gives: an exact timezone of a

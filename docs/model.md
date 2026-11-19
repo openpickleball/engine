@@ -96,7 +96,7 @@ initial_source_date = doubles.initial_source_date
 5. It is self-reported, `cfg.self_reported_requires_both_teams` is on, and `confirmed_by` does not name a player from each team: `SELF_REPORTED_UNCONFIRMED`.
 6. It is self-reported and the same two teams already have at least `cfg.self_reported_max_repeats` counted self-reported matches in this format within the repeat window: `SELF_REPORTED_REPEAT_LIMIT` (see [Evidence weight](#evidence-weight)).
 
-Then, for each rating format the match updates (`_compute`, with the two filters in `_gap_rejection`):
+Then, for each rating format the match updates (`_compute`, with the frozen players from `_frozen_players` and the two filters in `_gap_rejection`):
 
 7. Every player in it is frozen, that is, the match is on or before each player's `initial_source_date`: `BEFORE_IMPORTED_BASELINE`.
 8. In singles, with `cfg.max_singles_rating_gap` set, `abs(R_A - R_B)` is above it: `SINGLES_RATING_GAP`.
@@ -271,7 +271,7 @@ A player with no variety keeps 60 percent of their certainty. Partners and oppon
 
 - With `cfg.connectivity_reliability_cap` set, a player who is not connected has reliability at most the cap, shown rounded down to 1 place. The [network connectivity note](behavior.md#network-connectivity) defines connected and its limits.
 - `established` is true when the displayed reliability is at least `cfg.established_reliability_threshold` and `verified_matches_played` is at least `cfg.established_min_verified_matches`.
-- `imported_reliability` shows the imported value, rounded to 1 place, while it is carried. The rules for carrying it are in [`PlayerSummary` fields](behavior.md#playersummary-fields).
+- `imported_reliability` (`_imported_reliability`) shows the imported value, rounded to 1 place, while it is carried. The rules for carrying it are in [`PlayerSummary` fields](behavior.md#playersummary-fields).
 
 The summary also reports `rating` rounded to 3 places and `rd` (RD inflated to the reference date) rounded to 4. The notes on [reference dates](behavior.md#reference-dates) and on [`established`](behavior.md#established) explain which date a summary is measured at.
 
@@ -313,7 +313,7 @@ P   = 1 / (1 + exp(-a * ln(p_c / (1 - p_c))))
 **Prequential predictions** (`prequential_predictions`, `_prequential`, `_predict_match`). Each match is predicted from ratings that have not seen it, then recorded. A match is predicted when it is completed, every player's state in the format (stored, or the starting state `record` would use) has an `initial_source_date` or at least `burn_in_matches` counted matches, its scoring matches `scoring` when given, and it is on or after `score_from` when given. A prediction is kept only when `record` then counts the match. This eligibility rule is separate from `PlayerSummary.established`.
 
 - `"live"` mode records every match in ledger order in one engine.
-- `"scheduled"` mode mirrors production. Replay dates are `anchor + k * cfg.replay_interval_days`. A match is predicted from a replay to the latest replay date strictly before its own date, and the matches in that window are then predicted and recorded live in ledger order.
+- `"scheduled"` mode mirrors production. Replay dates are `anchor + k * cfg.replay_interval_days`. `_prequential_windows` assigns each match to window k, the latest replay date strictly before its own date. `_prequential` then, for each window with a match on or after `score_from` (every window when it is not set), predicts that window's matches from a replay to that date and records them live in ledger order; an earlier window is skipped, and its rows enter only the later replays.
 
 **Evaluation report** (`evaluate`, `_scored_pairs`, `_report_from_predictions`). Each prediction gives a pair, both rounded to 5 places as in `MatchResult`:
 
@@ -326,7 +326,7 @@ mse  = mean(error**2)        mae = mean(abs(error))        bias = mean(error)
 
 `mse`, `mae`, and `bias` are reported to 6 places. The calibration table has ten bins, `lower = index / 10` and `upper = (index + 1) / 10` for index 0 to 9. A pair is in a bin when `lower <= expected < upper`, and the last bin also takes `expected == 1.0`. One bin's upper edge is the same float as the next bin's lower edge, so the bins partition `[0, 1]`: every pair is in exactly one bin, and the counts add up to `matches_scored`. Only bins with at least one pair are listed. Each listed bin gives its lower bound, mean expected, mean actual (4 places), and count.
 
-**Scale fit** (`fit_scale`). For one scoring type, the scale that minimizes the unrounded prequential MSE on `[low, high]`. Each trial scale reruns the whole prequential pass, since the ratings depend on the scale. The search evaluates a grid of 15 points (14 intervals), then a golden-section search within one grid step of the best point until the bracket is no wider than `tolerance`, or stops shrinking at float spacing. The result is the bracket midpoint rounded to 3 places. Trial scales that round to the same 6 places share one result.
+**Scale fit** (`fit_scale`, `_scale_search`). For one scoring type, the scale that minimizes the unrounded prequential MSE on `[low, high]`. Each trial scale reruns the whole prequential pass, since the ratings depend on the scale. The search evaluates a grid of 15 points (14 intervals), then a golden-section search within one grid step of the best point until the bracket is no wider than `tolerance`, or stops shrinking at float spacing. The result is the bracket midpoint rounded to 3 places. Trial scales that round to the same 6 places share one result.
 
 **Win calibration fit** (`fit_win_calibration`). For one scoring type, the exponent `a` that minimizes the Brier score over predictions that have a modeled win probability:
 
