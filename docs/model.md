@@ -198,7 +198,7 @@ rating_new = clamp(rating + raw_delta, cfg.min_rating, cfg.max_rating)
 rd_new     = max(cfg.rd_min, rd' * (1 - cfg.rd_shrink_per_match * weight))
 ```
 
-The player is listed in `MatchResult.clamped` when `rating_new` differs from `rating + raw_delta` by more than 1e-12. The RD update starts from the inflated `rd'`, not the stored `rd`, and never goes below `cfg.rd_min`. The update also sets:
+The player is listed in `MatchResult.clamped` when the applied change, `rating_new - rating` in floating point, differs from `raw_delta` by more than 1e-12. That happens when the clamp cuts the change, or when the rating or the change is so large that float rounding of `rating_new` drops part of the change, which needs a rating range far wider than the default. The RD update starts from the inflated `rd'`, not the stored `rd`, and never goes below `cfg.rd_min`. The update also sets:
 
 ```
 rd_as_of     = max(rd_as_of, played_on)        played_on when rd_as_of is None
@@ -219,7 +219,7 @@ applied_i = rating_new_i - rating_i            0.0 for a frozen player
 imbalance = mean(applied_i on team A) + mean(applied_i on team B)
 ```
 
-The mean divides by the full team size, frozen players included. `MatchResult.imbalance` is this value rounded to 5 places. A match adds `team_size * imbalance`, with the unrounded imbalance, to the pool's total rating. `ReplayInfo.net_rating_created` totals it per rating format: `_replay` takes `math.fsum` of the unrounded `applied_i` of each counted update and adds those sums with `+=` in ledger order. In exact arithmetic the changes cancel when the two teams have the same mean K and no player is clamped or frozen. Unequal K, a clamp, or a frozen player can make imbalance nonzero. So can float rounding when a rating is far larger than its change, which needs a rating range far wider than the default: the new rating can then drop part of the change without a clamp. The [K and imbalance notes](behavior.md#k-and-imbalance) cover the rest, including why the backend should monitor the total.
+The mean divides by the full team size, frozen players included. `MatchResult.imbalance` is this value rounded to 5 places. A match adds `team_size * imbalance`, with the unrounded imbalance, to the pool's total rating. `ReplayInfo.net_rating_created` totals it per rating format: `_replay` takes `math.fsum` of the unrounded `applied_i` of each counted update and adds those sums with `+=` in ledger order. In exact arithmetic the changes cancel when the two teams have the same mean K and no player is clamped or frozen. Unequal K, a clamped player, or a frozen player can make imbalance nonzero. A change that float rounding drops against a very large rating lists the player in `clamped`, so it is not a separate case. With nothing clamped or frozen and the same mean K, only float rounding of the steps themselves is left, and it reaches the fifth place only for steps far larger than the default config gives. The [K and imbalance notes](behavior.md#k-and-imbalance) cover the rest, including why the backend should monitor the total.
 
 `MatchResult` reports `expected_a = E`, `actual_a = S`, `surprise`, `effective_weight = weight`, and each player's delta, each rounded to 5 places. The stored rating keeps full precision.
 

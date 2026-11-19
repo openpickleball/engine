@@ -37,11 +37,13 @@ _SHARE_EXPONENT_LIMIT = 12.0
 _RELIABILITY_BASE_WEIGHT = 0.60
 _RELIABILITY_VARIETY_WEIGHT = 0.40
 
-# _compute marks a player clamped when the applied rating differs from the
-# unclamped one (old rating + raw delta) by more than this. An unclamped
-# rating equals that sum exactly, so only a clamp can differ. A clamp that
-# cuts off 1e-12 or less is not listed in clamped: that is far below the 5
-# places a delta is reported to.
+# _compute marks a player clamped when the applied change (new rating minus
+# old rating) differs from the raw delta by more than this: the rating range
+# cut it off, or the rating or the change is so large that float rounding
+# of the new rating dropped part of it (issue #129). Under the default
+# config only the range can drop more than this.
+# A change that loses 1e-12 or less is not listed in clamped: that is far
+# below the 5 places a delta is reported to.
 _CLAMP_TOLERANCE = 1e-12
 
 # Decimal places of reported numbers. Ratings and states keep full

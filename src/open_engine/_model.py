@@ -423,6 +423,8 @@ class MatchResult:
 
     reason is None when the match counted. deltas lists the rating changes.
     frozen and clamped list the players whose change was not fully applied.
+    A player is clamped when the rating range, or float rounding of a very
+    large rating or change, dropped more than 1e-12 of their change.
     imbalance is the mean team A delta plus the mean team B delta, from the
     unrounded changes, rounded to 5 places. parent holds the overall doubles
     update for a category match, with its own imbalance.
@@ -446,7 +448,7 @@ class MatchResult:
     effective_weight: float = 0.0
     deltas: dict[str, float] = field(default_factory=dict)
     frozen: tuple[str, ...] = ()  # predates the player's imported baseline
-    clamped: tuple[str, ...] = ()  # hit the rating floor or ceiling
+    clamped: tuple[str, ...] = ()  # range or float precision cut the change
     imbalance: float = 0.0  # mean team A delta plus mean team B delta
     late: bool = False  # dated before what a player's rating here reflects
     parent: MatchResult | None = None  # overall doubles update for categories
