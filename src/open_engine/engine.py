@@ -170,6 +170,10 @@ class GameFormat:
         through the class (GameFormat.validate(fmt)), never through the
         instance. Match.validate calls it and raises a ConfigError from it
         as InvalidMatchError with the same message.
+
+        Raises:
+            ConfigError: the format is not exactly a GameFormat with only its four
+                fields, a field has the wrong type, or a value is out of range.
         """
         problem = _game_format_broken(self)
         if problem is not None:
@@ -193,8 +197,10 @@ class GameFormat:
             ConfigError: the format is not exactly a GameFormat with only its
                 fields.
             InvalidMatchError: a score is not exactly an int (a bool or an int
-                subclass is rejected), before any score is compared, or the score
-                cannot end a game in this format.
+                subclass is rejected), or the score cannot end a game in this
+                format.
+
+        Both type checks run before any score is compared.
         """
         problem = _game_format_broken(self)
         if problem is not None:
@@ -2404,12 +2410,15 @@ def reliability(state: RatingState, cfg: Config, as_of: date) -> float:
         The reliability, from 0 to 100.
 
     Raises:
-        EvaluationError: state or a field it reads has the wrong type, or its
-            rd is too large to inflate for inactivity.
+        EvaluationError: state is not exactly a RatingState whose rd is
+            exactly an int or float that is finite as a float, rd_as_of None
+            or exactly a date, and partners and opponents exactly dicts with
+            exactly str keys and exactly date values; or its rd is too large
+            to inflate for inactivity.
         ConfigError: cfg is not valid.
         ReferenceDateError: as_of is not exactly a date.
 
-    See docs/behavior.md, "Input types", for the exact types.
+    See docs/behavior.md, "Input types".
     """
     _check_reliability_state(state)
     return _reliability(state, _require_config(cfg), as_of)
@@ -4236,12 +4245,19 @@ class RatingEngine:
         """
         An empty engine under cfg (default Config()).
 
-        Raises ConfigError unless cfg is None or exactly a Config (not a
-        subclass) holding only its own fields, before anything is built.
         The engine keeps a fresh copy of cfg, rebuilt from its field values
-        and checked again as Config(...) checks them (issue #122), so
-        self.cfg is never cfg. For a Config that was not rewritten after it
-        was built, self.cfg equals cfg and has the same fingerprint.
+        and checked again as Config(...) checks them, so self.cfg is never
+        cfg. For a Config that was not rewritten after it was built, self.cfg
+        equals cfg and has the same fingerprint.
+
+        Args:
+            cfg: None or exactly a Config (not a subclass) holding only its own
+                fields.
+
+        Raises:
+            ConfigError: cfg is not None or exactly a Config holding only its own
+                fields, before anything is built, or a value in it fails Config's
+                checks when it is rebuilt.
         """
         self._start(_config_or_default(cfg))
 
@@ -4596,9 +4612,7 @@ class RatingEngine:
 
         The external rating is an initial condition, not a live dependency.
         Once OPEN matches exist, external refreshes cannot overwrite the rating.
-        The seed's RD is always Config.external_seed_rd: an external
-        reliability is kept for display (imported_reliability), never turned
-        into OPEN RD.
+        The seed's RD is always Config.external_seed_rd.
 
         Args:
             player_id: The player to seed, exactly a str that is not blank.
@@ -4611,12 +4625,14 @@ class RatingEngine:
             The new stored RatingState.
 
         Raises:
-            InvalidSeedError: the rating format, the snapshot or a checked snapshot
-                field, the existing rating, or the player's OPEN matches (counted,
-                or rejected for a reason a seed can change) do not allow the seed.
-            PlayerError: player_id is blank or not a str, or the snapshot's
-                external identity is linked to another player, or the player
-                already has a different id from that source.
+            InvalidSeedError: first, the rating format, the snapshot, or a checked
+                snapshot field; after the player id, the existing rating or the
+                player's OPEN matches (counted, or rejected for a reason a seed can
+                change) do not allow the seed.
+            PlayerError: player_id is blank or not a str (checked after the
+                snapshot); or, last, the snapshot's external identity is linked to
+                another player or the player already has a different id from that
+                source.
 
         Every check runs before anything changes, so a failed call creates no
         player. See docs/behavior.md, "External seeds".
@@ -4795,7 +4811,7 @@ class RatingEngine:
 
     def seed_provisional_rating(self, player_id: str, rating_format: RatingFormat) -> RatingState:
         """
-        The player's state in a format, stored as a new unplayed state if missing.
+        The player's state; stores a missing one, except in a category under category_feeds_parent.
 
         Creates an empty player record for an unknown player_id. A state the
         player already has in the format is returned as stored. Otherwise it
@@ -5333,8 +5349,9 @@ class RatingEngine:
             ReferenceDateError: as_of is None and the engine was never replayed,
                 or as_of is not a plain date. These checks come first.
             UnknownPlayerError: no player record exists for the id.
-            PlayerError: the id is blank or not exactly a str, or rating_format
-                is not exactly a RatingFormat.
+            PlayerError: the id is blank or not exactly a str, and then, once the
+                player is found, a rating_format that is not exactly a
+                RatingFormat.
 
         See docs/behavior.md, "Player summaries" and "Reference dates".
         """
@@ -5475,18 +5492,15 @@ def replay(
     """
     Rebuild authoritative ratings from seeds plus the immutable match ledger.
 
-    Run on the published schedule (Config.replay_interval_days). Same ledger,
-    seeds, config and as_of always produce the same result, whatever order
-    the ledger rows arrive in. Every row is validated, even after as_of.
+    Same ledger, seeds, config and as_of always produce the same result.
 
     Args:
         matches: The ledger rows, any iterable, read once into a list.
-        seed_players: Unplayed imported or provisional seeds that follow the
-            seed rules, dated on or before as_of; any iterable, read once.
+        seed_players: Unplayed seeds that follow the seed rules, dated on or
+            before as_of; any iterable, read once.
         cfg: None or exactly a Config with only its fields.
         as_of: The replay date, a plain date.
-        from_snapshot: A checkpoint to resume from: the to_snapshot() output
-            of an earlier replay under the same cfg.
+        from_snapshot: An earlier replay's to_snapshot() output, to resume from.
         whole_ledger: Exactly a bool. True, with from_snapshot, promises the whole ledger.
 
     Returns:
@@ -5494,13 +5508,15 @@ def replay(
 
     Raises:
         ReferenceDateError: as_of is not a plain date. It is checked first.
-        ConfigError: cfg is not valid.
-        InvalidMatchError, LedgerConflictError: a row is not valid, or two
-            rows with one match_id differ.
-        InvalidSeedError, PlayerError: a seed breaks the seed or identity
-            rules, or is dated after as_of.
-        SnapshotError: whole_ledger is not valid, or a resume cannot match a
-            full replay.
+        SnapshotError: whole_ledger is not exactly a bool (checked next), or a
+            resume cannot equal a full replay.
+        ConfigError: cfg is not valid. Its type is checked next, before
+            matches, seed_players, and from_snapshot are read, and its values
+            after matches and seed_players are read.
+        InvalidMatchError, InvalidSeedError, PlayerError: a row or seed is not
+            valid, a seed is dated after as_of, or seeds share an identity.
+        LedgerConflictError: rows with one match_id differ, including, on
+            resume, an edited checkpoint row or a later row reusing its id.
 
     See docs/behavior.md, "Replay and resume".
     """
@@ -5819,7 +5835,8 @@ def prequential_predictions(
             anchor + k * cfg.replay_interval_days.
 
     Returns:
-        A list of PrequentialPrediction, one per eligible match.
+        A list of PrequentialPrediction, one per eligible match that `record`
+        counts.
 
     Raises:
         EvaluationError: score_from, anchor, mode, scoring, or burn_in_matches
@@ -5966,7 +5983,8 @@ def evaluate(
 
     Raises:
         OpenEngineError: the subclass prequential_predictions raises for the
-            same arguments.
+            same arguments, in the same order.
+        EvaluationError: no established match remains to evaluate.
     """
     shape = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
     rows = list(matches)
@@ -6116,8 +6134,7 @@ def fit_scale(
         matches, seed_players, cfg, burn_in_matches, mode, score_from,
             anchor: As for prequential_predictions.
         scoring: Exactly a ScoringType (None is rejected).
-        low: The low end of the search, exactly an int or a float.
-        high: The high end of the search, exactly an int or a float.
+        low, high: The search range, each exactly an int or a float.
         tolerance: Exactly an int or a float, finite and greater than 0.
 
     Returns:
@@ -6125,10 +6142,12 @@ def fit_scale(
         adopts it.
 
     Raises:
-        EvaluationError: an argument is not valid. low, high, and tolerance
-            are checked before any prediction work.
-        ConfigError: cfg is not valid, or a trial config is not (a low of 0
-            or less).
+        EvaluationError: low, high, or tolerance is not valid (checked first,
+            before any prediction work), another argument fails a check
+            prequential_predictions makes, or no established match remains.
+        ConfigError, InvalidMatchError, InvalidSeedError, PlayerError,
+            LedgerConflictError: as prequential_predictions raises them, in its
+            order. A trial config with a low of 0 or less raises ConfigError.
 
     See docs/behavior.md, "Calibration fits".
     """
@@ -6245,7 +6264,11 @@ def fit_win_calibration(
         A WinCalibrationFit.
 
     Raises:
-        EvaluationError: an argument is not valid, or no prediction remains.
+        EvaluationError: low, high, or tolerance is not valid, as for
+            fit_scale; another argument fails a check prequential_predictions
+            makes; or no prediction remains.
+        ConfigError, InvalidMatchError, InvalidSeedError, PlayerError,
+            LedgerConflictError: as fit_scale raises them, in its order.
 
     See docs/behavior.md, "Calibration fits".
     """
