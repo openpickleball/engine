@@ -37,7 +37,7 @@ _SHARE_EXPONENT_LIMIT = 12.0
 _RELIABILITY_BASE_WEIGHT = 0.60
 _RELIABILITY_VARIETY_WEIGHT = 0.40
 
-# _compute marks a player clamped when the rating range cut their change:
+# _apply_update marks a player clamped when the rating range cut their change:
 # the applied rating differs from the unclamped one (old rating + raw
 # delta) by more than this. An unclamped rating equals that sum exactly,
 # so only a clamp can differ. A clamp that cuts off 1e-12 or less is not
@@ -49,7 +49,7 @@ _CLAMP_TOLERANCE = 1e-12
 # MatchResult deltas, expected_a, actual_a, surprise, effective_weight,
 # and imbalance, and the evaluation pairs that mirror them (_scored_pairs).
 _RESULT_PLACES = 5
-# _compute also marks a player clamped when float rounding of the new
+# _apply_update also marks a player clamped when float rounding of the new
 # rating dropped at least this much of their change: the applied change
 # (new rating minus old rating) differs from the raw delta by half a unit
 # in the last reported place, so the loss can show in deltas and imbalance
@@ -125,7 +125,7 @@ def player_k(state: RatingState, cfg: Config) -> float:
     """
     The player's K, linear in RD from k_min at rd_min to k_max at rd_max.
 
-    The RD position is clamped to 0..1. _compute passes a state whose RD
+    The RD position is clamped to 0..1. _apply_update passes a state whose RD
     is already inflated for inactivity. See docs/model.md.
     """
     fraction = (state.rd - cfg.rd_min) / (cfg.rd_max - cfg.rd_min)

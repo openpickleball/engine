@@ -26,6 +26,8 @@ Smaller items from the issue:
 
 - `reliability()` checks its state twice: once itself, and once in `_reliability`. Keep the check in `reliability()` and remove it from `_reliability`, so the order (state, then `cfg`, then `as_of`) is unchanged. `player_summary` passes only engine-held states, which `from_snapshot` and the seed rules already validate.
 
+  Not done, recorded during the work. `player_summary` reads the stored state object, which a caller can change through `engine.players` or the object `state()` returns. The differential corpus changed such a state (rd, rd_as_of, partners, opponents) and called `player_summary`: with the check removed from `_reliability`, 60 of those calls raised AttributeError or TypeError instead of main's EvaluationError, which breaks both "no behavior change" and the rule that the engine raises only OpenEngineError subclasses. The second check stays.
+
 Left out, with the reason recorded in the PR:
 
 - Renaming `clone_player`: it is re-exported by `open_engine.engine` without an underscore and tests import it from there; renaming it is an API change for no gain.
@@ -45,7 +47,7 @@ Departure recorded during the work: the Config groups follow the code's check or
 
 ## Files that change
 
-- `src/open_engine/_config.py`, `_snapshot.py`, `_engine.py`, `_math.py` (`_reliability`).
+- `src/open_engine/_config.py`, `_snapshot.py`, `_engine.py`. `_math.py` changes only in comments that now name `_apply_update`; the `_reliability` item was dropped.
 - `docs/model.md` (function names only).
 - `CHANGELOG.md`.
 - New: `tests/test_refactor_parity.py` (the differential corpus, see Proof), committed before the refactor so it runs on `main`'s code first.
@@ -55,7 +57,7 @@ Departure recorded during the work: the Config groups follow the code's check or
 1. Build the differential corpus in the scratch directory, from `main`'s code: for each refactored entry point (`Config(...)`, `Config.from_dict`, `RatingEngine.from_snapshot`, `replay` with `from_snapshot`, `seed_external_rating`, `add_player`, `record`, `reliability`), a large set of valid and invalid inputs, including two-failure inputs for every adjacent pair of checks, and record each outcome (result repr or error class and message, plus the engine snapshot after a failed call). Sources: every invalid input the existing tests build (collected by running the suite with a recording hook, or by reading the tests), mutated snapshots (each key removed, each value's type changed, each rule broken), and random valid ledgers.
 2. Commit a small, fast subset of that corpus as `tests/test_refactor_parity.py` (pinned expected outcomes from `main`), passing on `main`.
 3. Refactor one function at a time, in the table's order. After each, run the full corpus and the gate.
-4. `reliability` double check.
+4. `reliability` double check (not done: see Scope).
 5. `docs/model.md` names, changelog. Full gate.
 
 ## Risks
