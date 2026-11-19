@@ -134,6 +134,23 @@ def _imported_reliability(
     return imported
 
 
+def _frozen_players(match: Match, ids: tuple[str, ...], work: dict[str, RatingState]) -> set[str]:
+    """
+    _compute's frozen players: ids whose working state is dated on or after the match.
+
+    A state is dated by its initial_source_date, the imported baseline.
+    """
+    # A player whose imported baseline is dated on or after this match
+    # already has it reflected in that baseline: use, but do not move.
+    frozen = {
+        pid
+        for pid in ids
+        if (baseline_date := work[pid].initial_source_date) is not None
+        and match.played_on <= baseline_date
+    }
+    return frozen
+
+
 class RatingEngine:
     """
     Holds players and processed matches, and records matches one at a time.
@@ -1192,14 +1209,7 @@ class RatingEngine:
         ids = match.team_a + match.team_b
         work = {pid: _clone_state(self._peek_state(pid, rating_format)) for pid in ids}
 
-        # A player whose imported baseline is dated on or after this match
-        # already has it reflected in that baseline: use, but do not move.
-        frozen = {
-            pid
-            for pid in ids
-            if (baseline_date := work[pid].initial_source_date) is not None
-            and match.played_on <= baseline_date
-        }
+        frozen = _frozen_players(match, ids, work)
         if len(frozen) == len(ids):
             return (
                 MatchResult(False, rating_format, RejectionReason.BEFORE_IMPORTED_BASELINE),

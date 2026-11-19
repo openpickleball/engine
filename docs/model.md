@@ -96,7 +96,7 @@ initial_source_date = doubles.initial_source_date
 5. It is self-reported, `cfg.self_reported_requires_both_teams` is on, and `confirmed_by` does not name a player from each team: `SELF_REPORTED_UNCONFIRMED`.
 6. It is self-reported and the same two teams already have at least `cfg.self_reported_max_repeats` counted self-reported matches in this format within the repeat window: `SELF_REPORTED_REPEAT_LIMIT` (see [Evidence weight](#evidence-weight)).
 
-Then, for each rating format the match updates (`_compute`, with the two filters in `_gap_rejection`):
+Then, for each rating format the match updates (`_compute`, with the frozen players from `_frozen_players` and the two filters in `_gap_rejection`):
 
 7. Every player in it is frozen, that is, the match is on or before each player's `initial_source_date`: `BEFORE_IMPORTED_BASELINE`.
 8. In singles, with `cfg.max_singles_rating_gap` set, `abs(R_A - R_B)` is above it: `SINGLES_RATING_GAP`.
