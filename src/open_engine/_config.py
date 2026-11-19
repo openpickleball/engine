@@ -998,3 +998,6 @@ def _game_formats(value: object) -> frozenset[tuple[ScoringType, int]]:
 # module and name, and snapshots store those digests, so a new module name
 # would change every digest and stop resume from older snapshots (#127).
 Config.__module__ = "open_engine.engine"
+# Config's mapping fields hold a _FrozenMapping, so pickles of public objects
+# name it: it keeps the same module, and engine.py re-exports it.
+_FrozenMapping.__module__ = "open_engine.engine"

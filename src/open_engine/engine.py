@@ -38,8 +38,18 @@ docstring's "docs/behavior.md" means the second page.
 
 from __future__ import annotations
 
+# Not re-exports. Public classes report open_engine.engine as their module,
+# so typing.get_type_hints resolves their string annotations here, and these
+# are the names those annotations use beyond the classes below.
+from collections.abc import Mapping  # noqa: F401
+from datetime import date, datetime  # noqa: F401
+
 # Explicit re-exports, so `from open_engine.engine import X` passes mypy --strict.
 from ._config import Config as Config
+
+# The one private re-export: pickles of Config and the objects that hold one
+# name open_engine.engine._FrozenMapping, as they did before the split.
+from ._config import _FrozenMapping as _FrozenMapping
 from ._engine import RatingEngine as RatingEngine
 from ._errors import ConfigError as ConfigError
 from ._errors import EvaluationError as EvaluationError
