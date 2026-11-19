@@ -146,6 +146,9 @@ class _NoHashMeta(type):
 
 
 def test_a_tag_lookup_runs_no_metaclass_hash_or_eq() -> None:
-    odd = _NoHashMeta("Odd", (), {})
-    assert ledger_module._digest_tag(odd) is None
-    assert ledger_module._digest_tag(float) == "builtins.float"
+    # _json_form looks up the tag of type(value): a dict lookup would hash
+    # the class, running its metaclass __hash__ (and __eq__ on a collision).
+    odd = _NoHashMeta("Odd", (), {"__repr__": lambda self: "odd"})
+    tag, shown = typing.cast(list[object], ledger_module._json_form(odd()))
+    assert tag == f"{__name__}.Odd"
+    assert shown == "odd"
