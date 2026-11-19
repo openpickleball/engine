@@ -8,6 +8,14 @@ message, or a digest of the result) with the value main gave. The
 two-failure inputs break two adjacent checks at once, so a helper that runs
 its checks in another order fails here. A failed engine call must also
 leave the engine's snapshot unchanged. All ids are synthetic.
+
+Nothing here depends on the release version: config digests leave out
+version, snapshot digests leave out the version and fingerprint keys, and
+messages that name the Config's version or fingerprint are built at run
+time. The pinned ratings, results, and digests do depend on Config's
+defaults and the rating math, so a change to a default or to rating
+behavior, which changes published ratings anyway, needs these values
+pinned again.
 """
 
 from __future__ import annotations
@@ -61,6 +69,13 @@ def _snapshot_digest(engine: RatingEngine) -> str:
         info.pop("config_version")
         info.pop("config_fingerprint")
     return _digest(snap)
+
+
+def _config_digest(cfg: Config) -> str:
+    """A digest of every parameter but version, which changes with a release."""
+    data = cfg.to_dict()
+    data.pop("version")
+    return _digest(data)
 
 
 def _outcome(call: Callable[[], object]) -> str:
@@ -294,8 +309,8 @@ CONFIG_EXPECTED: dict[str, str] = {
     "shrink then growth": "ConfigError: rd_shrink_per_match must be at least 0",
     "threshold then min verified": "ConfigError: established_reliability_threshold must "
     "be between 0 and 100",
-    "valid default": "ok a13775baa545a879",
-    "valid ints": "ok 01905fcb23fcd058",
+    "valid default": "ok df50297f91963821",
+    "valid ints": "ok c7d221ae5deba244",
     "version then number": "ConfigError: version must be a str",
     "weight keys then scale value": "ConfigError: match_weights needs a value for every match type",
     "weight value then length coverage": "ConfigError: match_weights values must be positive",
@@ -308,7 +323,7 @@ CONFIG_EXPECTED: dict[str, str] = {
 def test_config_checks_keep_their_order(name: str) -> None:
     def build() -> object:
         cfg = Config(**CONFIG_PAIRS[name])  # type: ignore[arg-type]
-        return cfg.fingerprint()
+        return _config_digest(cfg)
 
     assert _outcome(build) == CONFIG_EXPECTED[name]
 
@@ -340,14 +355,15 @@ FROM_DICT_EXPECTED: dict[str, str] = {
     "not a whole number: 'x'",
     "bad mapping and bad number": "ConfigError: match_weights must be a mapping",
     "missing and unknown": "ConfigError: Config data has missing keys: k_min",
-    "plain": "ok a13775baa545a879",
+    "plain": "ok df50297f91963821",
 }
 
 
 @pytest.mark.parametrize("name", sorted(FROM_DICT_CASES))
 def test_config_from_dict_keeps_its_outcomes(name: str) -> None:
     data: dict[str, object] = FROM_DICT_CASES[name]  # type: ignore[assignment]
-    assert _outcome(lambda: Config.from_dict(data).fingerprint()) == FROM_DICT_EXPECTED[name]
+    outcome = _outcome(lambda: _config_digest(Config.from_dict(data)))
+    assert outcome == FROM_DICT_EXPECTED[name]
 
 
 # ---------------------------------------------------------------------------
@@ -765,6 +781,14 @@ def _base_snapshot() -> dict[str, object]:
     return replay(_ledger(), seeds, cfg=cfg, as_of=D0 + timedelta(days=10)).to_snapshot()
 
 
+def _lower_verified(players: list[object], player_id: str, rating_format: str) -> None:
+    """Break the verified-against-log rule: one more unverified match than the log holds."""
+    for player in players:
+        assert isinstance(player, dict)
+        if player["id"] == player_id:
+            player["ratings"][rating_format]["verified_matches_played"] -= 1
+
+
 def _mutate(snap: dict[str, object], name: str) -> dict[str, object]:
     snap = copy.deepcopy(snap)
     players = snap["players"]
@@ -790,6 +814,7 @@ def _mutate(snap: dict[str, object], name: str) -> dict[str, object]:
         "seed sensitive": lambda: snap.update(seed_sensitive_rejections=[]),
         "drop processed": lambda: snap.update(processed_match_ids=[]),
         "drop digests": lambda: snap.update(ledger_digests={}),
+        "verified": lambda: _lower_verified(players, "a1", "singles"),
     }
     for part in name.split(" + "):
         edits[part]()
@@ -822,13 +847,16 @@ SNAPSHOT_CASES = (
     ["base"]
     + [f"{a} + {b}" for a, b in zip(SNAPSHOT_STEPS, SNAPSHOT_STEPS[1:], strict=False)]
     + SNAPSHOT_STEPS[-3:]
+    # The verified-against-log rule runs after content_keys and resumable
+    # and before the ledger digests and ledger player ids.
+    + ["verified", "verified + digests", "verified + digest value", "verified + ledger players"]
 )
 SNAPSHOT_EXPECTED: dict[str, str] = {
     "base": "engine 3c7105c3c64b64f7",
     "calculated_as_of + replay_info": "SnapshotError: snapshot.calculated_as_of must be a "
     "date in YYYY-MM-DD form",
     "config version + fingerprint": "SnapshotError: snapshot.config_version '0.0.0' does "
-    "not match the Config ('0.3.0.dev0')",
+    "not match the Config (<version>)",
     "content_keys + resumable": "SnapshotError: snapshot.content_keys must be an object",
     "digest value + ledger players": "SnapshotError: snapshot.ledger_digests['m01'] must "
     "be 64 lowercase hex characters",
@@ -846,7 +874,7 @@ SNAPSHOT_EXPECTED: dict[str, str] = {
     "engine version + config version": "SnapshotError: snapshot.engine_version must be a str",
     "fingerprint + calculated_as_of": "SnapshotError: snapshot.config_fingerprint "
     "'0000000000000000' does not match the Config "
-    "('0b658532e39b53e2')",
+    "(<fingerprint>)",
     "ledger players + possible duplicates": "SnapshotError: snapshot.ledger_player_ids "
     "must be a list",
     "log + content_keys": "SnapshotError: snapshot.self_reported_log must be a list",
@@ -861,6 +889,20 @@ SNAPSHOT_EXPECTED: dict[str, str] = {
     "seed sensitive + drop processed": "SnapshotError: "
     "snapshot.content_keys['2647295ebe6f68269ef0a2604c0968badc12c4365e143a566959866f5980c0b3'] "
     "names 'm10', which is not in processed_match_ids",
+    "verified": "SnapshotError: snapshot.players[0].ratings.singles: matches_played - "
+    "verified_matches_played (1) must equal the self-reported singles matches "
+    "logged for this player (0)",
+    "verified + digest value": "SnapshotError: snapshot.players[0].ratings.singles: "
+    "matches_played - verified_matches_played (1) must equal "
+    "the self-reported singles matches logged for this player "
+    "(0)",
+    "verified + digests": "SnapshotError: snapshot.players[0].ratings.singles: "
+    "matches_played - verified_matches_played (1) must equal the "
+    "self-reported singles matches logged for this player (0)",
+    "verified + ledger players": "SnapshotError: snapshot.players[0].ratings.singles: "
+    "matches_played - verified_matches_played (1) must equal "
+    "the self-reported singles matches logged for this "
+    "player (0)",
     "version + engine version": "SnapshotError: snapshot.snapshot_version must be 8, not 7",
 }
 
@@ -870,7 +912,28 @@ def test_from_snapshot_keeps_its_check_order(name: str) -> None:
     base = _base_snapshot()
     snap = base if name == "base" else _mutate(base, name)
     cfg = LEDGER_CONFIGS["strict"]
-    assert _outcome(lambda: RatingEngine.from_snapshot(snap, cfg)) == SNAPSHOT_EXPECTED[name]
+    # The Config's version and fingerprint change with a release, so the
+    # messages that name them are built here.
+    expected = (
+        SNAPSHOT_EXPECTED[name]
+        .replace("<version>", repr(cfg.version))
+        .replace("<fingerprint>", repr(cfg.fingerprint()))
+    )
+    assert _outcome(lambda: RatingEngine.from_snapshot(snap, cfg)) == expected
+
+
+# ---------------------------------------------------------------------------
+# _update_players: team A first, then team B
+# ---------------------------------------------------------------------------
+
+UPDATE_ORDER_EXPECTED = "ok d40d3b257686c313"
+
+
+def test_update_order_shows_in_clamped() -> None:
+    engine = RatingEngine(Config(min_rating=3.4, max_rating=3.6))
+    result = engine.record(_match("m1", ("a1", "a2"), ("b1", "b2"), ((11, 0),), 1, DBL))
+    assert result.clamped == ("a1", "a2", "b1", "b2")
+    assert _outcome(lambda: result) == UPDATE_ORDER_EXPECTED
 
 
 # ---------------------------------------------------------------------------

@@ -1337,7 +1337,12 @@ class RatingEngine:
         clamped: list[str],
         late: bool,
     ) -> MatchResult:
-        """The counted MatchResult of _compute, with imbalance from the unrounded changes."""
+        """
+        The counted MatchResult of _compute.
+
+        First the imbalance, from the unrounded changes, then the result,
+        with expected_a, actual_a, surprise, and effective_weight rounded.
+        """
         # From the unrounded changes, so rounding residue never shows. Adding
         # 0.0 turns a negative zero into 0.0.
         imbalance = (

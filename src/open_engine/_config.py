@@ -373,7 +373,7 @@ class Config:
         if type(self.version) is not str:
             raise ConfigError(must_be("version", "a str"))
         # Store every number as the plain int or float of its own value, so
-        # the checks below, fingerprint(), and rating code read the same
+        # every later check, fingerprint(), and rating code read the same
         # value (issue #107). A bool or a non-number is kept, and a spoofed
         # number replaced, for the type checks below to reject.
         for name in _CONFIG_NUMBER_FIELDS + _CONFIG_WHOLE_FIELDS + _CONFIG_OPTIONAL_NUMBER_FIELDS:
@@ -400,14 +400,14 @@ class Config:
         For each field in _CONFIG_MAPPING_FIELDS, in order: it must be a
         mapping, then every value a finite number.
         """
-        # Then the mapping and format fields: types, keys, and read-only
-        # copies. Keys and format entries are stored as their own types (an
-        # enum member, a plain int), so the fingerprint never depends on how
-        # an equal key prints or whether JSON can hold it.
+        # The mapping and format helpers check types and keys and store
+        # read-only copies. Keys and format entries are stored as their own
+        # types (an enum member, a plain int), so the fingerprint never
+        # depends on how an equal key prints or whether JSON can hold it.
         # One read of each caller's mapping, as (key, plain value) pairs;
-        # every check below and the stored copy read these pairs, never the
-        # caller's mapping, and no game length key is hashed before it is
-        # converted.
+        # every later mapping check and the stored copy read these pairs,
+        # never the caller's mapping, and no game length key is hashed
+        # before it is converted.
         pairs: dict[str, list[tuple[object, object]]] = {}
         for name in _CONFIG_MAPPING_FIELDS:
             value = getattr(self, name)
@@ -445,8 +445,9 @@ class Config:
         """
         Store allowed_game_formats as a frozenset of (ScoringType, int) pairs.
 
-        In order: it is a set or frozenset, then each entry is a pair of a
-        scoring type and a whole number.
+        In order: it is a set or frozenset, then for each entry: it is a
+        tuple of two items, its first item is not a ScoringType that is not
+        a member, then it is a scoring type and a whole number.
         """
         if not isinstance(self.allowed_game_formats, (set, frozenset)):
             raise ConfigError("allowed_game_formats must be a set or frozenset")
@@ -518,7 +519,6 @@ class Config:
         the rating limit, min_rating is below max_rating, then default_rating
         is within them.
         """
-        # Then ranges and cross-field rules.
         limit = _RATING_LIMIT_TEXT
         for name in ("min_rating", "max_rating", "default_rating"):
             if not -_RATING_LIMIT <= getattr(self, name) <= _RATING_LIMIT:
