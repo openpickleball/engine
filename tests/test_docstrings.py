@@ -91,3 +91,35 @@ def test_public_docstring_stays_within_the_line_limit(name: str, obj: object) ->
 def test_public_function_with_parameters_has_an_args_section(name: str, obj: object) -> None:
     lines = _own_doc(obj).splitlines()
     assert "Args:" in lines, name
+
+
+def _written_inits() -> list[tuple[str, object]]:
+    """Each exported class's own __init__ that has a docstring, not a generated one."""
+    found: list[tuple[str, object]] = []
+    for name in open_engine.__all__:
+        obj = getattr(open_engine, name)
+        if not isinstance(obj, type):
+            continue
+        init = vars(obj).get("__init__")
+        if init is None or not getattr(init, "__doc__", None):
+            continue
+        found.append((f"{name}.__init__", init))
+    return found
+
+
+INITS = _written_inits()
+
+
+def test_some_public_init_docstring_is_checked() -> None:
+    assert "RatingEngine.__init__" in [name for name, _ in INITS]
+
+
+@pytest.mark.parametrize(("name", "obj"), INITS, ids=[name for name, _ in INITS])
+def test_public_init_docstring_follows_the_layout(name: str, obj: object) -> None:
+    lines = _own_doc(obj).splitlines()
+    assert len(lines[0]) < SUMMARY_MAX_CHARS, name
+    if len(lines) > 1:
+        assert lines[1] == "", f"{name}: the summary must be one line followed by a blank line"
+    assert len(lines) <= PUBLIC_DOC_MAX_LINES, f"{name}: {len(lines)} lines"
+    if _has_parameters(obj):
+        assert "Args:" in lines, name
