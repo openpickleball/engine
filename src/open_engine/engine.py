@@ -4628,10 +4628,11 @@ class RatingEngine:
             The new stored RatingState.
 
         Raises:
-            InvalidSeedError: first, the rating format, the snapshot, or a checked
-                snapshot field; after the player id, the existing rating or the
-                player's OPEN matches (counted, or rejected for a reason a seed can
-                change) do not allow the seed.
+            InvalidSeedError: first, the rating format, then replace_unplayed_seed
+                (exactly a bool), then the snapshot or a checked snapshot field;
+                after the player id, the existing rating or the player's OPEN
+                matches (counted, or rejected for a reason a seed can change) do
+                not allow the seed.
             PlayerError: player_id is blank or not a str (checked after the
                 snapshot); or, last, the snapshot's external identity is linked to
                 another player or the player already has a different id from that
@@ -5499,8 +5500,7 @@ def replay(
 
     Args:
         matches: The ledger rows, any iterable, read once into a list.
-        seed_players: Unplayed seeds that follow the seed rules, dated on or
-            before as_of; any iterable, read once.
+        seed_players: Seeds that follow the seed rules, dated on or before as_of.
         cfg: None or exactly a Config with only its fields.
         as_of: The replay date, a plain date.
         from_snapshot: An earlier replay's to_snapshot() output, to resume from.
@@ -5511,13 +5511,15 @@ def replay(
 
     Raises:
         ReferenceDateError: as_of is not a plain date. It is checked first.
-        SnapshotError: whole_ledger is not exactly a bool (checked next), or a
-            resume cannot equal a full replay.
-        ConfigError: cfg is not valid. Its type is checked next, before
-            matches, seed_players, and from_snapshot are read, and its values
-            after matches and seed_players are read.
+        SnapshotError: whole_ledger is not exactly a bool, then whole_ledger
+            is True without from_snapshot (both before cfg); later, the
+            snapshot is malformed or taken under another Config, or a resume
+            cannot equal a full replay.
+        ConfigError: cfg is not valid: its type before matches, seed_players,
+            and from_snapshot are read, its values after.
         InvalidMatchError, InvalidSeedError, PlayerError: a row or seed is not
-            valid, a seed is dated after as_of, or seeds share an identity.
+            valid, a seed is dated after as_of, or seeds share an identity
+            (on resume, also with a checkpoint player).
         LedgerConflictError: rows with one match_id differ, including, on
             resume, an edited checkpoint row or a later row reusing its id.
 
@@ -6150,7 +6152,9 @@ def fit_scale(
             prequential_predictions makes, or no established match remains.
         ConfigError, InvalidMatchError, InvalidSeedError, PlayerError,
             LedgerConflictError: as prequential_predictions raises them, in its
-            order. A trial config with a low of 0 or less raises ConfigError.
+            order. The first trial config, at scale low, is built after the cfg
+            rebuild and before any row or seed is checked, so a low of 0 or
+            less raises ConfigError there.
 
     See docs/behavior.md, "Calibration fits".
     """
@@ -6271,7 +6275,9 @@ def fit_win_calibration(
             fit_scale; another argument fails a check prequential_predictions
             makes; or no prediction remains.
         ConfigError, InvalidMatchError, InvalidSeedError, PlayerError,
-            LedgerConflictError: as fit_scale raises them, in its order.
+            LedgerConflictError: as prequential_predictions raises them, in its
+            order. No trial config is built, so a low of 0 or less raises no
+            ConfigError.
 
     See docs/behavior.md, "Calibration fits".
     """
