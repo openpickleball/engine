@@ -1474,6 +1474,37 @@ class Config:
             raise ConfigError(f"Config data has a value of the wrong type: {exc}") from exc
 
 
+_CONFIG_FIELD_NAMES = frozenset(f.name for f in fields(Config))
+
+
+def _require_config(cfg: object) -> Config:
+    """
+    cfg when it is exactly a Config with only its fields; ConfigError otherwise.
+
+    A subclass can run its own methods: store a value after __post_init__
+    made every number plain, or override fingerprint, _payload, or __eq__
+    (issue #118). An exact Config must also hold nothing in its instance
+    __dict__ but its own fields: another entry there could hide
+    fingerprint, _payload, or the field list (__dataclass_fields__).
+    """
+    if type(cfg) is not Config:
+        raise ConfigError(f"cfg must be exactly a Config, not {type(cfg).__name__}")
+    held = vars(cfg)
+    # An exact dict, so __len__ and __iter__ cannot hide an entry.
+    if (
+        type(held) is not dict
+        or len(held) != len(_CONFIG_FIELD_NAMES)
+        or not all(type(name) is str and name in _CONFIG_FIELD_NAMES for name in held)
+    ):
+        raise ConfigError("cfg has attributes that are not Config fields")
+    return cfg
+
+
+def _config_or_default(cfg: object) -> Config:
+    """Config() for None, else cfg checked by _require_config."""
+    return Config() if cfg is None else _require_config(cfg)
+
+
 def _is_whole_number(value: object) -> TypeGuard[int]:
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -4273,7 +4304,13 @@ class RatingEngine:
     """
 
     def __init__(self, cfg: Config | None = None):
-        self.cfg = cfg or Config()
+        """
+        An empty engine under cfg (default Config()).
+
+        Raises ConfigError unless cfg is None or exactly a Config (not a
+        subclass) holding only its own fields, before anything is built.
+        """
+        self.cfg = _config_or_default(cfg)
         self.players: dict[str, Player] = {}
         self.processed_match_ids: set[str] = set()
         # match_id of each match record considered and did not count. A later
@@ -5790,17 +5827,22 @@ def replay(
     """
     if not _is_plain_date(as_of):
         raise ReferenceDateError("replay as_of must be a date, not a str, datetime, or other type")
-    if not isinstance(whole_ledger, bool):
+    if type(whole_ledger) is not bool:
         raise SnapshotError(f"whole_ledger must be a bool, not {type(whole_ledger).__name__}")
     if whole_ledger and from_snapshot is None:
         raise SnapshotError("whole_ledger needs from_snapshot: it only applies to a resume")
+    checked = _config_or_default(cfg)
+    # Read each caller iterable once, before any row or seed is checked, so
+    # a generator cannot change a row between its check and its use.
+    rows = list(matches)
+    seeds = list(seed_players)
     start = None
     if from_snapshot is not None:
-        start = _resume_start(from_snapshot, cfg, as_of)
+        start = _resume_start(from_snapshot, checked, as_of)
     return _replay(
-        matches,
-        seed_players,
-        cfg=cfg,
+        rows,
+        seeds,
+        cfg=checked,
         as_of=as_of,
         check_seed_dates=True,
         track=True,
@@ -6026,6 +6068,39 @@ def _predict_match(engine: RatingEngine, match: Match) -> PrequentialPrediction:
     )
 
 
+def _check_evaluation_arguments(
+    cfg: object,
+    scoring: object,
+    burn_in_matches: object,
+    mode: object,
+    score_from: object,
+    anchor: object,
+) -> Config:
+    """
+    The checked Config for the evaluation functions; raise for a bad argument.
+
+    In order: score_from and anchor (None or exactly a date), mode (exactly
+    the str "live" or "scheduled"), scoring (None or exactly a
+    ScoringType), and burn_in_matches (exactly an int) raise
+    EvaluationError, then cfg (None or exactly a Config with only its
+    fields) raises ConfigError.
+    """
+    for name, value in (("score_from", score_from), ("anchor", anchor)):
+        if value is not None and not _is_plain_date(value):
+            raise EvaluationError(f"{name} must be a plain date, not {type(value).__name__}")
+    if type(mode) is not str or mode not in ("live", "scheduled"):
+        raise EvaluationError(f"mode must be 'live' or 'scheduled', not {mode!r}")
+    if scoring is not None and type(scoring) is not ScoringType:
+        raise EvaluationError(
+            f"scoring must be a ScoringType or None, not {type(scoring).__name__}"
+        )
+    if not _is_exact_int(burn_in_matches):
+        raise EvaluationError(
+            f"burn_in_matches must be an int, not {type(burn_in_matches).__name__}"
+        )
+    return _config_or_default(cfg)
+
+
 def prequential_predictions(
     matches: Iterable[Match],
     seed_players: Iterable[Player] = (),
@@ -6068,17 +6143,15 @@ def prequential_predictions(
     datetime, or any other type) raises EvaluationError naming the argument,
     before the ledger is read, in both modes and for an empty ledger too.
     """
-    for name, value in (("score_from", score_from), ("anchor", anchor)):
-        if value is not None and not _is_plain_date(value):
-            raise EvaluationError(f"{name} must be a plain date, not {type(value).__name__}")
-    if mode not in ("live", "scheduled"):
-        raise EvaluationError(f"mode must be 'live' or 'scheduled', not {mode!r}")
-    cfg = cfg or Config()
-    ordered = _ledger(matches)
+    cfg = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
+    # Read each caller iterable once, before any row or seed is checked, so
+    # a generator cannot change a row between its check and its use.
+    rows = list(matches)
+    seeds = list(seed_players)
+    ordered = _ledger(rows)
     # Non-completed rows move no rating: they stay in the replays and
     # windows, but never set the seed date limit or the default anchor.
     completed = [m for m in ordered if m.status is MatchStatus.COMPLETED]
-    seeds = list(seed_players)
     # add_player on a scratch engine applies every seed check, against the
     # earlier seeds too, in the same order and with the same messages, so
     # both modes reject the same seeds before any rating work.
@@ -6164,7 +6237,7 @@ def evaluate(
     that is not None and not a plain date raises EvaluationError naming the
     argument, as prequential_predictions does, for an empty ledger too.
     """
-    cfg = cfg or Config()
+    cfg = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
     predictions = prequential_predictions(
         matches,
         seed_players,
@@ -6231,8 +6304,22 @@ def _report_from_predictions(
 _SEARCH_STEPS = 14  # coarse grid intervals in fit_scale and fit_win_calibration
 
 
+def _check_fit_scoring(scoring: object) -> None:
+    """Raise EvaluationError unless scoring is exactly a ScoringType (a fit needs one)."""
+    if type(scoring) is not ScoringType:
+        raise EvaluationError(f"scoring must be a ScoringType, not {type(scoring).__name__}")
+
+
 def _check_search_bounds(low: float, high: float, tolerance: float) -> None:
-    """Raise EvaluationError for a search range or tolerance the fits cannot use."""
+    """
+    Raise EvaluationError for a search range or tolerance the fits cannot use.
+
+    low, high, and tolerance must each be exactly an int or a float (not a
+    bool or a subclass), checked before any range rule.
+    """
+    for name, value in (("low", low), ("high", high), ("tolerance", tolerance)):
+        if not _is_exact_number(value):
+            raise EvaluationError(f"{name} must be an int or float, not {type(value).__name__}")
     if not (math.isfinite(low) and math.isfinite(high)):
         raise EvaluationError("low and high must be finite")
     # The search adds two points of the range (midpoints) and multiplies the
@@ -6295,15 +6382,20 @@ def fit_scale(
     checked, so for example a low of 0 or less raises ConfigError.
     """
     _check_search_bounds(low, high, tolerance)
-    cfg = cfg or Config()
+    cfg = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
+    _check_fit_scoring(scoring)
     ledger = list(matches)
     seeds = list(seed_players)
     cache: dict[float, tuple[EvaluationReport, float]] = {}
+    # The trial configs are built from the fields of Config itself, read off
+    # the checked exact Config, never through dataclasses.replace, which
+    # reads the instance's own __dataclass_fields__ and __class__.
+    base = {f.name: getattr(cfg, f.name) for f in fields(Config)}
 
     def run(scale: float) -> tuple[EvaluationReport, float]:
         key = round(scale, 6)
         if key not in cache:
-            trial = replace(cfg, scale_by_scoring={**cfg.scale_by_scoring, scoring: scale})
+            trial = Config(**{**base, "scale_by_scoring": {**cfg.scale_by_scoring, scoring: scale}})
             predictions = prequential_predictions(
                 ledger,
                 seeds,
@@ -6395,10 +6487,12 @@ def fit_win_calibration(
     fail first.
     """
     _check_search_bounds(low, high, tolerance)
+    cfg = _check_evaluation_arguments(cfg, scoring, burn_in_matches, mode, score_from, anchor)
+    _check_fit_scoring(scoring)
     predictions = prequential_predictions(
         matches,
         seed_players,
-        cfg=cfg or Config(),
+        cfg=cfg,
         scoring=scoring,
         burn_in_matches=burn_in_matches,
         mode=mode,
