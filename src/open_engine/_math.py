@@ -78,8 +78,9 @@ def expected_point_share(team_a_rating: float, team_b_rating: float, scale: floa
 
     Raises:
         EvaluationError: unless each argument is exactly an int or a float
-            (not a bool or a subclass) that is finite as a float, and when
-            the rating difference divided by scale is too large to compute.
+            (not a bool or a subclass) that is finite as a float; then when
+            scale is 0 or less; then when the rating difference divided by
+            scale is too large to compute.
     """
     for name, value in (
         ("team_a_rating", team_a_rating),
@@ -89,6 +90,8 @@ def expected_point_share(team_a_rating: float, team_b_rating: float, scale: floa
         problem = _number_broken(name, value)
         if problem is not None:
             raise EvaluationError(problem)
+    if scale <= 0:
+        raise EvaluationError("scale must be greater than 0")
     try:
         exponent = (team_b_rating - team_a_rating) / scale
     except OverflowError:

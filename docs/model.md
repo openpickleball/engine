@@ -124,7 +124,7 @@ x = clamp((R_B - R_A) / scale, -12, 12)
 E = 1 / (1 + 10**x)
 ```
 
-`scale` is `cfg.scale_by_scoring[scoring]`, one value for side-out and one for rally scoring. A rating gap equal to `scale` gives 10:1 expected point-share odds. The clamp keeps `10**x` finite for any rating range and scale. Under the default rating range and scales, `abs(x)` is at most 6 / 2.9, about 2.1, so the clamp never applies there.
+`scale` is `cfg.scale_by_scoring[scoring]`, one value for side-out and one for rally scoring. The scale must be greater than 0: `Config` raises `ConfigError` for a scale of 0 or less, and `expected_point_share` raises `EvaluationError` for one. A rating gap equal to `scale` gives 10:1 expected point-share odds. The clamp keeps `10**x` finite for any rating range and scale. Under the default rating range and scales, `abs(x)` is at most 6 / 2.9, about 2.1, so the clamp never applies there.
 
 ## Match performance
 
