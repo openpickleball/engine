@@ -503,6 +503,7 @@ from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import UTC, date, datetime, timedelta, timezone
 from enum import Enum, StrEnum
 from typing import Literal, TypeGuard, TypeVar, cast
+from zoneinfo import ZoneInfo
 
 # Explicit re-exports, so `from open_engine.engine import X` passes mypy --strict.
 from ._errors import ConfigError as ConfigError
@@ -2001,15 +2002,16 @@ class Match:
                     f"played_at must be a datetime or None, not {_type_name(self.played_at)}"
                 )
             zone = self.played_at.tzinfo
-            if zone is not None and type(zone) is not timezone:
+            if zone is not None and not _is_plain_zone(zone):
                 raise InvalidMatchError(
-                    "played_at tzinfo must be exactly datetime.timezone, not "
-                    f"{_type_name(zone)}; convert with "
+                    "played_at tzinfo must be exactly datetime.timezone or zoneinfo.ZoneInfo, "
+                    f"not {_type_name(zone)}; convert with "
                     "played_at.astimezone(timezone(played_at.utcoffset()))"
                 )
             # An exact timezone keeps the timedelta it was built with, and a
             # timedelta subclass runs its own methods in the digest and the
-            # duplicate check. timezone.utcoffset runs no caller code.
+            # duplicate check. timezone.utcoffset and ZoneInfo.utcoffset run
+            # no caller code.
             if zone is not None and type(self.played_at.utcoffset()) is not timedelta:
                 raise InvalidMatchError(
                     "played_at offset must be exactly a timedelta, not "
@@ -2018,6 +2020,22 @@ class Match:
         for name, number in (("sequence", self.sequence), ("best_of", self.best_of)):
             if type(number) is not int:
                 raise InvalidMatchError(f"{name} must be an int, not {_type_name(number)}")
+
+
+def _is_plain_zone(zone: object) -> bool:
+    """
+    True for exactly a datetime.timezone, or exactly a zoneinfo.ZoneInfo with no instance __dict__.
+
+    Both are standard library code whose utcoffset runs no caller code; a
+    ZoneInfo's offsets come from the tz database. Any other tzinfo,
+    a subclass of either included, can run its own code while the engine
+    reads the offset. On CPython ZoneInfo is a C type with no instance
+    __dict__; the check guards a pure Python fallback, where an instance
+    attribute could hide utcoffset.
+    """
+    if type(zone) is timezone:
+        return True
+    return type(zone) is ZoneInfo and not hasattr(zone, "__dict__")
 
 
 def _require_plain_match(match: object) -> None:
