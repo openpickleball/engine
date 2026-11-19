@@ -96,7 +96,7 @@ initial_source_date = doubles.initial_source_date
 5. It is self-reported, `cfg.self_reported_requires_both_teams` is on, and `confirmed_by` does not name a player from each team: `SELF_REPORTED_UNCONFIRMED`.
 6. It is self-reported and the same two teams already have at least `cfg.self_reported_max_repeats` counted self-reported matches in this format within the repeat window: `SELF_REPORTED_REPEAT_LIMIT` (see [Evidence weight](#evidence-weight)).
 
-Then, for each rating format the match updates (`_compute`):
+Then, for each rating format the match updates (`_compute`, with the two filters in `_gap_rejection`):
 
 7. Every player in it is frozen, that is, the match is on or before each player's `initial_source_date`: `BEFORE_IMPORTED_BASELINE`.
 8. In singles, with `cfg.max_singles_rating_gap` set, `abs(R_A - R_B)` is above it: `SINGLES_RATING_GAP`.
@@ -141,7 +141,7 @@ The default `win_weight` is 0.0, so `S` is the pooled point share. A team can wi
 
 ## Evidence weight
 
-`_compute`, `information_multiplier`, and `_consider`. How much a match counts:
+`_compute`, `information_multiplier`, and `_self_reported_factor`. How much a match counts:
 
 ```
 weight = cfg.match_weights[match_type] * repeat_factor * M
@@ -151,7 +151,7 @@ M      = min(cfg.max_information_multiplier,
 
 `games` is the number of games recorded. Under the default weights, longer games and more games carry more evidence, up to the cap. With `cfg.game_count_bonus` at 0, or game length weights that do not rise with length, they need not.
 
-`repeat_factor` is 1.0 except for a self-reported match (`_consider`):
+`repeat_factor` is 1.0 except for a self-reported match (`_self_reported_factor`, called by `_consider`):
 
 ```
 prior         = earlier counted self-reported matches between the same two teams,
@@ -189,7 +189,7 @@ A partner's or opponent's RD never changes a player's K.
 
 ## The update
 
-`RatingEngine._compute`. For each player who is not frozen:
+`RatingEngine._apply_update`, which `_compute` calls through `_update_players` for each player who is not frozen, team A first:
 
 ```
 sign       = +1 for team A, -1 for team B
@@ -226,7 +226,7 @@ applied_i = rating_new_i - rating_i            0.0 for a frozen player
 imbalance = mean(applied_i on team A) + mean(applied_i on team B)
 ```
 
-The mean divides by the full team size, frozen players included. `MatchResult.imbalance` is this value rounded to 5 places. A match adds `team_size * imbalance`, with the unrounded imbalance, to the pool's total rating. `ReplayInfo.net_rating_created` totals it per rating format: `_replay` takes `math.fsum` of the unrounded `applied_i` of each counted update and adds those sums with `+=` in ledger order. In exact arithmetic the changes cancel when the two teams have the same mean K and no player is clamped or frozen. Unequal K, a clamped player, or a frozen player can make imbalance nonzero. A rounding loss of 5e-6 or more lists the player in `clamped`. With nothing clamped or frozen and the same mean K, float rounding is left: unlisted losses under 5e-6 each can add up to plus or minus 1e-5 at ratings near 2**36 in magnitude, and rounding of the steps themselves can show at the fifth place for steps far larger than the default config gives. The [K and imbalance notes](behavior.md#k-and-imbalance) cover the rest, including why the backend should monitor the total.
+The mean divides by the full team size, frozen players included. `MatchResult.imbalance` is this value rounded to 5 places (`_build_result`). A match adds `team_size * imbalance`, with the unrounded imbalance, to the pool's total rating. `ReplayInfo.net_rating_created` totals it per rating format: `_replay` takes `math.fsum` of the unrounded `applied_i` of each counted update and adds those sums with `+=` in ledger order. In exact arithmetic the changes cancel when the two teams have the same mean K and no player is clamped or frozen. Unequal K, a clamped player, or a frozen player can make imbalance nonzero. A rounding loss of 5e-6 or more lists the player in `clamped`. With nothing clamped or frozen and the same mean K, float rounding is left: unlisted losses under 5e-6 each can add up to plus or minus 1e-5 at ratings near 2**36 in magnitude, and rounding of the steps themselves can show at the fifth place for steps far larger than the default config gives. The [K and imbalance notes](behavior.md#k-and-imbalance) cover the rest, including why the backend should monitor the total.
 
 `MatchResult` reports `expected_a = E`, `actual_a = S`, `surprise`, `effective_weight = weight`, and each player's delta, each rounded to 5 places. The stored rating keeps full precision.
 

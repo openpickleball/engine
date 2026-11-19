@@ -336,8 +336,35 @@ class Config:
     max_doubles_partner_gap: float | None = None
 
     def __post_init__(self) -> None:
-        # One pass in three steps. First the type and finiteness of every
-        # scalar field, so no comparison below can raise TypeError.
+        """
+        Check every field and store plain values and read-only copies, in this order.
+
+        First the type and finiteness of every scalar field, so no comparison
+        in a later step can raise TypeError. Then the mapping and format
+        fields, then ranges and cross-field rules. The first failing check
+        raises ConfigError.
+        """
+        self._check_scalar_fields()
+        pairs = self._read_mapping_pairs()
+        self._store_game_lengths(pairs)
+        self._store_game_formats()
+        self._store_enum_mappings(pairs)
+        self._check_mapping_values()
+        self._check_rating_range()
+        self._check_k_and_rd()
+        self._check_step_size()
+        self._check_windows_and_counts()
+        self._check_labels_and_filters()
+
+    def _check_scalar_fields(self) -> None:
+        """
+        Check each scalar field's type, storing every number as its plain value.
+
+        In order: version is exactly a str; every number field is stored as
+        its plain int or float; then the number, whole number, optional
+        number, and bool fields, each group in its listed order.
+        """
+
         def must_be(name: str, kind: str) -> str:
             return _CONFIG_TYPE_MESSAGES.get(name, f"{name} must be {kind}")
 
@@ -346,7 +373,7 @@ class Config:
         if type(self.version) is not str:
             raise ConfigError(must_be("version", "a str"))
         # Store every number as the plain int or float of its own value, so
-        # the checks below, fingerprint(), and rating code read the same
+        # every later check, fingerprint(), and rating code read the same
         # value (issue #107). A bool or a non-number is kept, and a spoofed
         # number replaced, for the type checks below to reject.
         for name in _CONFIG_NUMBER_FIELDS + _CONFIG_WHOLE_FIELDS + _CONFIG_OPTIONAL_NUMBER_FIELDS:
@@ -366,14 +393,21 @@ class Config:
             if type(getattr(self, name)) is not bool:
                 raise ConfigError(must_be(name, "a bool"))
 
-        # Then the mapping and format fields: types, keys, and read-only
-        # copies. Keys and format entries are stored as their own types (an
-        # enum member, a plain int), so the fingerprint never depends on how
-        # an equal key prints or whether JSON can hold it.
+    def _read_mapping_pairs(self) -> dict[str, list[tuple[object, object]]]:
+        """
+        Read each mapping field once, as (key, plain value) pairs.
+
+        For each field in _CONFIG_MAPPING_FIELDS, in order: it must be a
+        mapping, then every value a finite number.
+        """
+        # The mapping and format helpers check types and keys and store
+        # read-only copies. Keys and format entries are stored as their own
+        # types (an enum member, a plain int), so the fingerprint never
+        # depends on how an equal key prints or whether JSON can hold it.
         # One read of each caller's mapping, as (key, plain value) pairs;
-        # every check below and the stored copy read these pairs, never the
-        # caller's mapping, and no game length key is hashed before it is
-        # converted.
+        # every later mapping check reads these pairs or the copies built
+        # from them, never the caller's mapping, and no game length key is
+        # hashed before it is converted.
         pairs: dict[str, list[tuple[object, object]]] = {}
         for name in _CONFIG_MAPPING_FIELDS:
             value = getattr(self, name)
@@ -382,6 +416,15 @@ class Config:
             pairs[name] = [(key, _plain_number(item)) for key, item in value.items()]
             if not all(_is_config_number(item) for _, item in pairs[name]):
                 raise ConfigError(f"{name} values must be finite numbers")
+        return pairs
+
+    def _store_game_lengths(self, pairs: dict[str, list[tuple[object, object]]]) -> None:
+        """
+        Store game_length_weights from its read pairs, as a read-only copy with int keys.
+
+        In order: every key is a whole number, no game length repeats, then
+        every key is at least 1 and every value positive.
+        """
         # Each game length key as its plain int, from its own value.
         length_pairs = [(_plain_number(key), item) for key, item in pairs["game_length_weights"]]
         if not all(_is_config_whole(key) for key, _ in length_pairs):
@@ -397,6 +440,15 @@ class Config:
             raise ConfigError("game_length_weights keys must be at least 1")
         if any(value <= 0 for value in self.game_length_weights.values()):
             raise ConfigError("game_length_weights values must be positive")
+
+    def _store_game_formats(self) -> None:
+        """
+        Store allowed_game_formats as a frozenset of (ScoringType, int) pairs.
+
+        In order: it is a set or frozenset, then for each entry: it is a
+        tuple of two items, its first item is not a ScoringType that is not
+        a member, then it is a scoring type and a whole number.
+        """
         if not isinstance(self.allowed_game_formats, (set, frozenset)):
             raise ConfigError("allowed_game_formats must be a set or frozenset")
         # Each entry is read once, through tuple's own methods, so a tuple
@@ -417,6 +469,14 @@ class Config:
                 )
             formats.add((ScoringType(cast(str, entry_scoring)), cast(int, entry_points)))
         object.__setattr__(self, "allowed_game_formats", frozenset(formats))
+
+    def _store_enum_mappings(self, pairs: dict[str, list[tuple[object, object]]]) -> None:
+        """
+        Store the enum-keyed mappings as read-only copies keyed by members.
+
+        In order scale_by_scoring, win_calibration_by_scoring, then
+        match_weights: each needs exactly one value for every member.
+        """
         for name, kind, label in (
             ("scale_by_scoring", ScoringType, "scoring type"),
             ("win_calibration_by_scoring", ScoringType, "scoring type"),
@@ -433,6 +493,14 @@ class Config:
                 raise ConfigError(f"{name} needs a value for every {label}")
             keyed = {cast(Enum, member): item for member, item in converted}
             object.__setattr__(self, name, _FrozenMapping(keyed))
+
+    def _check_mapping_values(self) -> None:
+        """
+        Check the stored mapping values.
+
+        In order: scales, win calibration values, and match weights are
+        positive, then every allowed game format has a game length weight.
+        """
         if any(value <= 0 for value in self.scale_by_scoring.values()):
             raise ConfigError("scales must be positive")
         if any(value <= 0 for value in self.win_calibration_by_scoring.values()):
@@ -443,7 +511,14 @@ class Config:
             if points not in self.game_length_weights:
                 raise ConfigError(f"No game_length_weight for games to {points}")
 
-        # Then ranges and cross-field rules.
+    def _check_rating_range(self) -> None:
+        """
+        Check the rating range.
+
+        In order: each of min_rating, max_rating, and default_rating is within
+        the rating limit, min_rating is below max_rating, then default_rating
+        is within them.
+        """
         limit = _RATING_LIMIT_TEXT
         for name in ("min_rating", "max_rating", "default_rating"):
             if not -_RATING_LIMIT <= getattr(self, name) <= _RATING_LIMIT:
@@ -452,6 +527,16 @@ class Config:
             raise ConfigError("min_rating must be less than max_rating")
         if not self.min_rating <= self.default_rating <= self.max_rating:
             raise ConfigError("default_rating must be within rating bounds")
+
+    def _check_k_and_rd(self) -> None:
+        """
+        Check the K and RD parameters.
+
+        In order: the K bounds, the RD bounds, rd_max against the rating
+        limit, the three starting RDs within the RD bounds,
+        rd_shrink_per_match, then rd_growth_per_day and its int limit.
+        """
+        limit = _RATING_LIMIT_TEXT
         if not 0 <= self.k_min <= self.k_max:
             raise ConfigError("K-factor bounds are invalid")
         # player_k and reliability divide by rd_max - rd_min as computed here,
@@ -473,6 +558,16 @@ class Config:
             raise ConfigError(
                 f"rd_growth_per_day must be at most {_INT_GROWTH_LIMIT_TEXT} when it is an int"
             )
+
+    def _check_step_size(self) -> None:
+        """
+        Check the match performance and evidence weight parameters, and the largest step.
+
+        In order: win_weight, game_count_bonus and its int limit,
+        max_information_multiplier, then the largest step size as computed
+        in floats, then, for int weights, the exact int products the engine
+        forms (issue #93).
+        """
         if not 0.0 <= self.win_weight <= 1.0:
             raise ConfigError("win_weight must be between 0 and 1")
         if self.game_count_bonus < 0:
@@ -528,6 +623,15 @@ class Config:
                         "rd_shrink_per_match times the largest match weight and "
                         "max_information_multiplier must be finite"
                     ) from None
+
+    def _check_windows_and_counts(self) -> None:
+        """
+        Check the day windows and match counts.
+
+        In order: replay_interval_days, the diversity settings, the
+        self-reported repeat factor and limits, the import reliability
+        limits, then every day field against the largest day count.
+        """
         if self.replay_interval_days <= 0:
             raise ConfigError("replay_interval_days must be positive")
         if self.diversity_window_days <= 0 or self.diversity_target <= 0:
@@ -541,6 +645,14 @@ class Config:
         for name in _CONFIG_DAY_FIELDS:
             if getattr(self, name) > _MAX_DAYS:
                 raise ConfigError(f"{name} must be at most {_MAX_DAYS}")
+
+    def _check_labels_and_filters(self) -> None:
+        """
+        Check the reliability label and eligibility filter parameters.
+
+        In order: the established threshold and minimum, the connectivity
+        cap, the three connectivity minimums, then the two gap filters.
+        """
         if not 0.0 <= self.established_reliability_threshold <= 100.0:
             raise ConfigError("established_reliability_threshold must be between 0 and 100")
         if self.established_min_verified_matches < 0:
