@@ -350,10 +350,11 @@ def _report_from_predictions(
     errors = [actual - expected for expected, actual in pairs]
     bins: list[tuple[float, float, float, int]] = []
     for index in range(10):
+        # Both edges are k / 10, so one bin's upper edge is the same float as
+        # the next bin's lower edge and every pair lands in exactly one bin.
         lower = index / 10
-        members = [
-            (e, a) for e, a in pairs if lower <= e < lower + 0.1 or (index == 9 and e == 1.0)
-        ]
+        upper = (index + 1) / 10
+        members = [(e, a) for e, a in pairs if lower <= e < upper or (index == 9 and e == 1.0)]
         if members:
             bins.append(
                 (

@@ -317,7 +317,7 @@ error    = actual - expected
 mse  = mean(error**2)        mae = mean(abs(error))        bias = mean(error)
 ```
 
-`mse`, `mae`, and `bias` are reported to 6 places. The calibration table has ten bins, `lower = index / 10` for index 0 to 9. A pair is in a bin when `lower <= expected < lower + 0.1`, and the last bin also takes `expected == 1.0`. Only bins with at least one pair are listed. Each listed bin gives its lower bound, mean expected, mean actual (4 places), and count. The edges are floats, so a pair exactly on a boundary can be counted in two bins: `0.2 + 0.1` is `0.30000000000000004`, so `expected == 0.3` is in both the 0.2 and the 0.3 bin.
+`mse`, `mae`, and `bias` are reported to 6 places. The calibration table has ten bins, `lower = index / 10` and `upper = (index + 1) / 10` for index 0 to 9. A pair is in a bin when `lower <= expected < upper`, and the last bin also takes `expected == 1.0`. One bin's upper edge is the same float as the next bin's lower edge, so the bins partition `[0, 1]`: every pair is in exactly one bin, and the counts add up to `matches_scored`. Only bins with at least one pair are listed. Each listed bin gives its lower bound, mean expected, mean actual (4 places), and count.
 
 **Scale fit** (`fit_scale`). For one scoring type, the scale that minimizes the unrounded prequential MSE on `[low, high]`. Each trial scale reruns the whole prequential pass, since the ratings depend on the scale. The search evaluates a grid of 15 points (14 intervals), then a golden-section search within one grid step of the best point until the bracket is no wider than `tolerance`, or stops shrinking at float spacing. The result is the bracket midpoint rounded to 3 places. Trial scales that round to the same 6 places share one result.
 
