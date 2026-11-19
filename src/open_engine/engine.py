@@ -687,6 +687,13 @@ def _is_member(value: object, kind: type[Enum]) -> bool:
     return any(value is member for member in kind)
 
 
+def _enum_shown(value: object, kind: type[Enum]) -> str:
+    """The type name of value, or "a non-member <kind>" for a non-member of type kind."""
+    if type(value) is kind:
+        return f"a non-member {kind.__name__}"
+    return type(value).__name__
+
+
 def _safe_shown(value: object) -> str:
     """repr of an exact str, int, float, bool, or None; the type name of anything else."""
     if type(value) is int and value.bit_length() > 64:
@@ -725,7 +732,7 @@ def _game_format_broken(fmt: object) -> str | None:
         return problem
     checked = cast(GameFormat, fmt)
     if not _is_member(checked.scoring, ScoringType):
-        return f"scoring must be a ScoringType, not {type(checked.scoring).__name__}"
+        return f"scoring must be a ScoringType, not {_enum_shown(checked.scoring, ScoringType)}"
     for name, number in (("points_to", checked.points_to), ("win_by", checked.win_by)):
         if type(number) is not int:
             return f"{name} must be an int, not {type(number).__name__}"
@@ -1895,7 +1902,7 @@ class Match:
             raise InvalidMatchError(f"match_id must be a str, not {type(self.match_id).__name__}")
         if not _is_member(self.status, MatchStatus):
             raise InvalidMatchError(
-                f"status must be a MatchStatus, not {type(self.status).__name__}"
+                f"status must be a MatchStatus, not {_enum_shown(self.status, MatchStatus)}"
             )
         checks: tuple[tuple[str, object, type[Enum], str], ...] = (
             ("rating_format", self.rating_format, RatingFormat, "a RatingFormat"),
@@ -1903,7 +1910,7 @@ class Match:
         )
         for name, value, kind, label in checks:
             if not _is_member(value, kind):
-                raise InvalidMatchError(f"{name} must be {label}, not {type(value).__name__}")
+                raise InvalidMatchError(f"{name} must be {label}, not {_enum_shown(value, kind)}")
         problem = _game_format_broken(self.game_format)
         if problem is not None:
             raise InvalidMatchError(problem)
