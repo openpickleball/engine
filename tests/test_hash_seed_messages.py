@@ -186,3 +186,23 @@ def test_scoring_type_str_subclass_is_rejected_before_its_code_runs() -> None:
     with pytest.raises(ConfigError, match=r"entries must be \(scoring type, whole number\) pairs"):
         Config(allowed_game_formats=formats)
     assert calls == []
+
+
+def test_formats_claiming_frozenset_by_class_property_are_rejected_unread() -> None:
+    from open_engine import Config, ConfigError, ScoringType
+
+    calls: list[str] = []
+
+    class ClaimsFrozenset:
+        @property
+        def __class__(self) -> type:
+            calls.append("__class__")
+            return frozenset
+
+        def __iter__(self):  # type: ignore[no-untyped-def]
+            calls.append("__iter__")
+            return iter([(ScoringType.SIDE_OUT, 11)])
+
+    with pytest.raises(ConfigError, match=r"^allowed_game_formats must be a set or frozenset$"):
+        Config(allowed_game_formats=ClaimsFrozenset())  # type: ignore[arg-type]
+    assert calls == []
