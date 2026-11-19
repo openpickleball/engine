@@ -511,6 +511,28 @@ class RatingEngine:
         Every check runs before anything changes, so a failed call creates no
         player. See docs/behavior.md, "External seeds".
         """
+        snapshot = self._checked_external_snapshot(rating_format, snapshot, replace_unplayed_seed)
+        self._check_seed_allowed(player_id, rating_format, replace_unplayed_seed)
+        if snapshot.external_player_id is not None:
+            self._check_external_id(player_id, snapshot.source, snapshot.external_player_id)
+        return self._store_external_seed(player_id, rating_format, snapshot)
+
+    def _checked_external_snapshot(
+        self,
+        rating_format: RatingFormat,
+        snapshot: ExternalRatingSnapshot,
+        replace_unplayed_seed: bool,
+    ) -> ExternalRatingSnapshot:
+        """
+        seed_external_rating's argument and snapshot checks: a copy of snapshot with plain numbers.
+
+        In order: rating_format, replace_unplayed_seed, the snapshot's type,
+        then the snapshot's fields: the type of captured_on, source,
+        external_player_id, and evidence_reference; then source not blank
+        and not reserved, external_player_id and evidence_reference not
+        blank; then rating and reliability finite, rating within the
+        rating range, and reliability from 0 to 100. Changes nothing.
+        """
         cfg = self.cfg
         # The same type rules the seed check applies, so every state seeded
         # here is one add_player and replay accept.
@@ -564,7 +586,20 @@ class RatingEngine:
             raise InvalidSeedError("External rating is outside the configured scale")
         if snapshot.reliability is not None and not 0 <= snapshot.reliability <= 100:
             raise InvalidSeedError("External reliability must be between 0 and 100")
+        return snapshot
 
+    def _check_seed_allowed(
+        self, player_id: str, rating_format: RatingFormat, replace_unplayed_seed: bool
+    ) -> None:
+        """
+        Raise unless the player's state and matches allow a seed in rating_format.
+
+        In order: the player id (PlayerError); then InvalidSeedError for an
+        existing state with OPEN matches or derived from overall doubles, a
+        counted match in the format, a counted category match that depends
+        on it, a seed-sensitive rejection, and last an existing state without
+        replace_unplayed_seed. Changes nothing.
+        """
         self._check_player_id(player_id)
         known = self.players.get(player_id)
         existing = known.ratings.get(rating_format) if known is not None else None
@@ -598,9 +633,18 @@ class RatingEngine:
                     "A rating already exists; explicitly allow replacing an unplayed seed"
                 )
 
-        if snapshot.external_player_id is not None:
-            self._check_external_id(player_id, snapshot.source, snapshot.external_player_id)
+    def _store_external_seed(
+        self, player_id: str, rating_format: RatingFormat, snapshot: ExternalRatingSnapshot
+    ) -> RatingState:
+        """
+        Store a checked external seed and return its new state.
 
+        Creates the player if needed, links the snapshot's external
+        identity, stores the seed state, then, under category_feeds_parent,
+        rebuilds each stored, unplayed category state derived from
+        rating_format. Every check must have passed.
+        """
+        cfg = self.cfg
         # Every check has passed: create the player and link the identity.
         player = self._player_or_new(player_id)
         if snapshot.external_player_id is not None:
