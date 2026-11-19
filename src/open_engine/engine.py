@@ -22,9 +22,9 @@ snapshot schema), _engine (RatingEngine, which records matches and takes and
 loads snapshots), _replay (replay and resume from a snapshot), and _evaluation
 (prequential_predictions, evaluate, fit_scale, and fit_win_calibration). This
 module re-exports their public names, so `from open_engine.engine import X`
-keeps working. Private names are not re-exported, except _FrozenMapping,
-which pickles made before issue #133 name here: import them from their
-module.
+keeps working. Import a private name from the module that defines it. The
+one exception is _FrozenMapping, re-exported because pickles made between
+its addition and issue #133 name it here.
 
 docs/model.md states the rating model: each equation the engine uses, with the
 function it comes from. docs/behavior.md holds the published behavior notes
