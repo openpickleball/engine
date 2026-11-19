@@ -88,7 +88,7 @@ Output dataclasses (`MatchResult`, `PlayerSummary`, `ReplayInfo`, `EvaluationRep
 
 ## Acceptance criteria
 
-1. #116: a subclass, or an object whose `__class__` claims the type, in `game_format` (or in its `scoring`, `points_to`, `win_by`, `cap`), `played_on`, `played_at`, `played_at.tzinfo` (any tzinfo other than exactly `timezone`), `sequence`, `best_of`, `status`, `rating_format`, or `match_type` raises `InvalidMatchError` from `Match.validate`, `record`, `replay`, and `prequential_predictions` (both modes), with engine state (`to_snapshot()`) unchanged. The issue's `FlipFormat` reproduction raises `InvalidMatchError`.
+1. #116: a subclass, or an object whose `__class__` claims the type, in `game_format` (or in its `scoring`, `points_to`, `win_by`, `cap`), `played_on`, `played_at`, `played_at.tzinfo` (any tzinfo other than exactly `timezone` or, since the ZoneInfo decision, exactly `zoneinfo.ZoneInfo`), `sequence`, `best_of`, `status`, `rating_format`, or `match_type` raises `InvalidMatchError` from `Match.validate`, `record`, `replay`, and `prequential_predictions` (both modes), with engine state (`to_snapshot()`) unchanged. The issue's `FlipFormat` reproduction raises `InvalidMatchError`.
 2. #109 route closed: a test whose `tzinfo` subclass `utcoffset`, and one whose `GameFormat` subclass `points_to` property, would rewrite another field of the owning `Match` (`match_id`, `games[0]`, or `confirmed_by`) raises `InvalidMatchError`, the callback never runs (a counter stays 0), the `Match` is unchanged, and the engine records nothing. A generator ledger that rewrites an already-yielded row on its next step is read whole before validation, so the rewrite is seen by validation (the row that is rated is the row that was validated).
 3. A `GameFormat` holding an extra instance attribute (for example `validate`) raises `InvalidMatchError` in a match and `ConfigError` from `GameFormat.validate` and the win probability functions.
 4. #118: `RatingEngine`, `RatingEngine.from_snapshot`, `replay`, `prequential_predictions`, `evaluate`, `fit_scale`, `fit_win_calibration`, and `reliability` raise `ConfigError` for a `Config` subclass, a non-`Config` object (a falsy one included), and an exact `Config` with an extra instance attribute (`__dataclass_fields__` included), before any state change. The issue's `Evil` reproduction raises `ConfigError`.
@@ -166,6 +166,11 @@ Output dataclasses (`MatchResult`, `PlayerSummary`, `ReplayInfo`, `EvaluationRep
   - Type names in messages are read through `type.__dict__["__name__"]` (`winprob._type_name`), so a metaclass property never runs.
   - `game_win_probability`, `expected_point_share`, and `reliability` turn an `OverflowError` from their arithmetic into `EvaluationError`; no result changes for inputs that computed before.
   - `Config.from_dict` reads nested data only as exact dicts, lists, tuples, strs, and ints, and its messages name a wrong-typed value's type. A from_dict game length key that is an int subclass is now rejected.
+
+- Verifier and doc pass:
+  - The migration note now also covers a `played_at` that is a `datetime` subclass (rebuild it as a plain `datetime` first, since `astimezone` keeps the subclass).
+  - Criterion 7 is met except for two frozen tests that assert the exact error class over a parametrized table without `match=`: `tests/test_exact_input_review.py::test_config_rejects_enum_non_member_keys` and `tests/test_exact_input_review3.py::test_rejections_run_no_caller_code`. They are frozen, so they stay as they are.
+  - `CLAUDE.md` gets an "Exact input types" engine rule, since #96, #107, #109, and this change each hit the same kind of check that looked exact but still ran caller code.
 
 ## Proof
 
