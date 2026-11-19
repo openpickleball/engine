@@ -2,10 +2,13 @@
 
 Under category_feeds_parent, a category state with initial_source
 "open_parent:doubles" starts from the player's overall doubles state. When
-that doubles seed is replaced with replace_unplayed_seed, the stored
+that doubles seed is replaced with replace_unplayed_seed, a stored
 unplayed derived state must follow it, or live recording and a replay of
 the same matches disagree. A refused reseed changes nothing, and states not
-derived from doubles are left alone. All ids are synthetic.
+derived from doubles are left alone. Since issue #112,
+seed_provisional_rating does not store a category state under
+category_feeds_parent, so these tests store one the way a backend can: a
+seed passed to add_player. All ids are synthetic.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from datetime import date
 
 import pytest
 
+from helpers import derived_seed
 from open_engine import (
     Config,
     ExternalRatingSnapshot,
@@ -51,8 +55,8 @@ def _derived_engine(category: RatingFormat) -> RatingEngine:
     engine = RatingEngine()
     for pid in ("syn-b", "syn-c", "syn-d"):
         engine.seed_external_rating(pid, category, _snap(4.0))
-    engine.seed_external_rating("syn-a", D, _snap(4.0))
-    derived = engine.seed_provisional_rating("syn-a", category)
+    engine.add_player(derived_seed("syn-a", _snap(4.0), category))
+    derived = engine.players["syn-a"].ratings[category]
     assert derived.initial_source == "open_parent:doubles"
     return engine
 
@@ -172,8 +176,9 @@ def test_imported_category_state_is_not_touched() -> None:
 
 def test_provisional_category_state_is_not_touched() -> None:
     engine = RatingEngine()
-    engine.seed_provisional_rating("syn-a", MX)
+    engine.add_player(Player("syn-a", {MX: RatingState(rating=3.5, rd=CFG.new_player_rd)}))
     engine.seed_external_rating("syn-a", D, _snap(4.0))
+    assert MX in engine.players["syn-a"].ratings
     provisional = copy.deepcopy(engine.state("syn-a", MX))
     assert provisional.initial_source == "open_provisional"
     _reseed(engine)
@@ -191,9 +196,9 @@ def test_reseed_of_a_format_without_category_children_changes_no_other_format(
     reseeded: RatingFormat,
 ) -> None:
     engine = RatingEngine()
+    engine.add_player(derived_seed("syn-a", _snap(4.0), RatingFormat.DOUBLES_MEN))
     engine.seed_external_rating("syn-a", S, _snap(4.0))
-    engine.seed_external_rating("syn-a", D, _snap(4.0))
-    engine.seed_provisional_rating("syn-a", RatingFormat.DOUBLES_MEN)
+    assert RatingFormat.DOUBLES_MEN in engine.players["syn-a"].ratings
     if reseeded is MX:
         engine.seed_external_rating("syn-a", MX, _snap(3.0))
     others = {
@@ -209,10 +214,8 @@ def test_reseed_of_a_format_without_category_children_changes_no_other_format(
 
 
 def test_reseed_after_replay_clears_the_resumable_mark() -> None:
-    seeder = RatingEngine()
-    seeder.seed_external_rating("syn-a", D, _snap(4.0))
-    seeder.seed_provisional_rating("syn-a", MX)
-    engine = replay([], [copy.deepcopy(seeder.players["syn-a"])], as_of=AS_OF)
+    engine = replay([], [derived_seed("syn-a", _snap(4.0), MX)], as_of=AS_OF)
+    assert MX in engine.players["syn-a"].ratings
     assert engine.to_snapshot()["resumable"] is True
     _reseed(engine)
     assert engine.state("syn-a", MX) == _expected(2.5, SECOND)

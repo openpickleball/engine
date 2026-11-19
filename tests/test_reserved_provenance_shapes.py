@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from helpers import derived_seed, store_state
 from open_engine import (
     Config,
     ExternalRatingSnapshot,
@@ -174,10 +175,8 @@ def test_add_player_open_parent_rejection_changes_nothing() -> None:
 
 
 def test_seed_cloned_from_a_feeding_engine_is_rejected_when_categories_do_not_feed() -> None:
-    source = RatingEngine(CFG)
-    source.seed_external_rating("syn-b", D, ExternalRatingSnapshot("ext", 4.0, CAPTURED))
-    source.seed_provisional_rating("syn-b", MX)
-    seed = copy.deepcopy(source.player("syn-b"))
+    seed = derived_seed("syn-b", ExternalRatingSnapshot("ext", 4.0, CAPTURED), MX, CFG)
+    assert seed.ratings[MX].initial_source == "open_parent:doubles"
     RatingEngine(CFG).add_player(seed)
     with pytest.raises(InvalidSeedError, match=_msg("mixed_doubles", NO_FEED)):
         RatingEngine(OFF).add_player(seed)
@@ -185,8 +184,8 @@ def test_seed_cloned_from_a_feeding_engine_is_rejected_when_categories_do_not_fe
 
 def test_parent_reseed_keeps_the_derived_state_loadable_and_seedable() -> None:
     eng = RatingEngine(CFG)
-    eng.seed_external_rating("syn-b", D, ExternalRatingSnapshot("ext", 4.0, EARLY))
-    eng.seed_provisional_rating("syn-b", MX)
+    eng.add_player(derived_seed("syn-b", ExternalRatingSnapshot("ext", 4.0, EARLY), MX, CFG))
+    assert MX in eng.players["syn-b"].ratings
     eng.seed_external_rating(
         "syn-b", D, ExternalRatingSnapshot("ext", 4.2, CAPTURED), replace_unplayed_seed=True
     )
@@ -212,7 +211,9 @@ def test_parent_reseed_keeps_the_derived_state_loadable_and_seedable() -> None:
 def test_played_undated_parent_derivation_round_trips() -> None:
     eng = RatingEngine(CFG)
     assert eng.record(LEDGER[0]).counted
-    derived = eng.seed_provisional_rating("syn-p", MX)
+    # A state an earlier release's seed_provisional_rating stored: snapshots
+    # holding one must still load (issue #112).
+    derived = store_state(eng, "syn-p", MX)
     assert derived.initial_source == "open_parent:doubles"
     assert derived.initial_source_date is None
     loaded = RatingEngine.from_snapshot(json.loads(json.dumps(eng.to_snapshot())), cfg=CFG)
@@ -402,7 +403,7 @@ def test_reserved_external_ids_key_changes_nothing_on_an_engine_with_players() -
     eng.seed_external_rating(
         "syn-a", D, ExternalRatingSnapshot("ext", 4.0, CAPTURED, external_player_id="syn-xa")
     )
-    eng.seed_provisional_rating("syn-c", MX)
+    eng.add_player(Player("syn-c", {MX: RatingState(rating=3.5, rd=CFG.new_player_rd)}))
     before = eng.to_snapshot()
     with pytest.raises(InvalidSeedError, match="external_ids source must not start with open_"):
         eng.add_player(Player("syn-b", external_ids={"open_x": "syn-w"}))

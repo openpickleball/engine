@@ -109,8 +109,13 @@ def test_same_pair_in_two_formats_round_trips() -> None:
 
 
 def test_category_state_derived_from_imported_seed_round_trips() -> None:
-    eng = _seeded()
-    derived = eng.seed_provisional_rating("syn-a", MX)
+    seeded = _seeded()
+    # The engine stores no category starting state (issue #112); a seed can.
+    seed = seeded.players["syn-a"]
+    seed.ratings[MX] = seeded.state("syn-a", MX)
+    eng = RatingEngine(CFG)
+    eng.add_player(seed)
+    derived = eng.players["syn-a"].ratings[MX]
     assert derived.initial_source == "open_parent:doubles"
     assert derived.initial_external_player_id is None
     _round_trip(eng)

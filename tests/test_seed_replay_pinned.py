@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from datetime import date
 
 import pytest
@@ -26,19 +27,22 @@ def _seeds(cfg: Config) -> list[Player]:
     eng.seed_external_rating(
         "imp", D, ExternalRatingSnapshot("external_standard", 4.2, date(2026, 9, 1), 85)
     )
-    eng.seed_provisional_rating("imp", MIXED)
     eng.seed_external_rating(
         "noreli", D, ExternalRatingSnapshot("external_standard", 3.8, date(2026, 9, 15))
     )
-    eng.seed_provisional_rating("noreli", MIXED)
     eng.seed_provisional_rating("prov", D)
-    eng.seed_provisional_rating("prov", MIXED)
     eng.seed_external_rating(
         "single", S, ExternalRatingSnapshot("external_standard", 4.5, date(2026, 9, 1), 70)
     )
     eng.seed_provisional_rating("other", D)
     eng.seed_provisional_rating("other", S)
-    return [eng.players[pid] for pid in sorted(eng.players)]
+    seeds = [copy.deepcopy(eng.players[pid]) for pid in sorted(eng.players)]
+    # The engine stores no category starting state (issue #112), so the
+    # seeds carry the one state reports, as a backend can.
+    for seed in seeds:
+        if seed.id in ("imp", "noreli", "prov"):
+            seed.ratings[MIXED] = copy.deepcopy(eng.state(seed.id, MIXED))
+    return seeds
 
 
 LEDGER = [

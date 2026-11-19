@@ -4,7 +4,10 @@ A category state derived from overall doubles copies a rating that can
 hold live (provisional) movement since the last replay. Its
 inherited_live_updates records how many, and player_summary's
 live_updates_since_recalculation adds it to the state's own count. A
-replay gives 0 everywhere. All ids are synthetic.
+replay gives 0 everywhere. Since issue #112 the engine stores a derived
+state only when a category match is recorded; store_state stands in for a
+state an earlier release's seed_provisional_rating stored, which snapshots
+can still hold. All ids are synthetic.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from typing import Any
 
 import pytest
 
+from helpers import store_state
 from open_engine import (
     Config,
     InvalidSeedError,
@@ -70,10 +74,10 @@ def _count(engine: RatingEngine, fmt: RatingFormat) -> int:
 def test_a_derived_category_state_reports_the_parent_count(start: str, k: int) -> None:
     engine = _engine(k, start)
     assert _count(engine, D) == k
-    # Before the first category match: unstored, then stored by a seed.
+    # Before the first category match: unstored, then stored.
     assert engine.state("syn-a", MX).inherited_live_updates == k
     assert _count(engine, MX) == k
-    engine.seed_provisional_rating("syn-a", MX)
+    store_state(engine, "syn-a", MX)
     assert engine.players["syn-a"].ratings[MX].inherited_live_updates == k
     assert _count(engine, MX) == k
     # Each live category match adds one.
@@ -116,7 +120,7 @@ def test_a_category_does_not_inherit_when_it_does_not_feed_its_parent() -> None:
 def test_a_category_derived_from_an_unplayed_unseeded_parent_inherits_nothing() -> None:
     engine = RatingEngine()
     engine.seed_provisional_rating("syn-a", D)
-    engine.seed_provisional_rating("syn-a", MX)
+    store_state(engine, "syn-a", MX)
     for match in _live(D, 2):
         assert engine.record(match).counted
     assert engine.players["syn-a"].ratings[MX].inherited_live_updates == 0
@@ -125,7 +129,7 @@ def test_a_category_derived_from_an_unplayed_unseeded_parent_inherits_nothing() 
 
 def test_parent_matches_after_derivation_do_not_change_the_inherited_count() -> None:
     engine = _engine(1)
-    engine.seed_provisional_rating("syn-a", MX)
+    store_state(engine, "syn-a", MX)
     for match in _live(D, 2, start=5):
         assert engine.record(match).counted
     assert _count(engine, D) == 3
@@ -164,7 +168,7 @@ def _json(engine: RatingEngine) -> dict[str, Any]:
 
 def _live_snapshot() -> dict[str, Any]:
     engine = _engine(2)
-    engine.seed_provisional_rating("syn-a", MX)
+    store_state(engine, "syn-a", MX)
     return _json(engine)
 
 

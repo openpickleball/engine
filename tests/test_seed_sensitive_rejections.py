@@ -577,7 +577,7 @@ def test_a_category_baseline_needs_the_dated_state_a_category_match_would_start_
     assert RatingEngine.from_snapshot(snap).to_snapshot() == snap
     # The same players, but syn-a has an undated mixed state of its own.
     other = RatingEngine()
-    other.seed_provisional_rating("syn-a", MX)
+    other.add_player(Player("syn-a", {MX: RatingState(rating=3.5, rd=other.cfg.new_player_rd)}))
     for pid in ("syn-a", "syn-b", "syn-c", "syn-d"):
         other.seed_external_rating(pid, D, _snap(4.0, LATE))
     snap["players"] = _json(other)["players"]

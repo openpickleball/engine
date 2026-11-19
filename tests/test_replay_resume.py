@@ -50,9 +50,12 @@ def _seeds() -> list[Player]:
     eng.seed_external_rating(
         "syn-w0", S, ExternalRatingSnapshot("external_standard", 3.9, SEED_DATE, 65)
     )
-    # A category seed derived from the imported doubles rating.
-    eng.seed_provisional_rating("syn-m0", MX)
-    return [eng.players[pid] for pid in sorted(eng.players)]
+    seeds = [copy.deepcopy(eng.players[pid]) for pid in sorted(eng.players)]
+    # A category seed derived from the imported doubles rating. The engine
+    # stores none (issue #112), so the seed carries the one state reports.
+    assert seeds[0].id == "syn-m0"
+    seeds[0].ratings[MX] = copy.deepcopy(eng.state("syn-m0", MX))
+    return seeds
 
 
 def _score(rng: random.Random, best_of: int) -> tuple[tuple[int, int], ...]:

@@ -7,6 +7,7 @@ from datetime import date
 
 import pytest
 
+from helpers import store_state
 from open_engine import (
     Config,
     ExternalRatingSnapshot,
@@ -53,7 +54,7 @@ def _engine_with_rds(fmt: RatingFormat, rds: dict[str, float]) -> RatingEngine:
     """Every player at rating 4.0 with the given RD and no inactivity before ON."""
     eng = RatingEngine()
     for pid, rd in rds.items():
-        state = eng.seed_provisional_rating(pid, fmt)
+        state = store_state(eng, pid, fmt)
         state.rating = 4.0
         state.rd = rd
         state.rd_as_of = ON
@@ -98,7 +99,7 @@ def _measure_engine(fmt: RatingFormat, ids: tuple[str, ...], seeded: set[str]) -
         eng.seed_external_rating(pid, fmt, _snapshot())
     for pid in ids:
         if pid not in seeded:
-            eng.seed_provisional_rating(pid, fmt)
+            store_state(eng, pid, fmt)
     for pid in ids:
         eng.player(pid).ratings[fmt].rating = 4.0
     return eng

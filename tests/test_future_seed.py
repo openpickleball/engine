@@ -31,7 +31,9 @@ def _imported(captured_on: date, fmt: RatingFormat = D, reliability: float = 100
         "f", D, ExternalRatingSnapshot("external_standard", 4.0, captured_on, reliability)
     )
     if fmt is not D:
-        eng.seed_provisional_rating("f", fmt)
+        # Under category_feeds_parent the engine stores no category
+        # starting state (issue #112), so the seed carries the one state
+        # reports.
         # Give the seed a parent dated earlier, so only the derived state is
         # dated after as_of. A derived state needs its parent state (issue
         # #97). A reseed would refresh the derived state too (issue #101),
@@ -43,6 +45,7 @@ def _imported(captured_on: date, fmt: RatingFormat = D, reliability: float = 100
             ExternalRatingSnapshot("external_standard", 4.0, date(2026, 1, 1), reliability),
         )
         seed = copy.deepcopy(eng.players["f"])
+        seed.ratings[fmt] = copy.deepcopy(eng.state("f", fmt))
         seed.ratings[D] = copy.deepcopy(earlier.players["f"].ratings[D])
         return seed
     return eng.players["f"]

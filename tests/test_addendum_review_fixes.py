@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from helpers import derived_seed, store_state
 from open_engine import (
     Config,
     ExternalRatingSnapshot,
@@ -74,7 +75,9 @@ def _live_engine(seeded_parent: bool = False) -> RatingEngine:
     for i in range(2):
         match = Match(f"syn-l{i}", *TEAMS, ((11, 4),), date(2025, 3, 2 + i), D)
         assert engine.record(match).counted
-    engine.seed_provisional_rating("syn-a", MX)
+    store_state(
+        engine, "syn-a", MX
+    )  # a state an earlier release's seed_provisional_rating stored (issue #112)
     return engine
 
 
@@ -130,8 +133,7 @@ def test_a_zero_count_state_keeps_its_own_source_date() -> None:
     # and its count is 0.
     engine = RatingEngine()
     first = ExternalRatingSnapshot("external_standard", 4.0, date(2025, 1, 1))
-    engine.seed_external_rating("syn-a", D, first)
-    engine.seed_provisional_rating("syn-a", MX)
+    engine.add_player(derived_seed("syn-a", first, MX))
     second = ExternalRatingSnapshot("external_standard", 4.1, date(2025, 1, 5))
     engine.seed_external_rating("syn-a", D, second, replace_unplayed_seed=True)
     snap = _json(engine)

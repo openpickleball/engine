@@ -18,6 +18,7 @@ from datetime import date
 
 import pytest
 
+from helpers import store_state
 from open_engine import (
     Config,
     ExternalRatingSnapshot,
@@ -345,7 +346,8 @@ def test_a_live_engine_may_hold_dates_after_its_replay() -> None:
 
 def test_a_category_state_derived_from_its_parent_loads() -> None:
     engine = _engine()
-    engine.seed_provisional_rating("syn-a", RatingFormat.MIXED_DOUBLES)
+    # A state an earlier release's seed_provisional_rating stored (issue #112).
+    store_state(engine, "syn-a", RatingFormat.MIXED_DOUBLES)
     snapshot = _snapshot(engine)
     restored = RatingEngine.from_snapshot(snapshot)
     assert restored.to_snapshot() == snapshot

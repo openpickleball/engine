@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import date
@@ -131,18 +132,27 @@ def test_first_error_is_in_sorted_format_order() -> None:
 
 
 def _engine_seeds(cfg: Config) -> list[Player]:
-    """Every kind of unplayed state the engine itself produces."""
+    """
+    Every kind of unplayed state the engine itself produces or starts from.
+
+    Under category_feeds_parent the engine stores no category starting
+    state (issue #112), so each one is read with state and put in the seed,
+    as a backend can.
+    """
     eng = RatingEngine(cfg)
     eng.seed_external_rating("imp", D, _snapshot())
-    eng.seed_provisional_rating("imp", MIXED)  # category derived from an imported parent
     eng.seed_external_rating("noreli", D, _snapshot(reliability=None))
-    eng.seed_provisional_rating("noreli", MIXED)
     eng.seed_provisional_rating("prov", D)
-    eng.seed_provisional_rating("prov", MIXED)  # category with a provisional parent
     eng.seed_provisional_rating("prov", RatingFormat.SINGLES)
     eng.seed_external_rating("single", RatingFormat.SINGLES, _snapshot(reliability=100))
     eng.seed_provisional_rating("other", D)
-    return [eng.players[pid] for pid in sorted(eng.players)]
+    seeds = [copy.deepcopy(eng.players[pid]) for pid in sorted(eng.players)]
+    # imp: category derived from an imported parent; prov: category with a
+    # provisional parent.
+    for seed in seeds:
+        if seed.id in ("imp", "noreli", "prov"):
+            seed.ratings[MIXED] = copy.deepcopy(eng.state(seed.id, MIXED))
+    return seeds
 
 
 @pytest.mark.parametrize(

@@ -5,6 +5,7 @@ from dataclasses import replace
 
 import pytest
 
+from helpers import store_state
 from open_engine import (
     Config,
     GameFormat,
@@ -89,7 +90,7 @@ def test_engine_win_probability_uses_calibration() -> None:
         cfg = Config(win_calibration_by_scoring={ScoringType.SIDE_OUT: a, ScoringType.RALLY: 1.0})
         eng = RatingEngine(cfg)
         for pid, rating in (("a1", 4.5), ("a2", 4.5), ("b1", 3.5), ("b2", 3.5)):
-            eng.seed_provisional_rating(pid, fmt_rating).rating = rating
+            store_state(eng, pid, fmt_rating).rating = rating
         return eng
 
     plain = build(1.0)

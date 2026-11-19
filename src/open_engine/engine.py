@@ -4764,8 +4764,9 @@ class RatingEngine:
         "open_parent:doubles") with the state a category match would start
         from right after the seed: the new rating and date, with an RD of
         at least Config.category_seed_rd. Other category states, imported
-        or provisional, are not changed. A stored category state does not
-        follow later changes to the doubles state from matches (issue #112).
+        or provisional, are not changed. Such a stored derived state comes
+        from a seed (add_player, replay seeds) or a loaded snapshot:
+        seed_provisional_rating does not store one (issue #112).
         The seed's RD is always Config.external_seed_rd: an external
         reliability is kept for display (imported_reliability), never turned
         into OPEN RD. There is no reference date here, so a snapshot captured
@@ -4911,6 +4912,8 @@ class RatingEngine:
         # A stored, unplayed category state derived from the format just
         # seeded must start from the new seed, as _new_state would build it
         # now, or live recording and a replay of later matches disagree.
+        # The engine stores no such state itself (issue #112), but a seed
+        # (add_player, replay seeds) or a loaded snapshot can hold one.
         if cfg.category_feeds_parent:
             for child in RatingFormat:
                 if child.parent is not rating_format:
@@ -4973,7 +4976,24 @@ class RatingEngine:
 
     def seed_provisional_rating(self, player_id: str, rating_format: RatingFormat) -> RatingState:
         """
-        The player's state in a format. Creates a new unplayed state if it is missing.
+        The player's state in a format. Stores a new unplayed state if it is missing,
+        except in a category format under Config.category_feeds_parent.
+
+        Creates an empty player record for an unknown player_id. A state
+        the player already has in the format is returned as stored. For a
+        format the player has none in, it builds the starting state the
+        player's first match in that format would use if played now, as
+        state does. In singles and overall doubles, and in a category
+        format (mixed, men's, or women's doubles) while
+        category_feeds_parent is off, it stores that state and returns the
+        stored object. In a category format while category_feeds_parent is
+        on, it returns the state without storing it (issue #112): that
+        state starts from the player's overall doubles state, and a stored
+        copy would not follow later changes to doubles, so live recording
+        and a replay of the same matches could disagree. The returned
+        object is then a new copy each call, not engine state, and changing
+        it changes nothing; the engine state is unchanged apart from the
+        player record created for an unknown id.
 
         Raises InvalidSeedError when rating_format is not a RatingFormat (a
         str is not converted), and PlayerError for a player_id that is
@@ -4984,7 +5004,13 @@ class RatingEngine:
             raise InvalidSeedError("rating_format must be a RatingFormat")
         player = self._player_or_new(player_id)
         if rating_format not in player.ratings:
-            self._put_state(player, rating_format, self._new_state(player_id, rating_format))
+            new_state = self._new_state(player_id, rating_format)
+            if rating_format.parent is not None and self.cfg.category_feeds_parent:
+                # The state derives from doubles. A stored copy would not
+                # follow later doubles changes, so live and a replay could
+                # disagree (issue #112).
+                return new_state
+            self._put_state(player, rating_format, new_state)
         return player.ratings[rating_format]
 
     def _new_state(self, player_id: str, rating_format: RatingFormat) -> RatingState:
@@ -5033,8 +5059,11 @@ class RatingEngine:
         the player's first match in that format would use if played now: a
         category state derived from overall doubles where that applies, else a
         provisional default. That object is a new copy each call and is not
-        engine state, so changing it changes nothing. Use
-        seed_provisional_rating to store it. Raises UnknownPlayerError when no
+        engine state, so changing it changes nothing. seed_provisional_rating
+        stores it in singles and overall doubles, and in a category format
+        while Config.category_feeds_parent is off; in a category format while
+        it is on, seed_provisional_rating returns it without storing it.
+        Raises UnknownPlayerError when no
         player record exists for the id, and PlayerError for an id that is
         blank or not exactly a str (a subclass is rejected).
         """

@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from helpers import derived_seed
 from open_engine import (
     Config,
     ExternalRatingSnapshot,
@@ -91,7 +92,7 @@ def test_seed_external_rating_rejects_a_reserved_source(source: str) -> None:
 
 def test_seed_external_rating_reserved_source_changes_nothing_on_an_existing_player() -> None:
     eng = RatingEngine(CFG)
-    eng.seed_provisional_rating("syn-a", MX)
+    eng.add_player(Player("syn-a", {MX: _provisional()}))
     before = eng.to_snapshot()
     snap = ExternalRatingSnapshot("open_parent:doubles", 4.0, CAPTURED)
     with pytest.raises(InvalidSeedError, match="must not start with open_"):
@@ -444,19 +445,18 @@ def test_seed_external_rating_accepts_a_missing_or_repeated_evidence_reference()
 
 def test_engine_paths_round_trip() -> None:
     eng = RatingEngine(CFG)
-    eng.seed_external_rating(
-        "syn-a",
-        D,
-        ExternalRatingSnapshot(
-            "ext", 4.0, CAPTURED, 70, external_player_id="syn-xa", evidence_reference="ref-a"
-        ),
+    snap_a = ExternalRatingSnapshot(
+        "ext", 4.0, CAPTURED, 70, external_player_id="syn-xa", evidence_reference="ref-a"
     )
-    derived = eng.seed_provisional_rating("syn-a", MX)
+    # Under category_feeds_parent the engine stores no derived category
+    # state (issue #112); a seed can hold one.
+    eng.add_player(derived_seed("syn-a", snap_a, MX, CFG))
+    derived = eng.players["syn-a"].ratings[MX]
     assert derived.initial_source == "open_parent:doubles"
     assert derived.initial_source_date == CAPTURED
     eng.add_player(Player("syn-b", {D: _provisional()}))
     eng.attach_external_id("syn-b", "ext", "syn-xb")
-    eng.seed_provisional_rating("syn-c", MX)
+    eng.add_player(Player("syn-c", {MX: _provisional()}))
     match = Match("m1", ("syn-a", "syn-b"), ("syn-c", "syn-d"), ((11, 7),), date(2026, 10, 5), D)
     assert eng.record(match).counted
     snap = json.loads(json.dumps(eng.to_snapshot()))
@@ -487,8 +487,8 @@ def test_issue_reproduction_is_rejected() -> None:
 
 def test_reseed_of_an_engine_derived_state_is_still_refused() -> None:
     eng = RatingEngine(CFG)
-    eng.seed_external_rating("syn-a", D, ExternalRatingSnapshot("ext", 4.0, CAPTURED))
-    eng.seed_provisional_rating("syn-a", MX)
+    eng.add_player(derived_seed("syn-a", ExternalRatingSnapshot("ext", 4.0, CAPTURED), MX, CFG))
+    assert MX in eng.players["syn-a"].ratings
     with pytest.raises(
         InvalidSeedError, match=r"^Cannot replace a rating derived from OPEN overall doubles$"
     ):
