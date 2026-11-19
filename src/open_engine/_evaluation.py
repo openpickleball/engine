@@ -8,7 +8,7 @@ ratings, and the API may change without notice.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, fields
 from datetime import date
 from typing import Literal
@@ -456,6 +456,42 @@ class ScaleFit:
     at_bound: bool = False  # fitted scale within tolerance of low or high
 
 
+def _scale_search(
+    run: Callable[[float], tuple[EvaluationReport, float]],
+    low: float,
+    high: float,
+    tolerance: float,
+) -> float:
+    """
+    fit_scale's search: the fitted scale, the bracket midpoint rounded to 3 places.
+
+    run gives a scale's report and unrounded MSE. The coarse grid of
+    _SEARCH_STEPS + 1 points runs first, in order from low; then a
+    golden-section search within one grid step of the best point, until
+    the bracket is no wider than tolerance or stops shrinking.
+    """
+    steps = _SEARCH_STEPS
+    grid = [low + (high - low) * i / steps for i in range(steps + 1)]
+    best = min(grid, key=lambda s: run(s)[1])
+    step = (high - low) / steps
+    a, b = max(low, best - step), min(high, best + step)
+
+    ratio = (math.sqrt(5) - 1) / 2
+    c, d = b - ratio * (b - a), a + ratio * (b - a)
+    while b - a > tolerance:
+        width = b - a
+        if run(c)[1] <= run(d)[1]:
+            b, d = d, c
+            c = b - ratio * (b - a)
+        else:
+            a, c = c, d
+            d = a + ratio * (b - a)
+        if b - a >= width:
+            break  # the bracket hit float spacing above a tiny tolerance
+    fitted_scale = round((a + b) / 2, 3)
+    return fitted_scale
+
+
 def fit_scale(
     matches: Iterable[Match],
     seed_players: Iterable[Player] = (),
@@ -533,25 +569,7 @@ def fit_scale(
             cache[key] = _report_from_predictions(predictions, trial, scoring)
         return cache[key]
 
-    steps = _SEARCH_STEPS
-    grid = [low + (high - low) * i / steps for i in range(steps + 1)]
-    best = min(grid, key=lambda s: run(s)[1])
-    step = (high - low) / steps
-    a, b = max(low, best - step), min(high, best + step)
-
-    ratio = (math.sqrt(5) - 1) / 2
-    c, d = b - ratio * (b - a), a + ratio * (b - a)
-    while b - a > tolerance:
-        width = b - a
-        if run(c)[1] <= run(d)[1]:
-            b, d = d, c
-            c = b - ratio * (b - a)
-        else:
-            a, c = c, d
-            d = a + ratio * (b - a)
-        if b - a >= width:
-            break  # the bracket hit float spacing above a tiny tolerance
-    fitted_scale = round((a + b) / 2, 3)
+    fitted_scale = _scale_search(run, low, high, tolerance)
 
     default_scale = checked.scale_by_scoring[scoring]
     fitted = run(fitted_scale)[0]
