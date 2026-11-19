@@ -32,10 +32,12 @@ Published behavior notes:
   rejected), flags exactly bool, a Config exactly a Config, and a
   GameFormat exactly a GameFormat, each holding nothing in its instance
   __dict__ but its own fields. Match.played_at, when set, must be exactly
-  a datetime whose tzinfo is exactly datetime.timezone, with an offset
-  that is exactly a timedelta, so a
-  zoneinfo.ZoneInfo raises InvalidMatchError: the engine reads only the
-  UTC instant and offset, so convert with
+  a datetime whose tzinfo is exactly datetime.timezone or exactly
+  zoneinfo.ZoneInfo (standard library code with no instance __dict__,
+  whose offsets come from the tz database), with an offset that is
+  exactly a timedelta. Any other tzinfo, a subclass of either included,
+  raises InvalidMatchError: the engine reads only the UTC instant and
+  offset, so convert one with
   played_at.astimezone(timezone(played_at.utcoffset())), which keeps both
   and so the ledger digest. Where an earlier release converts a number
   to its plain value (Config numbers and mappings, seed state numbers,
@@ -1848,8 +1850,9 @@ class Match:
     each of its exact type; when a team is not exactly a tuple; when
     confirmed_by is not exactly a set or frozenset; when played_on is not
     exactly a date; when played_at is not None or exactly a datetime, or
-    its tzinfo is set and not exactly datetime.timezone (a ZoneInfo is
-    rejected: convert with played_at.astimezone(timezone(
+    its tzinfo is set and not exactly datetime.timezone or exactly
+    zoneinfo.ZoneInfo (a subclass of either, or a custom tzinfo, is
+    rejected: convert one with played_at.astimezone(timezone(
     played_at.utcoffset()))); or when sequence or best_of is not exactly
     an int (a bool, float, or int subclass is rejected). games and each
     game in it must be exactly a tuple or list, and each score exactly an
@@ -1964,9 +1967,11 @@ class Match:
         is rejected. game_format must be exactly a GameFormat with only
         its fields, each of its exact type (see GameFormat.validate).
         played_on must be exactly a date, and played_at None or exactly a
-        datetime whose tzinfo is None (rejected later as not aware) or
-        exactly datetime.timezone: any other tzinfo, zoneinfo.ZoneInfo
-        included, runs its own code to give the UTC offset.
+        datetime whose tzinfo is None (rejected later as not aware),
+        exactly datetime.timezone, or exactly zoneinfo.ZoneInfo with no
+        instance __dict__ (see _is_plain_zone): any other tzinfo, a
+        subclass of either included, can run its own code to give the UTC
+        offset.
         """
         if not _is_plain_str(self.match_id):
             raise InvalidMatchError(f"match_id must be a str, not {_type_name(self.match_id)}")
@@ -2097,9 +2102,10 @@ def _utc_instant(played_at: datetime) -> datetime:
     """
     The UTC instant of an aware played_at; InvalidMatchError when there is none.
 
-    Called only after Match._validate_field_types, so the tzinfo is None or
-    exactly a datetime.timezone holding exactly a timedelta, and neither
-    utcoffset nor astimezone runs caller code.
+    Called only after Match._validate_field_types, so the tzinfo is None,
+    exactly a datetime.timezone, or exactly a zoneinfo.ZoneInfo, with an
+    offset that is exactly a timedelta, and neither utcoffset nor
+    astimezone runs caller code.
     """
     if played_at.tzinfo is None or played_at.utcoffset() is None:
         raise InvalidMatchError("played_at must be timezone-aware")
@@ -2121,7 +2127,7 @@ def ledger_order(match: Match) -> tuple[date, int, datetime, int, str]:
     match_id, status, rating_format, match_type, game_format, teams,
     confirmed_by, played_on, played_at, sequence, or best_of has the wrong
     type, checked exactly as Match.validate checks them first (a played_at
-    tzinfo must be exactly datetime.timezone). Value rules, such as a
+    tzinfo must be exactly datetime.timezone or zoneinfo.ZoneInfo). Value rules, such as a
     nonnegative sequence, and the games, team ids, and confirmed_by
     members are not checked.
     """
@@ -2164,10 +2170,11 @@ def _canonical(match: Match) -> tuple[object, ...]:
     Every field is paired with its exact type, recursively, so values that
     are equal under == but differ in type (3 and 3.0, a str and an Enum
     member) do not match. played_at is compared by its UTC instant and its
-    UTC offset instead, since Match equality ignores the offset. A
-    validated played_at has exactly a datetime.timezone whose offset is
-    exactly a timedelta, so reading both runs no caller code, and rows with
-    distinct but equal timezone objects match.
+    UTC offset instead: Match equality ignores the offset, treats the two
+    readings of a repeated wall time (a DST fold) as equal, and treats rows
+    with distinct zone objects inside a fold as unequal. A validated
+    played_at has exactly a datetime.timezone or zoneinfo.ZoneInfo whose
+    offset is exactly a timedelta, so reading both runs no caller code.
     """
     others = tuple(
         (f.name, _strict(getattr(match, f.name))) for f in fields(Match) if f.name != "played_at"
