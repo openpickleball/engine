@@ -174,7 +174,7 @@ else:
     rd'  = min(cfg.rd_max, sqrt(rd**2 + cfg.rd_growth_per_day**2 * days))
 ```
 
-Inactivity can widen RD and changes nothing else. The rating does not drift, and an old match's update is never shrunk or discounted. A match dated before a player's `rd_as_of` (a late live match) grows no RD.
+Inactivity can widen RD, which can raise K and lower reliability, but by itself it never moves a rating. The rating does not drift, and an old match's update is never shrunk or discounted. A match dated before a player's `rd_as_of` (a late live match) grows no RD.
 
 ## K
 
