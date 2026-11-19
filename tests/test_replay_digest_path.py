@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+import open_engine._ledger as ledger_module
 import open_engine._replay as replay_module
 import open_engine.engine as engine_module
 from open_engine import Match, RatingFormat, prequential_predictions, replay
@@ -39,6 +40,7 @@ def test_prequential_predictions_compute_no_digests(
     monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
     expected = prequential_predictions(LEDGER, mode=mode, burn_in_matches=0)  # type: ignore[arg-type]
+    monkeypatch.setattr(ledger_module, "_match_digest", _no_digest)
     monkeypatch.setattr(replay_module, "_match_digest", _no_digest)
     got = prequential_predictions(LEDGER, mode=mode, burn_in_matches=0)  # type: ignore[arg-type]
     assert got == expected

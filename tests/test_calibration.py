@@ -6,7 +6,6 @@ from datetime import date, timedelta
 
 import pytest
 
-import open_engine._engine as engine_class_module
 import open_engine._evaluation as evaluation_module
 from open_engine import (
     Config,
@@ -380,9 +379,6 @@ def test_fit_win_calibration_ends_when_tolerance_is_below_float_spacing(
     _patch_predictions(monkeypatch, _synthetic_predictions([0.6], [True]))
     monkeypatch.setattr(
         evaluation_module, "calibrate_win_probability", lambda raw, a: a - 1.3712345 + 1.0
-    )
-    monkeypatch.setattr(
-        engine_class_module, "calibrate_win_probability", lambda raw, a: a - 1.3712345 + 1.0
     )
     fit = fit_win_calibration([], tolerance=1e-17)
     assert fit.a == 1.371
