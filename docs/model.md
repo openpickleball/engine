@@ -6,7 +6,7 @@ This page states every equation the engine uses to move a rating, to report reli
 
 The engine's edge cases (input types, ledger order, late matches, duplicates, snapshots, and the rest) are in the published behavior notes in the [`engine.py` module docstring](../src/open_engine/engine.py). This page does not repeat them. Where a rule here has an edge case, it links to the note.
 
-In short: a rating is a performance-based Elo rating. Each match compares the share of points a team won with the share its rating predicted. Each player moves by their own K, which grows with their rating uncertainty (RD). Once a state has an `rd_as_of` (from its first counted match or an imported capture date), RD can grow with inactivity, up to `rd_max`. It can shrink with each counted match, down to `rd_min`. A frozen player's RD does not change. Reliability, a 0 to 100 label, combines RD with the variety of a player's partners and opponents.
+In short: a rating is a performance-based Elo rating. Each match compares the share of points a team won with the share its rating predicted. Each player moves by their own K, which grows with their rating uncertainty (RD). Once a state has an `rd_as_of` (from its first counted match, an imported capture date, or, for a category state derived from overall doubles, the doubles state's `rd_as_of`), RD can grow with inactivity, up to `rd_max`. It can shrink with each counted match, down to `rd_min`. A frozen player's RD does not change. Reliability, a 0 to 100 label, combines RD with the variety of a player's partners and opponents.
 
 ## Contents
 
@@ -41,7 +41,7 @@ Each player has a separate `RatingState` in each rating format: singles, overall
 | --- | --- |
 | `rating` | The rating, between `cfg.min_rating` and `cfg.max_rating`. |
 | `rd` | Rating deviation, OPEN's internal uncertainty, between `cfg.rd_min` and `cfg.rd_max`. |
-| `rd_as_of` | The date inactivity is measured from. A counted match moves it forward to the match date, never back, so a late live match leaves it as it was. A frozen player's state is not changed. An imported seed sets it to its capture date. A category state derived from overall doubles keeps the doubles `rd_as_of`, though its RD is raised to at least `cfg.category_seed_rd`. `None` for a new player. |
+| `rd_as_of` | The date inactivity is measured from. A counted match moves it forward to the match date, never back, so a match dated before the state's own `rd_as_of` leaves it as it was. Each player's date moves on its own, so a match flagged `late` because of one player can still move another player's `rd_as_of` forward. A frozen player's state is not changed. An imported seed sets it to its capture date. A category state derived from overall doubles keeps the doubles `rd_as_of`, though its RD is raised to at least `cfg.category_seed_rd`. `None` for a new player. |
 | `initial_source_date` | The capture date of an imported rating, else `None`. Matches on or before it are frozen for this player. |
 | `matches_played`, `verified_matches_played` | Counted matches, and counted tournament, league, and recreational verified matches. |
 | `last_played` | The date of the player's latest counted match in this format. |
