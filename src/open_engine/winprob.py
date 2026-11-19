@@ -23,15 +23,28 @@ if TYPE_CHECKING:
 PROBABILITY_CLIP = 1e-6
 
 
+def _type_name(value: object) -> str:
+    """
+    The name of value's type, read without running caller code.
+
+    type(value).__name__ would run a __name__ property defined on the
+    type's metaclass, so the name is read through type's own descriptor.
+    """
+    name: str = type.__dict__["__name__"].__get__(type(value))
+    return name
+
+
 def _check_number(name: str, value: object) -> None:
     """
     Raise EvaluationError unless value is exactly an int or a float, finite as a float.
 
     A bool or a subclass is rejected, and so is an int too large for a float
-    or a float that is NaN or infinite, so the arithmetic never overflows.
+    or a float that is NaN or infinite. The arithmetic on a value that
+    passes can still overflow; each public function turns that into
+    EvaluationError.
     """
     if type(value) is not int and type(value) is not float:
-        raise EvaluationError(f"{name} must be an int or float, not {type(value).__name__}")
+        raise EvaluationError(f"{name} must be an int or float, not {_type_name(value)}")
     try:
         finite = math.isfinite(value)
     except OverflowError:
@@ -43,7 +56,7 @@ def _check_number(name: str, value: object) -> None:
 def _check_best_of(best_of: object) -> None:
     """Raise EvaluationError unless best_of is exactly an int that is positive and odd."""
     if type(best_of) is not int:
-        raise EvaluationError(f"best_of must be an odd integer >= 1, got {type(best_of).__name__}")
+        raise EvaluationError(f"best_of must be an odd integer >= 1, got {_type_name(best_of)}")
     if best_of < 1 or best_of % 2 == 0:
         shown = repr(best_of) if best_of.bit_length() <= 64 else "a large int"
         raise EvaluationError(f"best_of must be an odd integer >= 1, got {shown}")
@@ -110,9 +123,18 @@ def game_win_probability(p: float, game_format: GameFormat) -> float:
     win_by = game_format.win_by
     if win_by not in (1, 2):
         raise EvaluationError("win_by must be 1 or 2")
-    n = game_format.points_to
-    if game_format.cap is not None:
-        return _capped(p, n, win_by, game_format.cap)
+    try:
+        return _game_win(p, game_format.points_to, win_by, game_format.cap)
+    except OverflowError:
+        raise EvaluationError(
+            "the game win probability is too large to compute for this format"
+        ) from None
+
+
+def _game_win(p: float, n: int, win_by: int, cap: int | None) -> float:
+    """game_win_probability after its checks; the arithmetic can raise OverflowError."""
+    if cap is not None:
+        return _capped(p, n, win_by, cap)
     if win_by == 1:
         return _first_to(p, n)
     q = 1 - p
