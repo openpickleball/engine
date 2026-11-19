@@ -99,6 +99,10 @@ class _Zone(tzinfo):
         return "Z"
 
 
+class _SubZone(ZoneInfo):
+    pass
+
+
 @dataclass(frozen=True)
 class _Format(GameFormat):
     pass
@@ -157,8 +161,8 @@ BAD_MATCH_FIELDS: list[tuple[str, dict[str, object], str]] = [
     ("played_at subclass", {"played_at": _at(UTC, _Moment)}, "played_at must be"),
     ("played_at claims", {"played_at": _claims(datetime)}, "played_at must be"),
     (
-        "played_at ZoneInfo",
-        {"played_at": _at(ZoneInfo("America/New_York"))},
+        "played_at ZoneInfo subclass",
+        {"played_at": _at(_SubZone("America/New_York"))},
         "played_at tzinfo must be",
     ),
     ("played_at tzinfo subclass", {"played_at": _at(_Zone())}, "played_at tzinfo must be"),
