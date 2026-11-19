@@ -150,9 +150,12 @@ def _json_text(form: object) -> str:
 # Each string is the type's module and qualified name as the type reported
 # them when checkpoints first stored digests, so a class that moves to
 # another module keeps its tag and every stored digest stays valid (#133).
-# The table holds every type a validated Match can hold outside played_at;
-# tests/test_digest_tags.py fails when a Match or GameFormat field's type
-# has no entry. A changed string changes stored digests.
+# The table holds every type a validated Match can hold outside played_at,
+# and is a superset: bool and float are here too, though a validated match
+# never holds one. tests/test_digest_tags.py fails when a Match or
+# GameFormat field's type has no entry. A changed string changes stored
+# digests. _digest_tag reads it by identity, so no metaclass __eq__ or
+# __hash__ runs.
 _DIGEST_TAGS: dict[type, str] = {
     str: "builtins.str",
     int: "builtins.int",
@@ -172,6 +175,14 @@ _DIGEST_TAGS: dict[type, str] = {
 }
 
 
+def _digest_tag(kind: type) -> str | None:
+    """The _DIGEST_TAGS string for exactly kind, compared by identity, or None."""
+    for known, tag in _DIGEST_TAGS.items():
+        if kind is known:
+            return tag
+    return None
+
+
 def _json_form(value: object) -> object:
     """
     value as JSON data tagged with its exact type (the tag from _DIGEST_TAGS),
@@ -183,7 +194,7 @@ def _json_form(value: object) -> object:
     their JSON text, so the form never depends on set order or the hash
     seed.
     """
-    tag = _DIGEST_TAGS.get(type(value))
+    tag = _digest_tag(type(value))
     if tag is None:
         # A validated match never reaches this: every type it can hold is
         # in _DIGEST_TAGS. Any other type keeps its module and name.

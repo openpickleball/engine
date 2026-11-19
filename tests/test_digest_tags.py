@@ -126,3 +126,26 @@ def test_every_type_a_match_can_hold_has_its_digest_tag() -> None:
     assert digested == set(EXPECTED_TAGS)
     table = ledger_module._DIGEST_TAGS
     assert {t: table.get(t) for t in digested} == EXPECTED_TAGS
+
+
+# The table is a superset: it also tags bool and float, which a validated
+# match never holds, with the strings they have always had.
+SUPERSET_TAGS = {bool: "builtins.bool", float: "builtins.float"}
+
+
+def test_the_table_holds_exactly_the_pinned_tags() -> None:
+    assert ledger_module._DIGEST_TAGS == {**EXPECTED_TAGS, **SUPERSET_TAGS}
+
+
+class _NoHashMeta(type):
+    def __hash__(cls) -> int:
+        raise AssertionError("hashed")
+
+    def __eq__(cls, other: object) -> bool:
+        raise AssertionError("compared with ==")
+
+
+def test_a_tag_lookup_runs_no_metaclass_hash_or_eq() -> None:
+    odd = _NoHashMeta("Odd", (), {})
+    assert ledger_module._digest_tag(odd) is None
+    assert ledger_module._digest_tag(float) == "builtins.float"
