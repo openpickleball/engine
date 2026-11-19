@@ -37,3 +37,18 @@ Domain skills: superpowers:test-driven-development, invoke. Framework skills: no
 - The corpus run under five hash seeds, before (list of varying inputs) and after (none).
 - The new tests, red on `main`.
 - Measured on `main`: `Config(game_length_weights={11: 1.0})` names 15 or 21 depending on the seed.
+
+## Survey result (step 1, on `main` at c447915)
+
+Static: three checks walk a set and raise on the first failing member with a message that depends on which member comes first. Every other set walk on a raising path either raises one fixed message, checks a whole set at once (`<=`, `!=`), or sorts before naming ids (`LedgerConflictError`, the resume and snapshot checks).
+
+- `Config._check_mapping_values`: walks the stored `allowed_game_formats` and names the first game length with no `game_length_weights` entry.
+- `Config._store_game_formats`: walks a caller's `allowed_game_formats`; a set with a non-member `ScoringType` and another bad entry gives "has a ScoringType that is not a member" or "entries must be (scoring type, whole number) pairs" by order.
+- `_config._rebuilt_formats` (the Config rebuild every entry point taking `cfg` runs): walks a tampered `allowed_game_formats` and names the first bad entry's type ("entries must be pairs, not str", "must hold whole numbers, not bool", "has a key or entry of type NoneType", "has an unknown scoring type").
+
+Measured: the #128 corpus (112,724 cases: Config single, pair, and multi field breaks, `from_dict`, `record`, seeds, `add_player`, `from_snapshot` and resume mutations, `reliability`, `player_summary`) under `PYTHONHASHSEED` 0 to 4, plus a set-focused corpus (7,765 cases: `Config(allowed_game_formats=...)` with two to six mixed entries, a tampered `allowed_game_formats` through `reliability`, `RatingEngine`, `replay`, `evaluate`, `prequential_predictions`, `fit_scale`, and `fit_win_calibration`, `Match.confirmed_by`, ledger conflicts, and the win probability functions) under seeds 0 to 6. The error class never varied (always `ConfigError`). The message varied for:
+
+- #128 corpus, 4 inputs: `Config(game_length_weights={11: 1.0})` and the same through `from_dict` (three bases): "No game_length_weight for games to 11" or "... 15" (the corpus key 11 is a float or str form that becomes 11, so 15 and 21 are missing; the measured pair is 15 or 21 when 11 alone is given).
+- Set corpus, 2,598 inputs: 872 `Config(allowed_game_formats=...)` (the missing game length named, or the pair versus non-member message), 774 tampered through `reliability` and 952 tampered through the other six entry points (the entry type named).
+
+The only valid-input variation is a `Match` repr, whose `confirmed_by` frozenset prints in set order; that is not an error and is not in scope.
