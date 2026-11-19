@@ -15,7 +15,7 @@ Decision (the user's, recorded on #122): rebuild at entry. Every public entry po
 5. Cost: the rebuild runs once per public call, never per match. Internal paths that build engines or call other public functions (`_replay`, the prequential scratch, live, and per-window engines, `_resume_start`, and `evaluate`, `fit_scale`, and `fit_win_calibration` calling `prequential_predictions`) use the already rebuilt copy and do not rebuild again. `fit_scale` still builds one trial `Config` per scale, as today; a trial is not rebuilt again.
 6. Tampering with the caller's `Config` after an entry point returned does not change the engine (it holds its own copy). Tampering with the engine's own stored copy (`engine.cfg`) after the call is outside the threat model, and the README and the `Config` docstring say so.
 7. Every new rejection raises `ConfigError` (an `OpenEngineError`), never a bare `ValueError`, `TypeError`, `KeyError`, or `AttributeError`; tests assert the type with `pytest.raises(ConfigError, match=...)`.
-8. README, `Config` docstring, the docstrings of the entry points where they describe the `cfg` check, `CLAUDE.md`'s "Exact input types" rule, and `CHANGELOG.md` (Security, with a `**Breaking:**` entry and a Migration note) describe the behavior.
+8. README, `Config` docstring, the docstrings of the entry points where they describe the `cfg` check, and `CHANGELOG.md` (Security, with a `**Breaking:**` entry and a Migration note) describe the behavior.
 
 ## Files that change
 
@@ -31,7 +31,7 @@ Decision (the user's, recorded on #122): rebuild at entry. Every public entry po
 - `tests/test_config_rebuilt_at_entry.py` (new): the tests in Proof.
 - `tests/test_snapshot.py`: `test_from_snapshot_uses_the_config_it_is_given` asserts `restored.cfg is cfg`; that is now false by design. Change it to assert `restored.cfg == cfg`, equal fingerprints, and `restored.cfg is not cfg`. This is a test of the old contract, not a frozen defect test.
 - `README.md`: the "Exact input types" paragraph (and the Config section if it describes entry-point checks): rebuild at entry, the stored copy, the threat model limit.
-- `CLAUDE.md`: one sentence in the "Exact input types" rule: an entry point that takes a `Config` uses the copy `_require_config` rebuilds, and internal paths pass that copy on rather than rebuilding.
+- `CLAUDE.md`: no change in this PR. Edits to CLAUDE.md need the user's own approval, so the proposed sentences go in the final report instead.
 - `CHANGELOG.md`: a Security entry under Unreleased.
 
 ## Order of work
