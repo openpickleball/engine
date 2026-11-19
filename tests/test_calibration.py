@@ -6,7 +6,8 @@ from datetime import date, timedelta
 
 import pytest
 
-import open_engine.engine as engine_module
+import open_engine._engine as engine_class_module
+import open_engine._evaluation as evaluation_module
 from open_engine import (
     Config,
     EvaluationError,
@@ -235,7 +236,7 @@ def _synthetic_predictions(raws: list[float], wins: list[bool]) -> list[Prequent
 
 
 def _patch_predictions(monkeypatch: pytest.MonkeyPatch, preds: list[PrequentialPrediction]) -> None:
-    monkeypatch.setattr(engine_module, "_prequential", lambda *a, **k: preds)
+    monkeypatch.setattr(evaluation_module, "_prequential", lambda *a, **k: preds)
 
 
 def test_fit_win_calibration_recovers_distortion(monkeypatch):
@@ -307,7 +308,7 @@ def test_fit_scale_picks_lower_unrounded_mse_when_rounded_values_tie(monkeypatch
             for i in range(n)
         ]
 
-    monkeypatch.setattr(engine_module, "_prequential", fake_predictions)
+    monkeypatch.setattr(evaluation_module, "_prequential", fake_predictions)
     cfg = Config(win_weight=0.0)
     fit = fit_scale([], cfg=cfg, scoring=ScoringType.RALLY)
     assert abs(fit.scale - 5.0) <= 0.05
@@ -344,7 +345,7 @@ def test_fit_scale_rejects_bad_search_arguments(
 ) -> None:
     # tolerance <= 0 could hang the golden-section loop, and low >= high
     # could return a fit from a meaningless search range.
-    monkeypatch.setattr(engine_module, "_prequential", _no_prediction_work)
+    monkeypatch.setattr(evaluation_module, "_prequential", _no_prediction_work)
     with pytest.raises(EvaluationError, match=message):
         fit_scale([], scoring=ScoringType.RALLY, **kwargs)
 
@@ -353,7 +354,7 @@ def test_fit_scale_rejects_bad_search_arguments(
 def test_fit_win_calibration_rejects_bad_search_arguments(
     monkeypatch: pytest.MonkeyPatch, kwargs: dict[str, float], message: str
 ) -> None:
-    monkeypatch.setattr(engine_module, "_prequential", _no_prediction_work)
+    monkeypatch.setattr(evaluation_module, "_prequential", _no_prediction_work)
     with pytest.raises(EvaluationError, match=message):
         fit_win_calibration([], **kwargs)
 
@@ -363,12 +364,12 @@ def test_fit_scale_ends_when_tolerance_is_below_float_spacing(
 ) -> None:
     # A positive tolerance below the float spacing near the optimum could
     # hang: the bracket can stop shrinking before it gets that narrow.
-    monkeypatch.setattr(engine_module, "_prequential", lambda *a, **k: [])
+    monkeypatch.setattr(evaluation_module, "_prequential", lambda *a, **k: [])
 
     def fake_report(predictions: object, cfg: Config, scoring: ScoringType) -> tuple[None, float]:
         return None, (cfg.scale_by_scoring[scoring] - 3.1234567) ** 2
 
-    monkeypatch.setattr(engine_module, "_report_from_predictions", fake_report)
+    monkeypatch.setattr(evaluation_module, "_report_from_predictions", fake_report)
     fit = fit_scale([], scoring=ScoringType.RALLY, tolerance=1e-17)
     assert fit.scale == 3.123
 
@@ -378,7 +379,10 @@ def test_fit_win_calibration_ends_when_tolerance_is_below_float_spacing(
 ) -> None:
     _patch_predictions(monkeypatch, _synthetic_predictions([0.6], [True]))
     monkeypatch.setattr(
-        engine_module, "calibrate_win_probability", lambda raw, a: a - 1.3712345 + 1.0
+        evaluation_module, "calibrate_win_probability", lambda raw, a: a - 1.3712345 + 1.0
+    )
+    monkeypatch.setattr(
+        engine_class_module, "calibrate_win_probability", lambda raw, a: a - 1.3712345 + 1.0
     )
     fit = fit_win_calibration([], tolerance=1e-17)
     assert fit.a == 1.371

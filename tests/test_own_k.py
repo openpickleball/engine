@@ -17,8 +17,8 @@ from open_engine import (
     RatingFormat,
     RejectionReason,
 )
+from open_engine._math import _actual_point_share
 from open_engine.engine import (
-    _actual_point_share,
     expected_point_share,
     inflated_rd,
     information_multiplier,

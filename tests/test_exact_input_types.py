@@ -550,15 +550,15 @@ def test_fit_bounds_exact_number(
 
 
 def test_fit_scale_does_not_use_dataclasses_replace(monkeypatch: pytest.MonkeyPatch) -> None:
-    import open_engine.engine as engine_module
+    import open_engine._math as math_module
 
-    original = engine_module.replace
+    original = math_module.replace
 
     def guarded(obj: object, /, **changes: object) -> object:
         assert not isinstance(obj, Config), "fit_scale built a trial with dataclasses.replace"
         return original(obj, **changes)  # type: ignore[type-var]
 
-    monkeypatch.setattr(engine_module, "replace", guarded)
+    monkeypatch.setattr(math_module, "replace", guarded)
     fit = fit_scale(_small_ledger(), burn_in_matches=1, tolerance=0.5)
     assert fit.scoring == "side_out"
 

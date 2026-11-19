@@ -15,7 +15,7 @@ from open_engine import (
     RejectionReason,
     ScoringType,
 )
-from open_engine.engine import _StrEnum
+from open_engine._types import _StrEnum
 
 ENUMS: list[type[Enum]] = [
     RatingFormat,

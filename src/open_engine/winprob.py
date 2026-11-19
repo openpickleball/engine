@@ -16,36 +16,12 @@ from math import comb
 from typing import TYPE_CHECKING
 
 from ._errors import EvaluationError
+from ._validation import _number_broken, _type_name
 
 if TYPE_CHECKING:
-    from .engine import GameFormat
+    from ._types import GameFormat
 
 PROBABILITY_CLIP = 1e-6
-
-
-def _type_name(value: object) -> str:
-    """
-    The name of value's type, as an exact str, read without running caller code.
-
-    type(value).__name__ would run a __name__ property defined on the
-    type's metaclass, so the name is read through type's own descriptor.
-    A class's __name__ can be set to a str subclass, so the result is
-    copied into an exact str through str.__str__, which runs none of the
-    subclass's methods.
-    """
-    name: str = type.__dict__["__name__"].__get__(type(value))
-    return str.__str__(name)
-
-
-def _type_is(value: object, *kinds: type) -> bool:
-    """
-    True when value's type is one of kinds, compared by identity.
-
-    type(value) in kinds would compare with ==, which runs an __eq__
-    defined on the type's metaclass.
-    """
-    actual = type(value)
-    return any(actual is kind for kind in kinds)
 
 
 def _check_number(name: str, value: object) -> None:
@@ -57,14 +33,9 @@ def _check_number(name: str, value: object) -> None:
     passes can still overflow; each public function turns that into
     EvaluationError.
     """
-    if type(value) is not int and type(value) is not float:
-        raise EvaluationError(f"{name} must be an int or float, not {_type_name(value)}")
-    try:
-        finite = math.isfinite(value)
-    except OverflowError:
-        finite = False
-    if not finite:
-        raise EvaluationError(f"{name} must be finite as a float")
+    problem = _number_broken(name, value)
+    if problem is not None:
+        raise EvaluationError(problem)
 
 
 def _check_best_of(best_of: object) -> None:
@@ -78,7 +49,7 @@ def _check_best_of(best_of: object) -> None:
 
 def _check_format(game_format: object) -> None:
     """GameFormat.validate through the class: ConfigError unless exactly a valid GameFormat."""
-    from .engine import GameFormat
+    from ._types import GameFormat
 
     GameFormat.validate(game_format)  # type: ignore[arg-type]
 

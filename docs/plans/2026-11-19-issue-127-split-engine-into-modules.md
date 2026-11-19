@@ -17,21 +17,30 @@ Modules in import order. Each imports only from modules above it, so there are n
 | `_validation.py` | The type and number predicates and helpers: `_type_name`, `_type_is` (moved from `winprob.py`), `_is_plain_str`, `_is_id`, `_is_plain_date`, `_is_exact_int`, `_is_exact_number`, `_is_whole_number`, `_is_finite_number`, `_number_broken`, `_is_config_number`, `_is_config_whole`, `_as_float`, `_SpoofedNumber`, `_SPOOFED_NUMBER`, `_plain_number`, `_days_before` and the day constants it uses | scattered |
 | `_types.py` | `_StrEnum`, `RatingFormat`, `MatchType`, `_VERIFIED_MATCH_TYPES`, `ScoringType`, `MatchStatus`, `GameFormat`, `_GAME_FORMAT_FIELD_NAMES`, `_is_member`, `_enum_shown`, `_safe_shown`, `_game_format_shape_broken`, `_game_format_broken`, `ALL_GAME_FORMATS` | 67 to 306 |
 | `_config.py` | `_FrozenMapping`, the `_CONFIG_*` tables and limits, `Config`, and its rebuild and check helpers (`_require_config`, `_config_shape`, `_rebuilt_config`, `_config_or_default`, `_enum_keyed`, `_int_keyed`, `_game_formats`, `_shown`, and the rest of that section) | 307 to 1361 |
-| `_model.py` | `ExternalRatingSnapshot`, `RatingState`, `Player`, `Match` and its validation helpers, `RejectionReason`, `_SEED_SENSITIVE_REASONS`, `MatchResult`, `NetworkConnectivity`, `PlayerSummary`, `ReplayInfo`, `_zero_by_format` | 1362 to 1480, 1880 to 2211 |
-| `_ledger.py` | `ledger_order`, `_utc_instant`, `_ledger`, `_canonical`, `_strict`, `_match_digest`, `_json_text`, `_json_form`, `MatchupKey`, `_matchup_key`, `_content_score`, `_content_key` | 1700 to 1880, 2476 to 2528 |
-| `_connectivity.py` | `_UnionFind`, `_contact_graph`, `_network_connectivity`, the cache size constant | 1981 to 2113 |
+| `_model.py` | `ExternalRatingSnapshot`, `RatingState`, `Player`, `Match` and its validation helpers, `_UTC_MIN`, `_utc_instant`, `RejectionReason`, `_SEED_SENSITIVE_REASONS`, `MatchResult`, `NetworkConnectivity`, `PlayerSummary`, `ReplayInfo`, `_zero_by_format` | 1362 to 1480, 1880 to 2211 |
+| `_ledger.py` | `ledger_order`, `_ledger`, `_canonical`, `_strict`, `_match_digest`, `_json_text`, `_json_form`, `MatchupKey`, `_matchup_key`, `_content_score`, `_content_key` | 1700 to 1880, 2476 to 2528 |
 | `_math.py` | The rating math and reliability: the named model constants, `expected_point_share`, `inflated_rd`, `player_k`, `information_multiplier`, `_actual_point_share`, `_rolling_unique_count`, `_latest`, `_is_late`, `_seen`, `_check_reliability_state`, `reliability`, `_reliability`, `_clone_state`, `clone_player` | 2212 to 2475 |
+| `_connectivity.py` | `_UnionFind`, `_contact_graph`, `_network_connectivity`, the cache size constant | 1981 to 2113 |
 | `_seeds.py` | Seed validation: `_seed_type_broken`, `_RESERVED_SOURCE_PREFIX`, `_reserved_source_broken`, `_seed_rule_broken`, `_provenance_linked`, `_check_seed_date`, `_HeldIdentities`, `_check_seed_identity`, `_plain_seed`, `_plain_state`, `_validate_seed` | 2583 to 2885 |
 | `_snapshot.py` | `SNAPSHOT_VERSION`, the key sets, `_Snapshot`, the snapshot writers (`_state_form` and the rest) and readers (`_snap_*`, `_check_*`, `_read_snapshot`) | 2886 to 4227 |
-| `_engine.py` | `_check_lookup_format`, `RatingEngine` | 4228 to 5458 |
-| `_replay.py` | `_engine_under`, `_load_snapshot`, `replay`, `_resume_start`, `_replay`, `_check_resume_rows` | 5459 to 5710 |
+| `_engine.py` | `_check_lookup_format`, `RatingEngine`, `_load_snapshot` | 4228 to 5458 |
+| `_replay.py` | `_engine_under`, `replay`, `_resume_start`, `_replay`, `_check_resume_rows` | 5459 to 5710 |
 | `_evaluation.py` | `PredictionMode`, `EvaluationReport`, `PrequentialPrediction`, `_prequential` and its helpers, `evaluate`, `_scored_pairs`, `_report_from_predictions`, `_SEARCH_STEPS`, the fit checks, `ScaleFit`, `fit_scale`, `WinCalibrationFit`, `fit_win_calibration` | 5711 to end |
 
 Where a definition's natural home differs from the table (for example a helper that only one later module uses), the implementer may move it there and records the choice in the plan.
 
+Departures recorded during the work (the table above already shows them):
+
+- `_utc_instant` and `_UTC_MIN` live in `_model.py`, not `_ledger.py`: `Match.__post_init__` calls `_utc_instant`, and `_model.py` imports before `_ledger.py`.
+- `_math.py` imports before `_connectivity.py`: `_contact_graph` calls `_math._latest`.
+- `_load_snapshot` lives in `_engine.py`, not `_replay.py`: `RatingEngine.from_snapshot` calls it, and `_engine.py` imports before `_replay.py`.
+- `winprob.py` takes its place in the import order after `_types.py` (the criterion 5 test lists it there). It keeps its one import inside a function, in `_check_format`, now from `._types`; that is the only import inside a function, as on `main`. It imports only `_type_name` from `_validation`, since `_type_is` is no longer used there.
+- `__init__.py` keeps importing public names from `engine`.
+- Public classes keep `open_engine.engine` as their `__module__`. `_json_form` tags each value in a match digest with `type(value).__module__` and `__qualname__`, and snapshots store those digests (`ledger_digests`). With the new module names every digest changed: the pinned snapshot hashes in `test_exact_input_plain_unchanged.py` and `test_config_rebuilt_at_entry.py` failed, and resuming from a snapshot taken on `main` raised `LedgerConflictError` for every row. So each module that defines a public class sets `Cls.__module__ = "open_engine.engine"` after its definitions, with a comment giving the reason. No definition changes. `repr` of a class, pickles, and digests stay as on `main`. `inspect.getsource` on a public class now looks in `engine.py` and fails, as it would for any re-exported class with a pinned module.
+
 `engine.py` keeps its module docstring, updated to say the package's code lives in the private modules listed, and becomes a re-export module: every name without a leading underscore that `engine.py` defines on `main` (the public API plus `clone_player`, `player_k`, `inflated_rd`, `information_multiplier`, `PredictionMode`, `MatchupKey`, `SNAPSHOT_VERSION`, `ALL_GAME_FORMATS`, and any other), each as `from ._x import Name as Name` so `mypy --strict` accepts `from open_engine.engine import Name`. It also keeps re-exporting the error classes. Private names are not re-exported.
 
-`winprob.py` imports `_type_name` and `_type_is` from `_validation` and `GameFormat` from `_types` (no longer from `engine`). `__init__.py` imports public names from their new modules or from `engine`; `__all__` does not change.
+`winprob.py` imports `_type_name` (and `_number_broken`, criterion 7) from `_validation` and `GameFormat` from `_types` (no longer from `engine`). `__init__.py` imports public names from their new modules or from `engine`; `__all__` does not change.
 
 Each new module starts with `from __future__ import annotations` and a short docstring that says what it holds and carries the demonstration label (CLAUDE.md: keep the label in the module docstrings).
 
@@ -49,7 +58,7 @@ Each new module starts with `from __future__ import annotations` and a short doc
 5. A new test asserts the import order: each private module imports from the package only modules listed above it in the table.
 6. `scripts/check_wheel.py` `PACKAGE_FILES` lists every new module. The sdist and wheel checks pass on a fresh build.
 7. The overlapping predicates live together in `_validation.py` under a short comment that names each one, what it accepts, and when to use it, including that `_is_finite_number` and `_is_whole_number` use `isinstance` and are safe only on values `_plain_number` has already converted. Exact duplicates are removed: `winprob._check_number` raises the same messages `_number_broken` returns, so it becomes a call to `_number_broken`, with the same error class and messages. No predicate changes what it accepts.
-8. Docs: `CLAUDE.md`'s file list, its references to `engine._is_member`, `winprob._type_is`, and `winprob._type_name`, and its "named model constant in `engine.py`" rule name the new modules. `docs/model.md` and `docs/behavior.md` name the new module wherever they name `engine.py` as the home of code. `CHANGELOG.md` gets an entry under `## [Unreleased]`, `### Changed`: internal layout only, no behavior or public API change; classes now report their new module in `__module__` and `repr` of the class.
+8. Docs: `CLAUDE.md`'s file list, its references to `engine._is_member`, `winprob._type_is`, and `winprob._type_name`, and its "named model constant in `engine.py`" rule name the new modules. `docs/model.md` and `docs/behavior.md` name the new module wherever they name `engine.py` as the home of code. `CHANGELOG.md` gets an entry under `## [Unreleased]`, `### Changed`: internal layout only, no behavior or public API change; public classes still report `open_engine.engine` as their module, so match digests and stored snapshots do not change.
 
 ## Files that change
 
@@ -75,7 +84,7 @@ Each new module starts with `from __future__ import annotations` and a short doc
 - A name a module uses but does not import fails only at call time, on a path the tests might not reach. Mitigation: `ruff check` (F821, undefined names) and `mypy --strict` both catch this statically.
 - An import cycle, for example through `winprob.py`. Mitigation: the table's order and the criterion 5 test.
 - Determinism and provenance are security-sensitive (CLAUDE.md hard rule 7). Moving code cannot change them if the bodies are byte-identical, which the AST comparison checks.
-- Pickles taken before this change name `open_engine.engine.<Class>`, which still resolves through the re-exports. New pickles name the new modules. Snapshots are JSON and do not change.
+- Match digests in snapshots tag each value with its type's module. Mitigation: public classes keep `open_engine.engine` as their `__module__` (see the departures above), so digests, snapshots, and pickles stay as on `main`.
 
 Not done here: renaming or rewriting any function (#128 breaks up long functions), merging predicates that differ in what they accept, or moving `_errors.py` or `_version.py`.
 

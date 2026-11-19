@@ -15,6 +15,7 @@ from datetime import UTC, date, datetime, timedelta, timezone
 import pytest
 
 import open_engine
+import open_engine._ledger as ledger_module
 import open_engine.engine as engine_module
 from open_engine import (
     Config,
@@ -588,7 +589,7 @@ PLUS2_NAMED = timezone(timedelta(hours=2), "syn-zone")
 
 
 def _canonical_equal(a: Match, b: Match) -> bool:
-    return engine_module._canonical(a) == engine_module._canonical(b)
+    return ledger_module._canonical(a) == ledger_module._canonical(b)
 
 
 @pytest.mark.parametrize(
@@ -607,7 +608,7 @@ def test_digest_separates_rows_canonical_separates(a: Match, b: Match) -> None:
     a.validate()
     b.validate()
     assert not _canonical_equal(a, b)
-    assert engine_module._match_digest(a) != engine_module._match_digest(b)
+    assert ledger_module._match_digest(a) != ledger_module._match_digest(b)
 
 
 @pytest.mark.parametrize(
@@ -650,9 +651,9 @@ def test_digest_joins_rows_canonical_joins(a: Match, b: Match) -> None:
     a.validate()
     b.validate()
     assert _canonical_equal(a, b)
-    assert engine_module._match_digest(a) == engine_module._match_digest(b)
+    assert ledger_module._match_digest(a) == ledger_module._match_digest(b)
 
 
 def test_digest_is_64_lowercase_hex() -> None:
-    digest = engine_module._match_digest(BASE)
+    digest = ledger_module._match_digest(BASE)
     assert len(digest) == 64 and set(digest) <= set("0123456789abcdef")
