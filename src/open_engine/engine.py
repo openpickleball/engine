@@ -22,8 +22,8 @@ docs/model.md states the rating model: each equation the engine uses, with the
 function it comes from. docs/behavior.md holds the published behavior notes
 (input types, errors, ledger order, duplicates, late matches, imbalance,
 reliability display, snapshots, and the rest) and the requirements the backend
-must meet. Where a public docstring has edge cases, it names the section of
-docs/behavior.md that holds them. Neither page ships with the package. They are
+must meet. Many public docstrings name the section of docs/behavior.md that
+holds their edge cases. Neither page ships with the package. They are
 at https://github.com/openpickleball/engine/blob/main/docs/model.md and
 https://github.com/openpickleball/engine/blob/main/docs/behavior.md, and each
 docstring's "docs/behavior.md" means the second page.

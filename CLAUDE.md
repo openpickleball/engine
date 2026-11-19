@@ -12,7 +12,7 @@ The services and APIs that store players and matches and serve ratings live in t
 
 The engine is a demonstration. Its methods have not been validated on real match data, its outputs are not OPEN ratings, and its API may change without notice. No OPEN rating is live. Keep that labeling in the README, the package description, the module docstrings, `docs/behavior.md`, and the changelog.
 
-- `src/open_engine/engine.py`: enums and game formats, `Config`, `Match`, `Player`, `RatingEngine` with its snapshots (`to_snapshot`, `from_snapshot`), `replay` and resume from a snapshot, evaluation and calibration. Its docstrings state each public call's contract and name the `docs/behavior.md` section that holds its edge cases.
+- `src/open_engine/engine.py`: enums and game formats, `Config`, `Match`, `Player`, `RatingEngine` with its snapshots (`to_snapshot`, `from_snapshot`), `replay` and resume from a snapshot, evaluation and calibration. Its docstrings state each public call's contract, and many name the `docs/behavior.md` section that holds their edge cases.
 - `src/open_engine/winprob.py`: game and match win probability and its calibration.
 - `src/open_engine/_errors.py`: the exception hierarchy, `OpenEngineError` and its subclasses. `engine.py` re-exports them.
 - `src/open_engine/__init__.py`: the public API (`__all__`). It re-exports `__version__`.
@@ -131,3 +131,5 @@ This section overrides a contributor's global no-commit rule for the `/work-issu
 Docs in this project use plain, short sentences. No emojis and no em dashes. Prefer "player", "match", and "organizer" over generic words like "user" or "entity".
 
 A claim about engine behavior in the docs or docstrings that something always or never happens must hold for every input its stated conditions allow, not only the tested case. Before writing one, try to break it with other rating formats, game formats, game counts, dates, RDs, match types, match histories, and `Config` values (the rating range included). Prefer one condition that keeps everything else the same over a list of conditions that can miss one. For example, the match performance note scopes its claim to one engine state where only the match's game scores change, with the same number of games and the same result. If the claim does not hold, narrow it, or say "can" and name the case that breaks it.
+
+A docstring or doc that states the order in which errors are checked must match the code's order. Confirm each pair of adjacent checks with an input that fails both.

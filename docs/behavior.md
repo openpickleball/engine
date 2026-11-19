@@ -6,7 +6,7 @@ Status: demonstration only. These methods have not been validated on real match 
 
 This is a transparent, configurable rating engine. It is not a reproduction of any proprietary rating algorithm. It supports ratings seeded from a verified snapshot of a standard external rating system, independently maintained OPEN ratings, unregistered player records, doubles categories that also feed the overall doubles rating, match-source weighting, game format weighting, inactivity-based uncertainty, rolling partner/opponent diversity, scale calibration, and deterministic historical replay.
 
-This page holds the engine's published behavior notes and the requirements the backend must meet, moved here from the `engine.py` module docstring and the public docstrings. [`docs/model.md`](model.md) states the rating math. Each public docstring names the section here that holds its edge cases.
+This page holds the engine's published behavior notes and the requirements the backend must meet, moved here from the `engine.py` module docstring and the public docstrings. [`docs/model.md`](model.md) states the rating math. Many public docstrings name the section here that holds their edge cases.
 
 ## Input types
 
