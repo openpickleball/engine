@@ -29,6 +29,7 @@ from ._math import (
     _RESULT_PLACES,
     _SUMMARY_RATING_PLACES,
     _SUMMARY_RD_PLACES,
+    _VISIBLE_LOSS,
     _actual_point_share,
     _clone_state,
     _is_late,
@@ -1147,7 +1148,10 @@ class RatingEngine:
                 raw_delta = sign * player_k(state, cfg) * effective_weight * surprise
                 old_rating = state.rating
                 state.rating = max(cfg.min_rating, min(cfg.max_rating, old_rating + raw_delta))
-                if abs((state.rating - old_rating) - raw_delta) > _CLAMP_TOLERANCE:
+                if (
+                    abs(state.rating - (old_rating + raw_delta)) > _CLAMP_TOLERANCE
+                    or abs((state.rating - old_rating) - raw_delta) >= _VISIBLE_LOSS
+                ):
                     clamped.append(pid)
                 state.rd = max(
                     cfg.rd_min,
