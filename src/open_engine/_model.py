@@ -270,6 +270,20 @@ class Match:
             raise InvalidMatchError(
                 f"played_on must be a plain date (not a datetime), not {_type_name(self.played_on)}"
             )
+        Match._validate_played_at_type(self)
+        for name, number in (("sequence", self.sequence), ("best_of", self.best_of)):
+            if type(number) is not int:
+                raise InvalidMatchError(f"{name} must be an int, not {_type_name(number)}")
+
+    def _validate_played_at_type(self) -> None:
+        """
+        Raise InvalidMatchError when played_at, its tzinfo, or its offset has the wrong type.
+
+        _validate_field_types's played_at checks, after played_on. In order:
+        played_at is None or exactly a datetime; its tzinfo is None or a
+        plain zone (_is_plain_zone); and, for a tzinfo, the UTC offset its
+        zone gives is less than a day and exactly a timedelta.
+        """
         if self.played_at is not None:
             if type(self.played_at) is not datetime:
                 raise InvalidMatchError(
@@ -300,9 +314,6 @@ class Match:
                         f"played_at offset must be exactly a timedelta, not {_type_name(offset)}; "
                         f"convert with {_PLAYED_AT_RECIPE}"
                     )
-        for name, number in (("sequence", self.sequence), ("best_of", self.best_of)):
-            if type(number) is not int:
-                raise InvalidMatchError(f"{name} must be an int, not {_type_name(number)}")
 
 
 # The conversion a rejected played_at message gives: an exact timezone of a
