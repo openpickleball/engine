@@ -6149,12 +6149,13 @@ def fit_scale(
     Raises:
         EvaluationError: low, high, or tolerance is not valid (checked first,
             before any prediction work), another argument fails a check
-            prequential_predictions makes, or no established match remains.
+            prequential_predictions makes, scoring is None (checked after cfg's
+            type and before cfg is rebuilt), or no established match remains.
         ConfigError, InvalidMatchError, InvalidSeedError, PlayerError,
             LedgerConflictError: as prequential_predictions raises them, in its
             order. The first trial config, at scale low, is built after the cfg
-            rebuild and before any row or seed is checked, so a low of 0 or
-            less raises ConfigError there.
+            rebuild and before any row or seed is checked; Config's check that
+            scales are positive raises ConfigError there for a low of 0 or less.
 
     See docs/behavior.md, "Calibration fits".
     """
@@ -6273,7 +6274,8 @@ def fit_win_calibration(
     Raises:
         EvaluationError: low, high, or tolerance is not valid, as for
             fit_scale; another argument fails a check prequential_predictions
-            makes; or no prediction remains.
+            makes; scoring is None (checked after cfg's type and before cfg is
+            rebuilt); or no prediction remains.
         ConfigError, InvalidMatchError, InvalidSeedError, PlayerError,
             LedgerConflictError: as prequential_predictions raises them, in its
             order. No trial config is built, so a low of 0 or less raises no
