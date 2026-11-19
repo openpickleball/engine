@@ -1633,7 +1633,7 @@ def _require_config(cfg: object) -> Config:
 
     Raises ConfigError otherwise, or when the rebuild does (see
     _rebuilt_config). An entry point that drains a caller iterable calls it
-    only after the last caller code has run (issue #122), with
+    only after it has read matches and seed_players (issue #122), with
     _config_shape as its early check.
     """
     return _rebuilt_config(_config_shape_checked(cfg))
@@ -6355,8 +6355,8 @@ def replay(
     exactly a bool, and ConfigError unless cfg is None or exactly a Config
     with only its fields, before matches, seed_players, and from_snapshot
     are read. It reads matches and seed_players once each, into lists,
-    before any row or seed is checked. Only then, after the last caller
-    code has run, is cfg rebuilt from its field values (see Config), so a
+    before any row or seed is checked. Only after reading them is cfg
+    rebuilt from its field values (see Config), so a
     rewritten value it rejects raises ConfigError too, even one rewritten
     while those iterables were read, and the result's cfg, replay_info
     fingerprint, and snapshots come from that copy.
@@ -6422,8 +6422,8 @@ def replay(
     # a generator cannot change a row between its check and its use.
     rows = list(matches)
     seeds = list(seed_players)
-    # The copy is built only now, after the last caller code ran: a
-    # generator above could rewrite any Config it reaches (issue #122).
+    # The copy is built only now, after matches and seed_players are read:
+    # a generator above could rewrite any Config it reaches (issue #122).
     checked = _config_or_default(shape)
     start = None
     if from_snapshot is not None:
@@ -7034,7 +7034,7 @@ def fit_scale(
     _check_fit_scoring(scoring)
     ledger = list(matches)
     seeds = list(seed_players)
-    # Built after the iterables drain, the last caller code (issue #122).
+    # Built after matches and seed_players are read (issue #122).
     checked = _config_or_default(shape)
     cache: dict[float, tuple[EvaluationReport, float]] = {}
     # The trial configs are built from the fields of Config itself, read off
