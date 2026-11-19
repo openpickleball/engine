@@ -883,6 +883,60 @@ def _names_category_match(named: Sequence[str], players: Mapping[str, Player]) -
     return False
 
 
+def _check_rejection_key(
+    key: str,
+    path: str,
+    fmt: RatingFormat,
+    named: list[str],
+    players: Mapping[str, Player],
+    processed: set[str],
+    reserved: set[str],
+    duplicates: Mapping[str, str],
+    cfg: Config,
+) -> None:
+    """
+    Raise SnapshotError unless a rejection entry's key fits the processed and reserved ids.
+
+    _snap_seed_sensitive_rejections's key checks, after the entry's players.
+    A processed key needs, in order: a doubles entry, category_feeds_parent,
+    every named player in players, and a named player whose played
+    category state has one other named player as a partner and the other
+    two as opponents (_names_category_match). A reserved key must not be a
+    possible_duplicates key. Any other key is rejected.
+    """
+    if key in processed:
+        if fmt is not RatingFormat.DOUBLES:
+            raise SnapshotError(
+                f"{path} is a processed match id, so its rating_format must be doubles: "
+                "a counted match records only a rejected overall doubles update"
+            )
+        if not cfg.category_feeds_parent:
+            raise SnapshotError(
+                f"{path} is a processed match id, which needs category_feeds_parent: "
+                "only then does a counted match send a doubles update"
+            )
+        for pid in named:
+            if pid not in players:
+                raise SnapshotError(f"{path}.players names {pid!r}, which is not in players")
+        if not _names_category_match(named, players):
+            raise SnapshotError(
+                f"{path} names no player with a played category state that has one "
+                "other named player as a partner and the other two as opponents, as a "
+                "counted category match leaves"
+            )
+    elif key in reserved:
+        if key in duplicates:
+            raise SnapshotError(
+                f"{path} is a possible_duplicates key; a possible duplicate is rejected "
+                "before any rating is read"
+            )
+    else:
+        raise SnapshotError(
+            f"snapshot.seed_sensitive_rejections has key {key!r}, which is in neither "
+            "processed_match_ids nor reserved_match_ids"
+        )
+
+
 def _snap_seed_sensitive_rejections(
     value: object,
     players: Mapping[str, Player],
@@ -933,37 +987,7 @@ def _snap_seed_sensitive_rejections(
             )
         if named != sorted(set(named)):
             raise SnapshotError(f"{path}.players must be sorted with no repeats")
-        if key in processed:
-            if fmt is not RatingFormat.DOUBLES:
-                raise SnapshotError(
-                    f"{path} is a processed match id, so its rating_format must be doubles: "
-                    "a counted match records only a rejected overall doubles update"
-                )
-            if not cfg.category_feeds_parent:
-                raise SnapshotError(
-                    f"{path} is a processed match id, which needs category_feeds_parent: "
-                    "only then does a counted match send a doubles update"
-                )
-            for pid in named:
-                if pid not in players:
-                    raise SnapshotError(f"{path}.players names {pid!r}, which is not in players")
-            if not _names_category_match(named, players):
-                raise SnapshotError(
-                    f"{path} names no player with a played category state that has one "
-                    "other named player as a partner and the other two as opponents, as a "
-                    "counted category match leaves"
-                )
-        elif key in reserved:
-            if key in duplicates:
-                raise SnapshotError(
-                    f"{path} is a possible_duplicates key; a possible duplicate is rejected "
-                    "before any rating is read"
-                )
-        else:
-            raise SnapshotError(
-                f"snapshot.seed_sensitive_rejections has key {key!r}, which is in neither "
-                "processed_match_ids nor reserved_match_ids"
-            )
+        _check_rejection_key(key, path, fmt, named, players, processed, reserved, duplicates, cfg)
         gap = (
             cfg.max_singles_rating_gap
             if fmt is RatingFormat.SINGLES
