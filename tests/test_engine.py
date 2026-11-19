@@ -594,7 +594,7 @@ def new_york(cache: bool = True) -> ZoneInfo:
 
 def fixed_offset(played_at: datetime) -> datetime:
     """The migration conversion: the same instant and offset, as a datetime.timezone."""
-    return played_at.astimezone(timezone(played_at.utcoffset()))
+    return played_at.astimezone(timezone(timedelta(seconds=played_at.utcoffset().total_seconds())))
 
 
 def outcome(rows: list[Match]) -> object:

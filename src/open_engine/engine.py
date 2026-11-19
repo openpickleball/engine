@@ -33,13 +33,18 @@ Published behavior notes:
   GameFormat exactly a GameFormat, each holding nothing in its instance
   __dict__ but its own fields. Match.played_at, when set, must be exactly
   a datetime whose tzinfo is exactly datetime.timezone or exactly
-  zoneinfo.ZoneInfo (standard library code with no instance __dict__,
-  whose offsets come from the tz database), with an offset that is
-  exactly a timedelta. Any other tzinfo, a subclass of either included,
-  raises InvalidMatchError: the engine reads only the UTC instant and
-  offset, so convert one with
-  played_at.astimezone(timezone(played_at.utcoffset())), which keeps both
-  and so the ledger digest. Where an earlier release converts a number
+  zoneinfo.ZoneInfo (standard library C code that runs no caller code;
+  its offsets come from its tz data, the tz database or the file given to
+  ZoneInfo.from_file), with an offset that is exactly a timedelta of less
+  than a day. On a Python build that uses the pure Python zoneinfo
+  fallback, ZoneInfo instances have a __dict__ and are rejected. Any
+  other tzinfo, a subclass of either included, and a timezone built from
+  a timedelta subclass raise InvalidMatchError: the engine reads only the
+  UTC instant and offset, so convert one with
+  played_at.astimezone(timezone(timedelta(
+  seconds=played_at.utcoffset().total_seconds()))), which gives plain
+  values with the same instant and offset, and so the same ledger
+  digest. Where an earlier release converts a number
   to its plain value (Config numbers and mappings, seed state numbers,
   ExternalRatingSnapshot numbers, and snapshot numbers, issue #107), that
   conversion stays. replay and the evaluation functions read the matches
@@ -1852,8 +1857,8 @@ class Match:
     exactly a date; when played_at is not None or exactly a datetime, or
     its tzinfo is set and not exactly datetime.timezone or exactly
     zoneinfo.ZoneInfo (a subclass of either, or a custom tzinfo, is
-    rejected: convert one with played_at.astimezone(timezone(
-    played_at.utcoffset()))); or when sequence or best_of is not exactly
+    rejected: convert one with played_at.astimezone(timezone(timedelta(
+    seconds=played_at.utcoffset().total_seconds())))); or when sequence or best_of is not exactly
     an int (a bool, float, or int subclass is rejected). games and each
     game in it must be exactly a tuple or list, and each score exactly an
     int (a subclass of any of these is rejected). It also calls
@@ -1874,8 +1879,8 @@ class Match:
 
     # Order of play within a day. played_on is the calendar date at the
     # venue. played_at must be timezone-aware, with exactly a
-    # datetime.timezone as its tzinfo, and fall on played_on; send it
-    # when known. Within one played_on, untimed matches come first, then
+    # datetime.timezone or exactly a zoneinfo.ZoneInfo as its tzinfo, and
+    # fall on played_on; send it when known. Within one played_on, untimed matches come first, then
     # timed ones by UTC instant; sequence (for example, round number) and
     # then match_id break ties.
     played_at: datetime | None = None
@@ -2010,8 +2015,7 @@ class Match:
             if zone is not None and not _is_plain_zone(zone):
                 raise InvalidMatchError(
                     "played_at tzinfo must be exactly datetime.timezone or zoneinfo.ZoneInfo, "
-                    f"not {_type_name(zone)}; convert with "
-                    "played_at.astimezone(timezone(played_at.utcoffset()))"
+                    f"not {_type_name(zone)}; convert with {_PLAYED_AT_RECIPE}"
                 )
             # An exact timezone keeps the timedelta it was built with, and a
             # timedelta subclass runs its own methods in the digest and the
@@ -2029,23 +2033,33 @@ class Match:
                     ) from None
                 if type(offset) is not timedelta:
                     raise InvalidMatchError(
-                        f"played_at offset must be exactly a timedelta, not {_type_name(offset)}"
+                        f"played_at offset must be exactly a timedelta, not {_type_name(offset)}; "
+                        f"convert with {_PLAYED_AT_RECIPE}"
                     )
         for name, number in (("sequence", self.sequence), ("best_of", self.best_of)):
             if type(number) is not int:
                 raise InvalidMatchError(f"{name} must be an int, not {_type_name(number)}")
 
 
+# The conversion a rejected played_at message gives: an exact timezone of a
+# plain timedelta with the same instant and offset, so the same digest.
+_PLAYED_AT_RECIPE = (
+    "played_at.astimezone(timezone(timedelta(seconds=played_at.utcoffset().total_seconds())))"
+)
+
+
 def _is_plain_zone(zone: object) -> bool:
     """
     True for exactly a datetime.timezone, or exactly a zoneinfo.ZoneInfo with no instance __dict__.
 
-    Both are standard library code whose utcoffset runs no caller code; a
-    ZoneInfo's offsets come from the tz database. Any other tzinfo,
-    a subclass of either included, can run its own code while the engine
-    reads the offset. On CPython ZoneInfo is a C type with no instance
-    __dict__; the check guards a pure Python fallback, where an instance
-    attribute could hide utcoffset.
+    Both are standard library C code whose utcoffset runs no caller code;
+    a ZoneInfo's offsets come from its tz data (the tz database, or the
+    file given to ZoneInfo.from_file). Any other tzinfo, a subclass of
+    either included, can run its own code while the engine reads the
+    offset. On CPython ZoneInfo is a C type with no instance __dict__. On
+    a Python build that uses the pure Python zoneinfo fallback, ZoneInfo
+    instances have a __dict__ and are rejected, since an instance
+    attribute there could hide utcoffset.
     """
     if type(zone) is timezone:
         return True
