@@ -1134,7 +1134,8 @@ class Config:
         # an equal key prints or whether JSON can hold it.
         # One read of each caller's mapping, as (key, plain value) pairs;
         # every check below and the stored copy read these pairs, never the
-        # caller's mapping, and no key is hashed before its own checks.
+        # caller's mapping, and no game length key is hashed before it is
+        # converted.
         pairs: dict[str, list[tuple[object, object]]] = {}
         for name in _CONFIG_MAPPING_FIELDS:
             value = getattr(self, name)
@@ -4356,7 +4357,8 @@ class RatingEngine:
         reliability between 0 and 100, nonnegative int counts no larger
         than 2**63 - 1 (an int or float subclass where a number is allowed,
         or an int subclass for a count, is checked and stored as the plain
-        int or float of its own value), replay_info present exactly when calculated_as_of
+        int or float of its own value, except net_rating_created, which
+        must be exactly a float), replay_info present exactly when calculated_as_of
         is and consistent with it (its net_rating_created a finite float,
         not a negative zero, for every RatingFormat, 0.0 for every format when matches_counted
         is 0 and for a format in which no player has a played state),
