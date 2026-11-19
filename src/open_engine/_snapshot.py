@@ -556,19 +556,16 @@ def _check_inherited_live_updates(
             )
 
 
-def _check_resumable(snap: _Snapshot, paths: Mapping[str, str]) -> None:
+def _check_resumable_dates(snap: _Snapshot, paths: Mapping[str, str], as_of: date) -> None:
     """
-    Raise SnapshotError unless a resumable snapshot is consistent with its replay.
+    _check_resumable's first pass: nothing after as_of, and the per-player rules.
 
-    A replay never records anything dated after its as_of, and it considers
-    and counts exactly the rows behind its digests and processed ids. A
-    live engine can hold later dates, so only resumable snapshots are held
-    to this.
+    For each player in order: a player with a played state is in
+    ledger_player_ids; then, per state, initial_source_date, last_played,
+    and rd_as_of are not after as_of, inherited_live_updates is 0, and no
+    partner or opponent date is after as_of. Then no self_reported_log
+    date is after as_of.
     """
-    as_of = snap.calculated_as_of
-    info = snap.replay_info
-    if as_of is None or info is None:
-        raise SnapshotError("snapshot.resumable must be false when calculated_as_of is null")
 
     def check(on: date | None, path: str) -> None:
         if on is not None and on > as_of:
@@ -596,6 +593,23 @@ def _check_resumable(snap: _Snapshot, paths: Mapping[str, str]) -> None:
     for index, dates in enumerate(snap.self_reported_log.values()):
         for position, on in enumerate(dates):
             check(on, f"snapshot.self_reported_log[{index}].dates[{position}]")
+
+
+def _check_resumable(snap: _Snapshot, paths: Mapping[str, str]) -> None:
+    """
+    Raise SnapshotError unless a resumable snapshot is consistent with its replay.
+
+    A replay never records anything dated after its as_of, and it considers
+    and counts exactly the rows behind its digests and processed ids. A
+    live engine can hold later dates, so only resumable snapshots are held
+    to this.
+    """
+    as_of = snap.calculated_as_of
+    info = snap.replay_info
+    if as_of is None or info is None:
+        raise SnapshotError("snapshot.resumable must be false when calculated_as_of is null")
+
+    _check_resumable_dates(snap, paths, as_of)
     for player_id, player in snap.players.items():
         for fmt in sorted(player.ratings, key=lambda f: f.value):
             state = player.ratings[fmt]
