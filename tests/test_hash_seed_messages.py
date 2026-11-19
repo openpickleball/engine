@@ -184,7 +184,7 @@ def test_scoring_type_str_subclass_is_rejected_before_its_code_runs() -> None:
     formats = frozenset({(CountingStr("side_out"), 11), (ScoringType.RALLY, 11)})
     calls.clear()
     with pytest.raises(ConfigError, match=r"entries must be \(scoring type, whole number\) pairs"):
-        Config(allowed_game_formats=formats)
+        Config(allowed_game_formats=formats)  # type: ignore[arg-type]
     assert calls == []
 
 
@@ -194,7 +194,7 @@ def test_formats_claiming_frozenset_by_class_property_are_rejected_unread() -> N
     calls: list[str] = []
 
     class ClaimsFrozenset:
-        @property
+        @property  # type: ignore[misc]
         def __class__(self) -> type:
             calls.append("__class__")
             return frozenset
