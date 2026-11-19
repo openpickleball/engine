@@ -979,9 +979,11 @@ class Config:
     Mapping fields are stored as read-only copies whose values must be
     finite numbers, and allowed_game_formats as a frozenset of (scoring
     type, whole number) pairs. Keys and pairs are stored as their own
-    types: a ScoringType or MatchType key given as its str value becomes
-    the enum member, and an int subclass becomes the plain int of its own
-    value (not what its __int__ returns). Changing
+    types: a ScoringType or MatchType key given as its exact str value
+    becomes the enum member (a str subclass, or a non-member object of the
+    enum's type, raises ConfigError; each key is read once), and an int
+    subclass becomes the plain int of its own value (not what its __int__
+    returns). Changing
     the dict or set a config was built from does not change the config,
     and changing the config's own raises
     TypeError. Two configs are equal exactly when their fingerprint payloads
@@ -2652,7 +2654,8 @@ def expected_point_share(team_a_rating: float, team_b_rating: float, scale: floa
     Expected fraction of total points won by team A.
 
     Raises EvaluationError unless each argument is exactly an int or a
-    float (not a bool or a subclass).
+    float (not a bool or a subclass) that is finite as a float, and when
+    the rating difference divided by scale is too large to compute.
     """
     for name, value in (
         ("team_a_rating", team_a_rating),
@@ -2762,10 +2765,12 @@ def reliability(state: RatingState, cfg: Config, as_of: date) -> float:
     measured at.
 
     Raises EvaluationError unless state is exactly a RatingState whose rd
-    is exactly an int or float, rd_as_of None or exactly a date, and
-    partners and opponents exactly dicts whose values are exactly dates;
-    ConfigError unless cfg is exactly a Config with only its fields; and
-    ReferenceDateError unless as_of is exactly a date.
+    is exactly an int or float that is finite as a float, rd_as_of None or
+    exactly a date, and partners and opponents exactly dicts with exactly
+    str keys and exactly date values; ConfigError unless cfg is exactly a
+    Config with only its fields; and ReferenceDateError unless as_of is
+    exactly a date. An rd too large to inflate for inactivity raises
+    EvaluationError too, instead of OverflowError.
     """
     _check_reliability_state(state)
     _require_config(cfg)

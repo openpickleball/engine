@@ -161,6 +161,11 @@ Output dataclasses (`MatchResult`, `PlayerSummary`, `ReplayInfo`, `EvaluationRep
   - `reliability` needs exact str keys in `partners` and `opponents`.
   - Rejection messages name a wrong-typed value's type instead of its repr. `tests/test_exact_identity_types_review.py::test_from_snapshot_rejects_a_format_key_subclass` pinned a str subclass key's repr and now expects the type name.
   - `fit_scale` checks `mode`, `scoring`, `burn_in_matches`, `score_from`, and `anchor` before it builds a trial config, so `fit_scale(low=0, mode="bad")` now raises `EvaluationError`, not `ConfigError`.
+- Second review (red tests in `tests/test_exact_input_review2.py`):
+  - `Config` enum mapping keys are converted once, from a member or an exact str. A str subclass raises `ConfigError` ("has an unknown key"), and any other key counts as missing ("needs a value for every ..."). This reverses issue #107's conversion of a lookalike key; `tests/test_config_checks_review.py::test_a_lookalike_scoring_key_is_stored_as_the_enum` became `test_a_lookalike_scoring_key_is_rejected`. `allowed_game_formats` entries in `Config(...)` keep their existing conversion (not in the review's scope).
+  - Type names in messages are read through `type.__dict__["__name__"]` (`winprob._type_name`), so a metaclass property never runs.
+  - `game_win_probability`, `expected_point_share`, and `reliability` turn an `OverflowError` from their arithmetic into `EvaluationError`; no result changes for inputs that computed before.
+  - `Config.from_dict` reads nested data only as exact dicts, lists, tuples, strs, and ints, and its messages name a wrong-typed value's type. A from_dict game length key that is an int subclass is now rejected.
 
 ## Proof
 
