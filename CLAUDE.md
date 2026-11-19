@@ -93,7 +93,7 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`, which calls `test.yml` 
 
 - `README.md`: public overview, setup, quick start, and the demonstration status.
 - `CHANGELOG.md`: Keep a Changelog format, Semantic Versioning. Every change to behavior, the public API, or `Config` adds an entry under `## [Unreleased]` in the same pull request.
-- `docs/model.md`: the rating model, each equation naming the function it comes from, and the `Config` parameter table.
+- `docs/model.md`: the rating model, each equation naming the function it comes from, and the `Config` parameter table. Keep it true of the code: a pull request that changes the math of ratings, reliability, win probability, evaluation, or calibration fits, adds or changes a `Config` field or default, or changes a named model constant in `engine.py` or `winprob.py` updates `docs/model.md` in the same pull request.
 - `docs/plans/`: one plan per issue, named `YYYY-MM-DD-issue-<N>-<slug>.md`, committed before the work it describes.
 - Organization-wide policy lives in the `openpickleball/.github` repository: charter, governance, roadmap, contributing guide, security policy, licensing. A local checkout may exist at `../OPEN-pickleball`.
 - The backend may be checked out at `../OPEN-backend`. Its `CONTEXT.md` holds the domain language (Match, Ledger, Replay, Rating Format, Reliability). Use the same terms here.
