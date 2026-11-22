@@ -21,7 +21,7 @@ from open_engine import (
     ScoringType,
 )
 
-DEFAULT_FINGERPRINT = "17f2981186edf96c"
+DEFAULT_FINGERPRINT = "40d9d88d4ae408cd"
 LIMIT = 2.0**511
 MAX_DAYS = (date.max - date.min).days
 HUGE_INT = 10**5000
@@ -69,6 +69,7 @@ BOOL_FIELDS = (
     "category_feeds_parent",
 )
 STR_FIELDS = ("version",)
+OPTIONAL_STR_FIELDS = ("params_version",)
 OTHER_FIELDS = (
     "scale_by_scoring",
     "win_calibration_by_scoring",
@@ -98,6 +99,7 @@ BAD_WHOLE = ["x", None, True, 1.0, Decimal("1"), HUGE_INT]
 BAD_OPTIONAL = ["x", True, Decimal("1"), math.nan, math.inf, HUGE_INT]
 BAD_BOOLS = [1, 0, "yes", None]
 BAD_STRS = [1, None, b"0.3.0"]
+BAD_OPTIONAL_STRS = [1, b"v1", True]
 
 
 def _label(value: object) -> str:
@@ -124,6 +126,7 @@ TYPE_CASES = (
     + _cases(OPTIONAL_NUMBER_FIELDS, BAD_OPTIONAL, "None or a finite number")
     + _cases(BOOL_FIELDS, BAD_BOOLS, "a bool")
     + _cases(STR_FIELDS, BAD_STRS, "a str")
+    + _cases(OPTIONAL_STR_FIELDS, BAD_OPTIONAL_STRS, "None or a str")
 )
 
 
@@ -137,6 +140,7 @@ def test_every_field_has_a_kind() -> None:
         + OPTIONAL_NUMBER_FIELDS
         + BOOL_FIELDS
         + STR_FIELDS
+        + OPTIONAL_STR_FIELDS
         + OTHER_FIELDS
     )
     assert sorted(kinds) == sorted(f.name for f in fields(Config))

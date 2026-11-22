@@ -36,7 +36,7 @@ from ._validation import (
 # Snapshots
 # ---------------------------------------------------------------------------
 
-SNAPSHOT_VERSION = 8
+SNAPSHOT_VERSION = 9
 
 _TOP_KEYS = frozenset(
     {
@@ -64,6 +64,8 @@ _REPLAY_INFO_KEYS = frozenset(
         "as_of",
         "config_version",
         "config_fingerprint",
+        "params_version",
+        "parameter_fingerprint",
         "matches_considered",
         "matches_counted",
         "net_rating_created",
@@ -689,8 +691,18 @@ def _snap_log_entry(value: object, path: str) -> tuple[MatchupKey, list[date]]:
 
 
 def _snap_replay_info(
-    value: object, calculated_as_of: date | None, version: str, fingerprint: str
+    value: object, calculated_as_of: date | None, version: str, fingerprint: str, cfg: Config
 ) -> ReplayInfo | None:
+    """
+    replay_info read from a snapshot, null exactly when calculated_as_of is.
+
+    In order: as_of equals calculated_as_of; config_version and
+    config_fingerprint equal the header's; params_version is a str or
+    null, then equals cfg's; parameter_fingerprint is a str, then equals
+    cfg's parameter_fingerprint(); then the counts and net_rating_created.
+    The label and the parameter fingerprint are checked against the given
+    config, never taken from the snapshot.
+    """
     path = "snapshot.replay_info"
     if calculated_as_of is None:
         if value is not None:
@@ -705,6 +717,14 @@ def _snap_replay_info(
         raise SnapshotError(f"{path}.config_version must equal config_version")
     if raw["config_fingerprint"] != fingerprint:
         raise SnapshotError(f"{path}.config_fingerprint must equal config_fingerprint")
+    params_version = _snap_opt_str(raw["params_version"], f"{path}.params_version")
+    if params_version != cfg.params_version:
+        raise SnapshotError(f"{path}.params_version must equal the Config's params_version")
+    parameter_fingerprint = _snap_str(raw["parameter_fingerprint"], f"{path}.parameter_fingerprint")
+    if parameter_fingerprint != cfg.parameter_fingerprint():
+        raise SnapshotError(
+            f"{path}.parameter_fingerprint must equal the Config's parameter_fingerprint"
+        )
     considered = _snap_count(raw["matches_considered"], f"{path}.matches_considered")
     counted = _snap_count(raw["matches_counted"], f"{path}.matches_counted")
     if counted > considered:
@@ -725,7 +745,16 @@ def _snap_replay_info(
         if counted == 0 and value != 0.0:
             raise SnapshotError(f"{created_path}.{fmt.value} must be 0.0 when matches_counted is 0")
         created[fmt] = value
-    return ReplayInfo(calculated_as_of, version, fingerprint, considered, counted, created)
+    return ReplayInfo(
+        as_of=calculated_as_of,
+        config_version=version,
+        config_fingerprint=fingerprint,
+        params_version=params_version,
+        parameter_fingerprint=parameter_fingerprint,
+        matches_considered=considered,
+        matches_counted=counted,
+        net_rating_created=created,
+    )
 
 
 def _check_net_rating_created(info: ReplayInfo | None, players: Mapping[str, Player]) -> None:
@@ -1310,7 +1339,8 @@ def _snap_header(
 
     In order: engine_version is a str, config_version and
     config_fingerprint are strs equal to cfg's, then calculated_as_of,
-    then replay_info.
+    then replay_info, whose params_version and parameter_fingerprint must
+    equal cfg's.
     """
     _snap_str(raw["engine_version"], "snapshot.engine_version")
     config_version = _snap_str(raw["config_version"], "snapshot.config_version")
@@ -1327,7 +1357,7 @@ def _snap_header(
         )
     calculated_as_of = _snap_opt_date(raw["calculated_as_of"], "snapshot.calculated_as_of")
     replay_info = _snap_replay_info(
-        raw["replay_info"], calculated_as_of, config_version, fingerprint
+        raw["replay_info"], calculated_as_of, config_version, fingerprint, cfg
     )
     return calculated_as_of, replay_info
 

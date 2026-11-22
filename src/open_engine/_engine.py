@@ -249,7 +249,7 @@ class RatingEngine:
 
     def to_snapshot(self) -> dict[str, object]:
         """
-        The engine's whole state as JSON-safe data (schema version 8).
+        The engine's whole state as JSON-safe data (schema version 9).
 
         json.dumps(snapshot, allow_nan=False) works with no custom encoder,
         and RatingEngine.from_snapshot rebuilds the engine from it, or from

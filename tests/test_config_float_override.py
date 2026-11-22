@@ -91,7 +91,7 @@ def test_an_in_range_int_whose_float_lies_keeps_main_fingerprint_and_ratings() -
         )
     )
     # Measured on origin/main (3845bec).
-    assert cfg.fingerprint() == "016c770446d6a96a"
+    assert cfg.fingerprint() == "c650c26b65339a9b"
     assert doubles.effective_weight == 2.0
     assert doubles.deltas == {"a": 0.44444, "b": 0.44444, "c": -0.44444, "d": -0.44444}
     assert singles.deltas == {"a": 0.44444, "c": -0.44444}

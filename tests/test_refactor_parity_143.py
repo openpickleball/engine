@@ -475,7 +475,7 @@ RECORD_EXPECTED: dict[str, list[str]] = {
         "ok 3adc3c2129c3b164",
         "ok d5aefdc6e0ab7575",
         "ok 36a3e0e218a647a2",
-        "9525e5f050cd49cb",
+        "aeda9062f14eb3c0",
     ],
     "default": [
         "ok a208a4118c6d0e0a",
@@ -554,7 +554,7 @@ RECORD_EXPECTED: dict[str, list[str]] = {
         "ok 3adc3c2129c3b164",
         "ok d5aefdc6e0ab7575",
         "ok 36a3e0e218a647a2",
-        "9525e5f050cd49cb",
+        "aeda9062f14eb3c0",
     ],
     "nofeed": [
         "ok a208a4118c6d0e0a",
@@ -633,7 +633,7 @@ RECORD_EXPECTED: dict[str, list[str]] = {
         "ok b8a90b932fe6994e",
         "ok 2d2d0959194459a8",
         "ok 36a3e0e218a647a2",
-        "6ba6b605710ce23a",
+        "ef0c894ca1f04446",
     ],
     "strict": [
         "ok 5199f201fc6d9676",
@@ -712,7 +712,7 @@ RECORD_EXPECTED: dict[str, list[str]] = {
         "ok 3adc3c2129c3b164",
         "ok 5199f201fc6d9676",
         "ok 36a3e0e218a647a2",
-        "801cdc59400fd933",
+        "d1c5dbae6013cc60",
     ],
 }
 
@@ -1793,7 +1793,7 @@ SNAPSHOT_EXPECTED: dict[str, str] = {
     "snapshot.players[9].ratings.singles.opponents['q8'] "
     "is after calculated_as_of in a "
     "resumable snapshot",
-    "default resumable late partner": "engine 8acfa891cb92d093 | engine 7b057f7eda9d66a9",
+    "default resumable late partner": "engine e55456f67d9b13d9 | engine 1578ad3ec35c3201",
     "default resumable late partner + late inherited": "SnapshotError: "
     "snapshot.players[9].ratings.singles.inherited_live_updates "
     "must be 0 unless the state is "
@@ -3907,7 +3907,7 @@ SNAPSHOT_EXPECTED: dict[str, str] = {
     "duplicate is rejected "
     "before any rating is "
     "read",
-    "strict rejections reserved singles": "engine f10e8842c3dee303 | engine 27c090dd02dadfe2",
+    "strict rejections reserved singles": "engine d09359f8d01ba8cc | engine 3d568420f1cc419e",
     "strict rejections reserved singles + not in ledger_player_ids": "SnapshotError: "
     "snapshot.seed_sensitive_rejections['m000'].players "
     "names 'q0', which "
@@ -4147,7 +4147,7 @@ SNAPSHOT_EXPECTED: dict[str, str] = {
     "snapshot.players[0].ratings.singles.opponents['q2'] "
     "is after calculated_as_of in a "
     "resumable snapshot",
-    "strict resumable early partner": "engine 9112a66656868710 | engine fa09ef92c4e2dac2",
+    "strict resumable early partner": "engine 4274d8bc54a48889 | engine f46474cc56477143",
     "strict resumable early partner + early inherited": "SnapshotError: "
     "snapshot.players[0].ratings.singles.inherited_live_updates "
     "must be 0 unless the state is "
@@ -4308,7 +4308,7 @@ SNAPSHOT_EXPECTED: dict[str, str] = {
     "snapshot.players[9].ratings.singles.opponents['q8'] "
     "is after calculated_as_of in a "
     "resumable snapshot",
-    "strict resumable late partner": "engine 9112a66656868710 | engine fa09ef92c4e2dac2",
+    "strict resumable late partner": "engine 4274d8bc54a48889 | engine f46474cc56477143",
     "strict resumable late partner + late inherited": "SnapshotError: "
     "snapshot.players[9].ratings.singles.inherited_live_updates "
     "must be 0 unless the state is "

@@ -205,6 +205,8 @@ def _replay(
         as_of=as_of,
         config_version=engine.cfg.version,
         config_fingerprint=engine.cfg.fingerprint(),
+        params_version=engine.cfg.params_version,
+        parameter_fingerprint=engine.cfg.parameter_fingerprint(),
         matches_considered=considered,
         matches_counted=counted,
         net_rating_created=created,

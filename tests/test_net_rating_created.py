@@ -104,13 +104,13 @@ def test_replay_info_stays_hashable() -> None:
 
 
 def test_replay_info_built_positionally_defaults_to_zero() -> None:
-    info = ReplayInfo(FEEDER_AS_OF, "v", "f", 0, 0)
+    info = ReplayInfo(FEEDER_AS_OF, "v", "f", None, "p", 0, 0)
     assert dict(info.net_rating_created) == dict.fromkeys(RatingFormat, 0.0)
 
 
 def test_replay_info_copies_the_mapping() -> None:
     given = dict.fromkeys(RatingFormat, 0.0)
-    info = ReplayInfo(FEEDER_AS_OF, "v", "f", 1, 1, given)
+    info = ReplayInfo(FEEDER_AS_OF, "v", "f", None, "p", 1, 1, given)
     given[S] = 9.0
     assert info.net_rating_created[S] == 0.0
 

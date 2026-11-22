@@ -404,12 +404,12 @@ def test_evaluate_with_a_zero_game_forfeit_between_established_players(mode: str
 # -- criterion 7: snapshot version ------------------------------------------------
 
 
-def test_snapshot_version_is_8() -> None:
-    assert _played_engine().to_snapshot()["snapshot_version"] == 8
+def test_snapshot_version_is_9() -> None:
+    assert _played_engine().to_snapshot()["snapshot_version"] == 9
 
 
 def test_version_2_snapshot_is_refused() -> None:
     snapshot = copy.deepcopy(_played_engine().to_snapshot())
     snapshot["snapshot_version"] = 2
-    with pytest.raises(SnapshotError, match="snapshot_version must be 8"):
+    with pytest.raises(SnapshotError, match="snapshot_version must be 9"):
         RatingEngine.from_snapshot(snapshot)

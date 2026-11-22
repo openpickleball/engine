@@ -172,7 +172,7 @@ def test_config_without_overflow_still_builds_and_rates(build: object) -> None:
 
 
 def test_default_fingerprint_is_unchanged() -> None:
-    assert Config().fingerprint() == "17f2981186edf96c"
+    assert Config().fingerprint() == "40d9d88d4ae408cd"
 
 
 # Configs that build both before and after the fix, int and float.

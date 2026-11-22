@@ -72,9 +72,10 @@ def _snapshot_digest(engine: RatingEngine) -> str:
 
 
 def _config_digest(cfg: Config) -> str:
-    """A digest of every parameter but version, which changes with a release."""
+    """A digest of every parameter but the two labels, which change no rating."""
     data = cfg.to_dict()
     data.pop("version")
+    data.pop("params_version")
     return _digest(data)
 
 
@@ -451,7 +452,7 @@ LEDGER_EXPECTED: dict[str, list[str]] = {
         "ok 44d27dbfd532fdc4",
         "ok a0ce0ebf305b48c2",
         "ok aa428d91eb84e1a6",
-        "6cc4665ee08f8846",
+        "9608016465abd36f",
     ],
     "nofeed": [
         "ok 4443ad1e39f5b45f",
@@ -465,7 +466,7 @@ LEDGER_EXPECTED: dict[str, list[str]] = {
         "ok cae2a6fa5e2f0a91",
         "ok a0ce0ebf305b48c2",
         "ok e6fb962f2ef35827",
-        "32fd2be78acec855",
+        "fb5dba562b66da86",
     ],
     "strict": [
         "ok 4443ad1e39f5b45f",
@@ -479,7 +480,7 @@ LEDGER_EXPECTED: dict[str, list[str]] = {
         "ok 60a5ec004d6a1c03",
         "ok a0ce0ebf305b48c2",
         "ok 562cdf7d93bb0811",
-        "770bc448043ad72e",
+        "a5e140ade9aa1b9a",
     ],
 }
 
@@ -493,9 +494,9 @@ def test_live_records_keep_their_results(cfg_name: str) -> None:
 
 
 REPLAY_EXPECTED: dict[str, str] = {
-    "default": "07a10ebd239d8f76 07a10ebd239d8f76",
-    "nofeed": "0d3fdab8f845a6da 0d3fdab8f845a6da",
-    "strict": "3c7105c3c64b64f7 3c7105c3c64b64f7",
+    "default": "646b768729ff2bdd 646b768729ff2bdd",
+    "nofeed": "03888d162d9428ac 03888d162d9428ac",
+    "strict": "0b260d1cd2d968a9 0b260d1cd2d968a9",
 }
 
 
@@ -583,151 +584,151 @@ SEED_EXPECTED: dict[str, dict[str, str]] = {
     "default": {
         "blank evidence then rating type": "InvalidSeedError: External snapshot "
         "evidence_reference must not be blank "
-        "22dc2b7dd7e2de51",
+        "5bd126f5e0123b0c",
         "blank external id then blank evidence": "InvalidSeedError: External "
         "snapshot external_player_id "
         "must not be blank "
-        "22dc2b7dd7e2de51",
+        "5bd126f5e0123b0c",
         "blank source then reserved source": "InvalidSeedError: External snapshot "
         "source must not be blank "
-        "22dc2b7dd7e2de51",
+        "5bd126f5e0123b0c",
         "category then seed sensitive": "InvalidSeedError: Cannot seed a rating "
         "that a counted mixed_doubles match for "
-        "this player depends on 22dc2b7dd7e2de51",
+        "this player depends on 5bd126f5e0123b0c",
         "date then source type": "InvalidSeedError: External snapshot captured_on "
-        "must be a date 22dc2b7dd7e2de51",
+        "must be a date 5bd126f5e0123b0c",
         "derived state then counted match": "InvalidSeedError: Cannot replace a "
         "rating derived from OPEN overall "
-        "doubles 22dc2b7dd7e2de51",
-        "doubles seed refreshes category": "ok dd787c82c18debe7 b55e674fb3ec72c3",
+        "doubles 5bd126f5e0123b0c",
+        "doubles seed refreshes category": "ok dd787c82c18debe7 c73606fb2bb702a6",
         "evidence type then blank source": "InvalidSeedError: External snapshot "
         "evidence_reference must be a str or "
-        "None 22dc2b7dd7e2de51",
+        "None 5bd126f5e0123b0c",
         "external id type then evidence type": "InvalidSeedError: External "
         "snapshot external_player_id must "
-        "be a str or None 22dc2b7dd7e2de51",
+        "be a str or None 5bd126f5e0123b0c",
         "flag then snapshot type": "InvalidSeedError: replace_unplayed_seed must "
-        "be a bool, not int 22dc2b7dd7e2de51",
+        "be a bool, not int 5bd126f5e0123b0c",
         "format then flag": "InvalidSeedError: rating_format must be a "
-        "RatingFormat 22dc2b7dd7e2de51",
+        "RatingFormat 5bd126f5e0123b0c",
         "frozen counted match then category": "InvalidSeedError: Cannot seed a "
         "rating format in which OPEN "
         "matches have counted for this "
-        "player 22dc2b7dd7e2de51",
+        "player 5bd126f5e0123b0c",
         "identity differs": "PlayerError: A different external identity is "
-        "already linked 22dc2b7dd7e2de51",
+        "already linked 5bd126f5e0123b0c",
         "identity linked elsewhere": "PlayerError: This external identity is "
         "already linked to another player "
-        "22dc2b7dd7e2de51",
-        "new player": "ok dd787c82c18debe7 582893def6711912",
+        "5bd126f5e0123b0c",
+        "new player": "ok dd787c82c18debe7 13cd2d5ddb52285b",
         "played rating then counted match": "InvalidSeedError: Cannot replace an "
         "OPEN rating after OPEN matches have "
-        "been processed 22dc2b7dd7e2de51",
-        "player id then played rating": "PlayerError: player_id is required 22dc2b7dd7e2de51",
+        "been processed 5bd126f5e0123b0c",
+        "player id then played rating": "PlayerError: player_id is required 5bd126f5e0123b0c",
         "rating range then reliability range": "InvalidSeedError: External rating "
         "is outside the configured scale "
-        "22dc2b7dd7e2de51",
+        "5bd126f5e0123b0c",
         "rating type then reliability type": "InvalidSeedError: External rating "
         "must be a finite number "
-        "22dc2b7dd7e2de51",
+        "5bd126f5e0123b0c",
         "reliability range then player id": "InvalidSeedError: External "
         "reliability must be between 0 and "
-        "100 22dc2b7dd7e2de51",
+        "100 5bd126f5e0123b0c",
         "reliability type then rating range": "InvalidSeedError: External "
         "reliability must be a finite "
-        "number 22dc2b7dd7e2de51",
+        "number 5bd126f5e0123b0c",
         "replace flag then identity": "InvalidSeedError: A rating already exists; "
         "explicitly allow replacing an unplayed "
-        "seed 22dc2b7dd7e2de51",
-        "replace unplayed seed": "ok 4d91663e649d1b30 5a7c57398c06c89b",
+        "seed 5bd126f5e0123b0c",
+        "replace unplayed seed": "ok 4d91663e649d1b30 864fb719ee78dff7",
         "reserved source then blank external id": "InvalidSeedError: External "
         "snapshot source must not start "
-        "with open_ 22dc2b7dd7e2de51",
+        "with open_ 5bd126f5e0123b0c",
         "seed sensitive then replace flag": "InvalidSeedError: Cannot seed a "
         "rating format in which OPEN matches "
         "have counted for this player "
-        "22dc2b7dd7e2de51",
+        "5bd126f5e0123b0c",
         "snapshot type then player id": "InvalidSeedError: snapshot must be an "
-        "ExternalRatingSnapshot 22dc2b7dd7e2de51",
+        "ExternalRatingSnapshot 5bd126f5e0123b0c",
         "source type then external id type": "InvalidSeedError: External snapshot "
         "source must be a str "
-        "22dc2b7dd7e2de51",
+        "5bd126f5e0123b0c",
     },
     "strict": {
         "blank evidence then rating type": "InvalidSeedError: External snapshot "
         "evidence_reference must not be blank "
-        "a3281978f97e2062",
+        "97220b4d62c9e4f6",
         "blank external id then blank evidence": "InvalidSeedError: External "
         "snapshot external_player_id must "
-        "not be blank a3281978f97e2062",
+        "not be blank 97220b4d62c9e4f6",
         "blank source then reserved source": "InvalidSeedError: External snapshot "
         "source must not be blank "
-        "a3281978f97e2062",
+        "97220b4d62c9e4f6",
         "category then seed sensitive": "InvalidSeedError: Cannot seed a rating "
         "that a counted mixed_doubles match for "
-        "this player depends on a3281978f97e2062",
+        "this player depends on 97220b4d62c9e4f6",
         "date then source type": "InvalidSeedError: External snapshot captured_on "
-        "must be a date a3281978f97e2062",
+        "must be a date 97220b4d62c9e4f6",
         "derived state then counted match": "InvalidSeedError: Cannot replace a "
         "rating derived from OPEN overall "
-        "doubles a3281978f97e2062",
-        "doubles seed refreshes category": "ok dd787c82c18debe7 e54e313eecdf42da",
+        "doubles 97220b4d62c9e4f6",
+        "doubles seed refreshes category": "ok dd787c82c18debe7 31871cc0027ac857",
         "evidence type then blank source": "InvalidSeedError: External snapshot "
         "evidence_reference must be a str or "
-        "None a3281978f97e2062",
+        "None 97220b4d62c9e4f6",
         "external id type then evidence type": "InvalidSeedError: External "
         "snapshot external_player_id must "
-        "be a str or None a3281978f97e2062",
+        "be a str or None 97220b4d62c9e4f6",
         "flag then snapshot type": "InvalidSeedError: replace_unplayed_seed must "
-        "be a bool, not int a3281978f97e2062",
+        "be a bool, not int 97220b4d62c9e4f6",
         "format then flag": "InvalidSeedError: rating_format must be a "
-        "RatingFormat a3281978f97e2062",
+        "RatingFormat 97220b4d62c9e4f6",
         "frozen counted match then category": "InvalidSeedError: Cannot seed: a "
         "rejected doubles match that named "
         "this player (m20) could count with "
         "a new seed; a new seed for this "
         "player needs a full replay from "
-        "corrected seeds a3281978f97e2062",
+        "corrected seeds 97220b4d62c9e4f6",
         "identity differs": "PlayerError: A different external identity is already "
-        "linked a3281978f97e2062",
+        "linked 97220b4d62c9e4f6",
         "identity linked elsewhere": "PlayerError: This external identity is "
         "already linked to another player "
-        "a3281978f97e2062",
-        "new player": "ok dd787c82c18debe7 3ea718984a4caf07",
+        "97220b4d62c9e4f6",
+        "new player": "ok dd787c82c18debe7 25f7b5fd2569d7ec",
         "played rating then counted match": "InvalidSeedError: Cannot replace an "
         "OPEN rating after OPEN matches have "
-        "been processed a3281978f97e2062",
-        "player id then played rating": "PlayerError: player_id is required a3281978f97e2062",
+        "been processed 97220b4d62c9e4f6",
+        "player id then played rating": "PlayerError: player_id is required 97220b4d62c9e4f6",
         "rating range then reliability range": "InvalidSeedError: External rating "
         "is outside the configured scale "
-        "a3281978f97e2062",
+        "97220b4d62c9e4f6",
         "rating type then reliability type": "InvalidSeedError: External rating "
         "must be a finite number "
-        "a3281978f97e2062",
+        "97220b4d62c9e4f6",
         "reliability range then player id": "InvalidSeedError: External "
         "reliability must be between 0 and 100 "
-        "a3281978f97e2062",
+        "97220b4d62c9e4f6",
         "reliability type then rating range": "InvalidSeedError: External "
         "reliability must be a finite number "
-        "a3281978f97e2062",
+        "97220b4d62c9e4f6",
         "replace flag then identity": "InvalidSeedError: A rating already exists; "
         "explicitly allow replacing an unplayed seed "
-        "a3281978f97e2062",
-        "replace unplayed seed": "ok 4d91663e649d1b30 a66daa713df2e6d2",
+        "97220b4d62c9e4f6",
+        "replace unplayed seed": "ok 4d91663e649d1b30 31cd4cf6b2304d9a",
         "reserved source then blank external id": "InvalidSeedError: External "
         "snapshot source must not start "
-        "with open_ a3281978f97e2062",
+        "with open_ 97220b4d62c9e4f6",
         "seed sensitive then replace flag": "InvalidSeedError: Cannot seed: a "
         "rejected doubles match that named "
         "this player (m20) could count with a "
         "new seed; a new seed for this player "
         "needs a full replay from corrected "
-        "seeds a3281978f97e2062",
+        "seeds 97220b4d62c9e4f6",
         "snapshot type then player id": "InvalidSeedError: snapshot must be an "
-        "ExternalRatingSnapshot a3281978f97e2062",
+        "ExternalRatingSnapshot 97220b4d62c9e4f6",
         "source type then external id type": "InvalidSeedError: External snapshot "
         "source must be a str "
-        "a3281978f97e2062",
+        "97220b4d62c9e4f6",
     },
 }
 
@@ -852,7 +853,7 @@ SNAPSHOT_CASES = (
     + ["verified", "verified + digests", "verified + digest value", "verified + ledger players"]
 )
 SNAPSHOT_EXPECTED: dict[str, str] = {
-    "base": "engine 3c7105c3c64b64f7",
+    "base": "engine 0b260d1cd2d968a9",
     "calculated_as_of + replay_info": "SnapshotError: snapshot.calculated_as_of must be a "
     "date in YYYY-MM-DD form",
     "config version + fingerprint": "SnapshotError: snapshot.config_version '0.0.0' does "
@@ -903,7 +904,7 @@ SNAPSHOT_EXPECTED: dict[str, str] = {
     "matches_played - verified_matches_played (1) must equal "
     "the self-reported singles matches logged for this "
     "player (0)",
-    "version + engine version": "SnapshotError: snapshot.snapshot_version must be 8, not 7",
+    "version + engine version": "SnapshotError: snapshot.snapshot_version must be 9, not 7",
 }
 
 
