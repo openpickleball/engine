@@ -165,6 +165,10 @@ Errors (every class is a `ValueError`). [Errors](https://github.com/openpickleba
 
 A match moves ratings by how the result compared with the expectation. By default, performance is a team's share of all points across the match's games. So a team can win and still lose rating, for example when it wins by less than expected. There is no floor on a winner's change, other than the rating range. See [Match performance](https://github.com/openpickleball/engine/blob/main/docs/behavior.md#match-performance) and the [model](https://github.com/openpickleball/engine/blob/main/docs/model.md#match-performance).
 
+## What a rating means
+
+A rating gap sets the share of points each team is expected to win. Under the default scale, a team rating gap of 0.5 means the higher team is expected to win about 59.8% of the points, and a gap of 1.0 about 68.9%. The default scale is an uncalibrated placeholder, so these figures can change. A new player with no seed starts at 3.5, and a rating places a player relative to the players they have played. So in singles or overall doubles, a pool where every player starts new keeps its mean near 3.5 whatever its skill, as long as its total imbalance is small. Ratings from pools that share no players are not comparable. An imported external rating only sets a starting rating, and no setting is chosen to move OPEN ratings toward an external rating. See [What a rating means](https://github.com/openpickleball/engine/blob/main/docs/model.md#what-a-rating-means).
+
 ## Match status
 
 `Match.status` says how a match ended. It is a `MatchStatus` and defaults to `COMPLETED`. A match that is not completed (a forfeit, a retirement, or an incomplete match) is never rated, but `replay` accepts the row. A status keeps a match from moving any rating, so the backend should verify a status as it verifies scores. See [Match status](https://github.com/openpickleball/engine/blob/main/docs/behavior.md#match-status) and [Match fields](https://github.com/openpickleball/engine/blob/main/docs/behavior.md#match-fields).

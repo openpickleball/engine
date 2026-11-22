@@ -16,18 +16,19 @@ In short: a rating is a performance-based Elo rating. Each match compares the sh
 4. [When a match does not count](#when-a-match-does-not-count)
 5. [Team rating](#team-rating)
 6. [Expected point share](#expected-point-share)
-7. [Match performance](#match-performance)
-8. [Evidence weight](#evidence-weight)
-9. [Inactivity](#inactivity)
-10. [K](#k)
-11. [The update](#the-update)
-12. [Categories and overall doubles](#categories-and-overall-doubles)
-13. [A worked example](#a-worked-example)
-14. [Reliability](#reliability)
-15. [Win probability](#win-probability)
-16. [Evaluation and calibration](#evaluation-and-calibration)
-17. [Parameters](#parameters)
-18. [What the model does not do](#what-the-model-does-not-do)
+7. [What a rating means](#what-a-rating-means)
+8. [Match performance](#match-performance)
+9. [Evidence weight](#evidence-weight)
+10. [Inactivity](#inactivity)
+11. [K](#k)
+12. [The update](#the-update)
+13. [Categories and overall doubles](#categories-and-overall-doubles)
+14. [A worked example](#a-worked-example)
+15. [Reliability](#reliability)
+16. [Win probability](#win-probability)
+17. [Evaluation and calibration](#evaluation-and-calibration)
+18. [Parameters](#parameters)
+19. [What the model does not do](#what-the-model-does-not-do)
 
 ## Notation
 
@@ -125,6 +126,20 @@ E = 1 / (1 + 10**x)
 ```
 
 `scale` is `cfg.scale_by_scoring[scoring]`, one value for side-out and one for rally scoring. The scale must be greater than 0: `Config` raises `ConfigError` for a scale of 0 or less, and `expected_point_share` raises `EvaluationError` for one. A rating gap equal to `scale` gives 10:1 expected point-share odds. The clamp keeps `10**x` finite for any rating range and scale. Under the default rating range and scales, `abs(x)` is at most 6 / 2.9, about 2.1, so the clamp never applies there.
+
+## What a rating means
+
+**A rating gap.** The expected point share depends only on the gap between the two team ratings, divided by the scale (`x` above). Under the default scales (2.9 for side-out and for rally scoring), a team rating gap of 0.5 means the higher team is expected to win about 59.8% of the points, and a gap of 1.0 about 68.9%. These figures come from `expected_point_share(3.75, 3.25, 2.9)` and `expected_point_share(4.0, 3.0, 2.9)`.
+
+A gap is stated as a point share, not a win probability. The chance of winning a match also depends on the game format, the number of games, and the win calibration (`cfg.win_calibration_by_scoring`). See [Win probability](#win-probability).
+
+The default scale is a placeholder, so these figures are too. A different `cfg.scale_by_scoring` changes what a gap means. `Config.fingerprint()` records the scale, so the meaning behind any replay is on record. Fixing what a gap means by declaring the scale is an open question (issue #149).
+
+**The level.** A new player with no seed starts at `cfg.default_rating` (3.5 by default). A rating places a player relative to the players they have played, directly or through others. It is not tied to an outside measure of skill. Take a pool in singles or in overall doubles where every player starts as a new player, with no seed or imported rating. After a replay, the pool's total rating in that format is `cfg.default_rating` times the number of players, plus that format's `ReplayInfo.net_rating_created`, up to float rounding. That total is the sum of `team_size * imbalance` over the counted updates (see [The update](#the-update)). So the pool's mean rating moves only through imbalance, and it stays near `cfg.default_rating` whatever the players' skill when the imbalance total is small. A category pool can differ, because a category state can start from the player's overall doubles rating (see [Starting states](#starting-states)). Ratings from two pools that share no players are not comparable: the same rating can stand for a different level in each. Matches between players of the two pools link them.
+
+**External ratings.** An imported rating is a seed only. It sets a starting rating (see [Starting states](#starting-states)). Its reliability is shown separately from OPEN-earned reliability, and it is never converted into an OPEN rating, RD, or reliability. Counted OPEN matches after the capture date then move the rating like any other (a match on or before that date freezes the player). `seed_external_rating` cannot replace a state once a counted match included the player in that format. [External seeds](behavior.md#external-seeds) holds the full rules.
+
+**No tuning toward an external rating.** No `Config` value is chosen to bring OPEN ratings closer to an external rating. A default changes only when out-of-sample prediction supports it, or for an integrity reason (manipulation resistance, determinism, provenance, or input validation).
 
 ## Match performance
 
@@ -346,7 +361,7 @@ Every `Config` field the math reads, with its default. Status says what the defa
 - **Declared**: a declared choice (OPEN policy or a modeling choice), not a calibrated one. It changes only when out-of-sample evaluation supports another value.
 - **Label**: a label or display rule only. It changes no rating, prediction, or evaluation.
 
-`Config.fingerprint()` hashes every field, and every replay records the fingerprint in its `ReplayInfo`, so the exact values behind a replay's ratings are on record.
+`Config.fingerprint()` hashes every field, and every replay records the fingerprint in its `ReplayInfo`, so the exact values behind a replay's ratings are on record. No value is chosen to bring OPEN ratings closer to an external rating (see [What a rating means](#what-a-rating-means)).
 
 | Field | Default | Role | Status |
 | --- | --- | --- | --- |
