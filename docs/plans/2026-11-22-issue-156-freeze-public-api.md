@@ -13,7 +13,7 @@ Out of scope: the demonstration status wording (issue #49, the release step) and
 ## Acceptance criteria
 
 1. `RatingEngine().self_reported_log` no longer exists; the engine keeps the log as `_self_reported_log`. The snapshot key stays `self_reported_log`, `snapshot_version` stays 9, and a snapshot round trip and resume still pass.
-2. `tests/test_api_surface.py` renders the public surface to text and compares it with `tests/api_surface.txt`: for every name in `__all__`, its kind; for functions and every public method of an exported class, the `inspect.signature` text; for dataclasses, the frozen flag and each field's name, annotation, and default in order; for enums, each member's name and value in order; for exceptions, the base classes; for `RatingEngine`, its public instance attributes on a fresh engine. The test fails with a diff when they differ, and its message says how to regenerate the file and that a changelog entry is needed.
+2. `tests/test_api_surface.py` renders the public surface to text and compares it with `tests/api_surface.txt`: for every name in `__all__`, its kind; for functions, constructors (dataclass ones included), and every public method or property of an exported class (enums included), each parameter's name, kind, annotation, and default; for dataclasses, the dataclass options and each field's name, annotation, default, and any `init` or `kw_only` setting, in order; for enums, each member's name and value in order; for exceptions, the base classes and the public attributes of an instance; for `RatingEngine`, its public instance attributes on a fresh engine; and the values of `PredictionMode`, which public signatures name but `open_engine` does not export. Two small extra tests check that every export has a block and that the package version is masked. The test fails with a diff when they differ, and its message says how to regenerate the file and that a changelog entry is needed.
 3. The rendering is deterministic across Python 3.11, 3.12, and 3.13 (no set ordering, no memory addresses in reprs).
 4. README "Public API" section states the 1.0.0 promise: what is frozen, the read attributes, and what is outside it (snapshots, rating values and default `Config` values, additions in minor releases, error message text, internal modules, cross-version pickles). The existing sentence "The API may change in any 0.x release." stays.
 5. `docs/behavior.md` gains a "Stability" section with the same promise and the ledger semantics under it (`ledger_order`'s order, validation of every row, the duplicate and conflict rules, independence from arrival order, resume equals a full replay or raises). It links to the existing sections instead of restating them.
@@ -24,7 +24,7 @@ Out of scope: the demonstration status wording (issue #49, the release step) and
 
 ## Files that change
 
-- `src/open_engine/_engine.py`: rename the attribute (definition, its uses, `to_snapshot`, the snapshot loader that sets it); class docstring.
+- `src/open_engine/_engine.py`: rename the attribute (definition, its uses, `to_snapshot`, the snapshot loader that sets it; one use is split into two lines to fit the line length); class docstring.
 - `src/open_engine/_ledger.py`: `ledger_order` docstring.
 - Tests that read the engine attribute: `tests/test_snapshot.py` (the attribute set in `test_snapshot_covers_every_engine_attribute` and the engine reads) and any other `eng.self_reported_log` style access. Error-message strings such as `snapshot.self_reported_log[0]` and snapshot keys stay.
 - New: `tests/test_api_surface.py`, `tests/api_surface.txt`.
@@ -46,6 +46,6 @@ Out of scope: the demonstration status wording (issue #49, the release step) and
 ## Proof
 
 - Criterion 1: `tests/test_snapshot.py::test_snapshot_covers_every_engine_attribute`, the snapshot round trip and resume tests, and a new assert in `tests/test_api_surface.py` that `self_reported_log` is not an attribute.
-- Criterion 2 and 3: `tests/test_api_surface.py` on all CI Python versions; a check that the test fails when the file is edited.
+- Criterion 2 and 3: `tests/test_api_surface.py` on all CI Python versions. That it catches a change was checked by hand in review: changing a field's `kw_only`, an enum property, `LedgerConflictError.match_ids`, a keyword default, or adding an engine attribute each changes the rendered text.
 - Criteria 4 to 8: read the diff; `tests/test_api.py` README checks still pass.
 - No live drive: the change has no runtime path beyond what the suite covers (a library, no UI).

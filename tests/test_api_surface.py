@@ -1,9 +1,13 @@
 """Pin the public API surface that 1.0.0 freezes (issue #156).
 
-The surface is every name in open_engine.__all__: each function's and public
-method's parameters, each dataclass's fields, each enum's members, each error's
-bases, and RatingEngine's public instance attributes. It is rendered to text
-and compared with tests/api_surface.txt.
+The surface is every name in open_engine.__all__: each function's, constructor's,
+and public method's parameters, each dataclass's options and fields, each enum's
+members, each error's bases and attributes, RatingEngine's public instance
+attributes, and the values of the PredictionMode type that public signatures
+name. It is rendered to text and compared with tests/api_surface.txt. A few
+recorded details, such as the ledger_order key type and the Config defaults,
+are outside the stability promise; the file records them so a change to them
+is deliberate.
 
 A change to the public surface must change that file in the same pull request,
 with a CHANGELOG.md entry (a breaking one called out as breaking). Regenerate
@@ -18,14 +22,17 @@ import dataclasses
 import enum
 import inspect
 import sys
+import typing
 from collections.abc import Mapping
 from pathlib import Path
 
 import open_engine
+from open_engine._evaluation import PredictionMode
 
 SURFACE_FILE = Path(__file__).resolve().parent / "api_surface.txt"
 # Config.version defaults to the package version, which moves every release.
 VERSION_MARK = "<__version__>"
+DATACLASS_FLAGS = ("init", "repr", "eq", "order", "unsafe_hash", "frozen")
 
 
 def _show(value: object) -> str:
@@ -67,7 +74,7 @@ def _signature(func: object) -> str:
 
 def _class_members(cls: type) -> list[str]:
     lines: list[str] = []
-    if "__init__" in vars(cls) and not dataclasses.is_dataclass(cls):
+    if "__init__" in vars(cls):
         lines.append(f"    __init__{_signature(vars(cls)['__init__'])}")
     for attr, member in sorted(vars(cls).items()):
         if attr.startswith("_"):
@@ -91,18 +98,24 @@ def _render_name(name: str) -> list[str]:
     if issubclass(obj, enum.Enum):
         lines = [f"enum {name}({bases})"]
         lines += [f"    {member.name} = {member.value!r}" for member in obj]
-        return lines
+        return lines + _class_members(obj)
     if issubclass(obj, BaseException):
-        return [f"exception {name}({bases})", *_class_members(obj)]
+        sample = obj(["m1"]) if obj is open_engine.LedgerConflictError else obj("message")
+        attrs = sorted(a for a in vars(sample) if not a.startswith("_"))
+        lines = [f"exception {name}({bases})", *_class_members(obj)]
+        return lines + [f"    attribute {attr}" for attr in attrs]
     if dataclasses.is_dataclass(obj):
-        frozen = obj.__dataclass_params__.frozen  # type: ignore[attr-defined]
-        lines = [f"dataclass {name}({bases}) frozen={frozen}"]
+        params = obj.__dataclass_params__  # type: ignore[attr-defined]
+        flags = " ".join(f"{flag}={getattr(params, flag)}" for flag in DATACLASS_FLAGS)
+        lines = [f"dataclass {name}({bases}) {flags}"]
         for field in dataclasses.fields(obj):
             text = f"    field {field.name}: {field.type}"
             if field.default is not dataclasses.MISSING:
                 text += f" = {_show(field.default)}"
             elif field.default_factory is not dataclasses.MISSING:
                 text += f" = factory {_show(field.default_factory())}"
+            if not field.init or field.kw_only is True:
+                text += f" [init={field.init} kw_only={field.kw_only}]"
             lines.append(text)
         return lines + _class_members(obj)
     lines = [f"class {name}({bases})", *_class_members(obj)]
@@ -115,6 +128,9 @@ def _render_name(name: str) -> list[str]:
 def render_surface() -> str:
     """The public surface as text, one block per exported name, sorted by name."""
     blocks = ["\n".join(_render_name(name)) for name in sorted(open_engine.__all__)]
+    # Type aliases that public signatures name but open_engine does not export.
+    modes = ", ".join(repr(mode) for mode in typing.get_args(PredictionMode))
+    blocks.append(f"alias PredictionMode = Literal[{modes}]")
     return "\n\n".join(blocks) + "\n"
 
 
@@ -128,7 +144,11 @@ def test_public_surface_matches_the_checked_in_file() -> None:
 
 
 def test_the_surface_covers_every_export() -> None:
-    headers = [line for line in render_surface().splitlines() if line and line[0] != " "]
+    headers = [
+        line
+        for line in render_surface().splitlines()
+        if line and line[0] != " " and not line.startswith("alias ")
+    ]
     names = [header.split()[1].split("(", 1)[0] for header in headers]
     assert names == sorted(open_engine.__all__)
 

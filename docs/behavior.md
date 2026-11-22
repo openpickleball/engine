@@ -10,26 +10,27 @@ This page holds the engine's published behavior notes and the requirements the b
 
 ## Stability
 
-From 1.0.0, the engine follows strict Semantic Versioning. A breaking change to anything this section lists as covered needs a new major version. Before 1.0.0, a minor release may break it, and the changelog marks each break. `tests/api_surface.txt` records the public surface, and a test fails when the code no longer matches it.
+From 1.0.0, the engine follows strict Semantic Versioning. A breaking change to anything this section lists as covered needs a new major version. Before 1.0.0, a minor release may break it, and the changelog marks each break. `tests/api_surface.txt` records the public surface, and a test fails when the code no longer matches it. The file also records a few details this section leaves out, such as the `ledger_order` key type and the `Config` defaults, so that a change to them is deliberate.
 
 Covered:
 
 - Every name in `open_engine.__all__`, which the README's "Public API" section lists.
-- The parameters of every public function, constructor, and method: their names, order, kind (positional or keyword-only), and defaults.
-- The fields of each public dataclass and their order, the members and values of each public enum, and the error class hierarchy. Each failure these notes document keeps its error class.
+- The parameters of every public function, constructor, and method: their names, order, kind (positional or keyword-only), and defaults. The defaults of `Config` fields are the exception (see "Rating values" below).
+- The fields of each public dataclass and their order, the members, values, and properties of each public enum, the error class hierarchy, and `LedgerConflictError.match_ids`. Each failure these notes document keeps its error class.
 - The `RatingEngine` attributes `cfg`, `players`, `processed_match_ids`, `possible_duplicates`, `calculated_as_of`, and `replay_info`. They are for reading. Writing to them, or to the objects they hold, is unsupported: it skips validation and the mark that lets a snapshot resume.
 - The ledger rules:
   - the order `ledger_order` gives ([Ledger order](#ledger-order)), but not the shape of its key;
   - every row passed in is validated, including rows after `as_of`;
   - rows that repeat a `match_id` count once only when they are the same match, and any other repeat raises `LedgerConflictError`;
   - the result does not depend on the order rows arrive in;
-  - resuming from a checkpoint equals a full replay of the same ledger and seeds, or raises `SnapshotError`, except for the limits in [Replay and resume](#replay-and-resume).
+  - resuming from a checkpoint equals a full replay of the same ledger and seeds, or raises the error [Replay and resume](#replay-and-resume) names for the case (`LedgerConflictError`, `SnapshotError`, or `PlayerError`), except for the limits that section lists.
 
 Not covered:
 
 - Snapshots. A snapshot is a cache that a replay can rebuild, and the ledger is the source of truth. A minor release may raise `snapshot_version`. A snapshot of an older version then raises `SnapshotError`, and a full replay rebuilds it ([Snapshots and checkpoints](#snapshots-and-checkpoints)).
-- Rating values. A minor release may change default `Config` values when parameters are retuned, so the same ledger can give other ratings. The changelog records each change, and `params_version` and the fingerprints show it.
-- Additions in a minor release: new exports, new optional keyword parameters, new `Config` fields (each changes every fingerprint), new fields at the end of an output dataclass, and new `RejectionReason` members. Code that reads a `RejectionReason` should handle a value it does not know.
+- Rating values. A minor release may change default `Config` values when parameters are retuned, so the same ledger can give other ratings. The changelog records each change, and `params_version` and the fingerprints show it. `Config.version` defaults to the package version, so it changes in every release.
+- Additions in a minor release: new exports, new optional keyword parameters, new `Config` fields at the end of `Config` (each changes every `fingerprint()`), new fields at the end of an output dataclass, and new `RejectionReason` members. Code that reads a `RejectionReason` should handle a value it does not know.
+- Stored `Config.to_dict()` output. `Config.from_dict` takes exactly the keys of its own version, so a dict stored under another version can raise `ConfigError`. Keep the ledger and rebuild the config, as with a snapshot.
 - Error message text, `repr` output, names reached only through `open_engine.engine`, `open_engine.winprob`, or a private module, and pickles made by another version. Keep the ledger: a full replay rebuilds the state under any version.
 
 ## Input types
