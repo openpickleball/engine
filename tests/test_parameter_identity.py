@@ -96,6 +96,13 @@ def test_parameter_fingerprint_is_16_lowercase_hex_and_deterministic() -> None:
     assert Config(params_version="v2").parameter_fingerprint() == value
 
 
+def test_default_parameter_fingerprint_is_pinned() -> None:
+    # Change this value only when a Config field is added, removed, or
+    # renamed, a default changes, or norm() changes how a value is written.
+    # Each of those is a changelog entry.
+    assert Config().parameter_fingerprint() == "1058623faf5d9367"
+
+
 @pytest.mark.parametrize(
     ("first", "second"),
     [
