@@ -291,7 +291,7 @@ def test_default_self_reported_duplicate_enters_the_repeat_log() -> None:
     result = eng.record(_self_reported("syn-m2"))
     assert result.counted is True
     assert result.possible_duplicate_of == "syn-m1"
-    assert list(eng.self_reported_log.values()) == [[ON, ON]]
+    assert list(eng._self_reported_log.values()) == [[ON, ON]]
 
 
 def test_reject_self_reported_duplicate_stays_out_of_the_repeat_log() -> None:
@@ -299,7 +299,7 @@ def test_reject_self_reported_duplicate_stays_out_of_the_repeat_log() -> None:
     eng.record(_self_reported("syn-m1"))
     result = eng.record(_self_reported("syn-m2"))
     assert result.reason is RejectionReason.POSSIBLE_DUPLICATE
-    assert list(eng.self_reported_log.values()) == [[ON]]
+    assert list(eng._self_reported_log.values()) == [[ON]]
 
 
 # -- determinism ---------------------------------------------------------------

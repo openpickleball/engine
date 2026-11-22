@@ -1,0 +1,311 @@
+dataclass Config(object) init=True repr=True eq=False order=False unsafe_hash=False frozen=True
+    field version: str = <__version__>
+    field params_version: str | None = None
+    field min_rating: float = 2.0
+    field max_rating: float = 8.0
+    field default_rating: float = 3.5
+    field scale_by_scoring: Mapping[ScoringType, float] = factory {ScoringType.SIDE_OUT: 2.9, ScoringType.RALLY: 2.9}
+    field win_calibration_by_scoring: Mapping[ScoringType, float] = factory {ScoringType.SIDE_OUT: 1.0, ScoringType.RALLY: 1.0}
+    field k_min: float = 0.12
+    field k_max: float = 0.6
+    field rd_min: float = 0.1
+    field rd_max: float = 0.8
+    field new_player_rd: float = 0.8
+    field external_seed_rd: float = 0.42
+    field category_seed_rd: float = 0.5
+    field rd_shrink_per_match: float = 0.08
+    field rd_growth_per_day: float = 0.012
+    field win_weight: float = 0.0
+    field match_weights: Mapping[MatchType, float] = factory {MatchType.TOURNAMENT: 1.0, MatchType.LEAGUE: 0.9, MatchType.REC_VERIFIED: 0.75, MatchType.SELF_REPORTED: 0.4}
+    field allowed_game_formats: frozenset[tuple[ScoringType, int]] = frozenset({(ScoringType.RALLY, 11), (ScoringType.RALLY, 15), (ScoringType.RALLY, 21), (ScoringType.SIDE_OUT, 11), (ScoringType.SIDE_OUT, 15), (ScoringType.SIDE_OUT, 21)})
+    field game_length_weights: Mapping[int, float] = factory {11: 1.0, 15: 1.1, 21: 1.2}
+    field game_count_bonus: float = 0.12
+    field max_information_multiplier: float = 1.3
+    field replay_interval_days: int = 7
+    field diversity_window_days: int = 365
+    field diversity_target: int = 12
+    field self_reported_requires_both_teams: bool = True
+    field self_reported_repeat_window_days: int = 90
+    field self_reported_repeat_factor: float = 0.5
+    field self_reported_max_repeats: int = 4
+    field reject_content_duplicates: bool = False
+    field import_reliability_carry_matches: int = 10
+    field import_reliability_max_age_days: int = 365
+    field established_reliability_threshold: float = 60.0
+    field established_min_verified_matches: int = 3
+    field connectivity_reliability_cap: float | None = None
+    field connectivity_min_shared_contacts: int = 4
+    field connectivity_min_contact_days: int = 3
+    field connectivity_min_outside_players: int = 8
+    field category_feeds_parent: bool = True
+    field max_singles_rating_gap: float | None = None
+    field max_doubles_partner_gap: float | None = None
+    __init__(self, version: str = <__version__>, params_version: str | None = None, min_rating: float = 2.0, max_rating: float = 8.0, default_rating: float = 3.5, scale_by_scoring: Mapping[ScoringType, float] = <factory>, win_calibration_by_scoring: Mapping[ScoringType, float] = <factory>, k_min: float = 0.12, k_max: float = 0.6, rd_min: float = 0.1, rd_max: float = 0.8, new_player_rd: float = 0.8, external_seed_rd: float = 0.42, category_seed_rd: float = 0.5, rd_shrink_per_match: float = 0.08, rd_growth_per_day: float = 0.012, win_weight: float = 0.0, match_weights: Mapping[MatchType, float] = <factory>, allowed_game_formats: frozenset[tuple[ScoringType, int]] = frozenset({(ScoringType.RALLY, 11), (ScoringType.RALLY, 15), (ScoringType.RALLY, 21), (ScoringType.SIDE_OUT, 11), (ScoringType.SIDE_OUT, 15), (ScoringType.SIDE_OUT, 21)}), game_length_weights: Mapping[int, float] = <factory>, game_count_bonus: float = 0.12, max_information_multiplier: float = 1.3, replay_interval_days: int = 7, diversity_window_days: int = 365, diversity_target: int = 12, self_reported_requires_both_teams: bool = True, self_reported_repeat_window_days: int = 90, self_reported_repeat_factor: float = 0.5, self_reported_max_repeats: int = 4, reject_content_duplicates: bool = False, import_reliability_carry_matches: int = 10, import_reliability_max_age_days: int = 365, established_reliability_threshold: float = 60.0, established_min_verified_matches: int = 3, connectivity_reliability_cap: float | None = None, connectivity_min_shared_contacts: int = 4, connectivity_min_contact_days: int = 3, connectivity_min_outside_players: int = 8, category_feeds_parent: bool = True, max_singles_rating_gap: float | None = None, max_doubles_partner_gap: float | None = None) -> None
+    def fingerprint(self) -> str
+    classmethod from_dict(cls, data: Mapping[str, object]) -> Config
+    def parameter_fingerprint(self) -> str
+    def to_dict(self) -> dict[str, object]
+
+exception ConfigError(OpenEngineError)
+
+exception EvaluationError(OpenEngineError)
+
+dataclass EvaluationReport(object) init=True repr=True eq=True order=False unsafe_hash=False frozen=True
+    field scoring: str | None
+    field scale: float | None
+    field matches_scored: int
+    field mse: float
+    field mae: float
+    field bias: float
+    field calibration: tuple[tuple[float, float, float, int], ...]
+    __init__(self, scoring: str | None, scale: float | None, matches_scored: int, mse: float, mae: float, bias: float, calibration: tuple[tuple[float, float, float, int], ...]) -> None
+
+dataclass ExternalRatingSnapshot(object) init=True repr=True eq=True order=False unsafe_hash=False frozen=True
+    field source: str
+    field rating: float
+    field captured_on: date
+    field reliability: float | None = None
+    field external_player_id: str | None = None
+    field evidence_reference: str | None = None
+    __init__(self, source: str, rating: float, captured_on: date, reliability: float | None = None, external_player_id: str | None = None, evidence_reference: str | None = None) -> None
+
+dataclass GameFormat(object) init=True repr=True eq=True order=False unsafe_hash=False frozen=True
+    field scoring: ScoringType = ScoringType.SIDE_OUT
+    field points_to: int = 11
+    field win_by: int = 2
+    field cap: int | None = None
+    __init__(self, scoring: ScoringType = ScoringType.SIDE_OUT, points_to: int = 11, win_by: int = 2, cap: int | None = None) -> None
+    def validate(self) -> None
+    def validate_game(self, score_a: int, score_b: int) -> None
+
+exception InvalidMatchError(OpenEngineError)
+
+exception InvalidSeedError(OpenEngineError)
+
+exception LedgerConflictError(OpenEngineError)
+    __init__(self, match_ids: Iterable[str]) -> None
+    attribute match_ids
+
+dataclass Match(object) init=True repr=True eq=True order=False unsafe_hash=False frozen=True
+    field match_id: str
+    field team_a: tuple[str, ...]
+    field team_b: tuple[str, ...]
+    field games: tuple[tuple[int, int], ...]
+    field played_on: date
+    field rating_format: RatingFormat
+    field match_type: MatchType = MatchType.REC_VERIFIED
+    field best_of: int = 1
+    field game_format: GameFormat = GameFormat(scoring=<ScoringType.SIDE_OUT: 'side_out'>, points_to=11, win_by=2, cap=None)
+    field played_at: datetime | None = None
+    field sequence: int = 0
+    field confirmed_by: frozenset[str] = frozenset({})
+    field status: MatchStatus = MatchStatus.COMPLETED
+    __init__(self, match_id: str, team_a: tuple[str, ...], team_b: tuple[str, ...], games: tuple[tuple[int, int], ...], played_on: date, rating_format: RatingFormat, match_type: MatchType = MatchType.REC_VERIFIED, best_of: int = 1, game_format: GameFormat = GameFormat(scoring=<ScoringType.SIDE_OUT: 'side_out'>, points_to=11, win_by=2, cap=None), played_at: datetime | None = None, sequence: int = 0, confirmed_by: frozenset[str] = frozenset({}), status: MatchStatus = MatchStatus.COMPLETED) -> None
+    def validate(self) -> None
+
+dataclass MatchResult(object) init=True repr=True eq=True order=False unsafe_hash=False frozen=False
+    field counted: bool
+    field rating_format: RatingFormat
+    field reason: RejectionReason | None = None
+    field expected_a: float = 0.0
+    field actual_a: float = 0.0
+    field surprise: float = 0.0
+    field effective_weight: float = 0.0
+    field deltas: dict[str, float] = factory {}
+    field frozen: tuple[str, ...] = ()
+    field clamped: tuple[str, ...] = ()
+    field imbalance: float = 0.0
+    field late: bool = False
+    field parent: MatchResult | None = None
+    field possible_duplicate_of: str | None = None
+    __init__(self, counted: bool, rating_format: RatingFormat, reason: RejectionReason | None = None, expected_a: float = 0.0, actual_a: float = 0.0, surprise: float = 0.0, effective_weight: float = 0.0, deltas: dict[str, float] = <factory>, frozen: tuple[str, ...] = (), clamped: tuple[str, ...] = (), imbalance: float = 0.0, late: bool = False, parent: MatchResult | None = None, possible_duplicate_of: str | None = None) -> None
+
+enum MatchStatus(_StrEnum)
+    COMPLETED = 'completed'
+    FORFEIT = 'forfeit'
+    RETIRED = 'retired'
+    INCOMPLETE = 'incomplete'
+
+enum MatchType(_StrEnum)
+    TOURNAMENT = 'tournament'
+    LEAGUE = 'league'
+    REC_VERIFIED = 'rec_verified'
+    SELF_REPORTED = 'self_reported'
+
+dataclass NetworkConnectivity(object) init=True repr=True eq=True order=False unsafe_hash=False frozen=True
+    field pool_size: int
+    field fringe_players: int
+    field outside_players: int
+    field outside_days: int
+    field group_size: int
+    field in_main_network: bool
+    field connected: bool
+    __init__(self, pool_size: int, fringe_players: int, outside_players: int, outside_days: int, group_size: int, in_main_network: bool, connected: bool) -> None
+
+exception OpenEngineError(ValueError)
+
+dataclass Player(object) init=True repr=True eq=True order=False unsafe_hash=False frozen=False
+    field id: str
+    field ratings: dict[RatingFormat, RatingState] = factory {}
+    field external_ids: dict[str, str] = factory {}
+    field account_user_id: str | None = None
+    __init__(self, id: str, ratings: dict[RatingFormat, RatingState] = <factory>, external_ids: dict[str, str] = <factory>, account_user_id: str | None = None) -> None
+
+exception PlayerError(OpenEngineError)
+
+dataclass PlayerSummary(object) init=True repr=True eq=True order=False unsafe_hash=False frozen=True
+    field player_id: str
+    field rating_format: RatingFormat
+    field rating: float
+    field reliability: float
+    field imported_reliability: float | None
+    field established: bool
+    field rd: float
+    field matches_played: int
+    field last_played: date | None
+    field initial_rating: float
+    field initial_source: str
+    field initial_source_reliability: float | None
+    field initial_source_date: date | None
+    field calculated_as_of: date | None
+    field live_updates_since_recalculation: int
+    field config_version: str
+    field account_linked: bool
+    field connectivity: NetworkConnectivity
+    __init__(self, player_id: str, rating_format: RatingFormat, rating: float, reliability: float, imported_reliability: float | None, established: bool, rd: float, matches_played: int, last_played: date | None, initial_rating: float, initial_source: str, initial_source_reliability: float | None, initial_source_date: date | None, calculated_as_of: date | None, live_updates_since_recalculation: int, config_version: str, account_linked: bool, connectivity: NetworkConnectivity) -> None
+
+dataclass PrequentialPrediction(object) init=True repr=True eq=True order=False unsafe_hash=False frozen=True
+    field match_id: str
+    field played_on: date
+    field players: tuple[str, ...]
+    field expected: float
+    field actual: float
+    field team_a_won: bool
+    field win_probability_raw: float
+    field win_probability: float
+    __init__(self, match_id: str, played_on: date, players: tuple[str, ...], expected: float, actual: float, team_a_won: bool, win_probability_raw: float, win_probability: float) -> None
+
+class RatingEngine(object)
+    __init__(self, cfg: Config | None = None)
+    def add_player(self, player: Player) -> None
+    def attach_external_id(self, player_id: str, source: str, external_player_id: str) -> None
+    classmethod from_snapshot(cls, snapshot: Mapping[str, object], cfg: Config | None = None) -> RatingEngine
+    def link_account(self, player_id: str, account_user_id: str) -> None
+    def player(self, player_id: str) -> Player
+    def player_summary(self, player_id: str, rating_format: RatingFormat, as_of: date | None = None) -> PlayerSummary
+    def predict_point_share(self, team_a: Sequence[str], team_b: Sequence[str], rating_format: RatingFormat, scoring: ScoringType = ScoringType.SIDE_OUT) -> float
+    def predict_win_probability(self, team_a: Sequence[str], team_b: Sequence[str], rating_format: RatingFormat, game_format: GameFormat, best_of: int = 1) -> float
+    def record(self, match: Match, as_of [keyword_only]: date | None = None) -> MatchResult
+    def seed_external_rating(self, player_id: str, rating_format: RatingFormat, snapshot: ExternalRatingSnapshot, replace_unplayed_seed [keyword_only]: bool = False) -> RatingState
+    def seed_provisional_rating(self, player_id: str, rating_format: RatingFormat) -> RatingState
+    def state(self, player_id: str, rating_format: RatingFormat) -> RatingState
+    def to_snapshot(self) -> dict[str, object]
+    attribute calculated_as_of
+    attribute cfg
+    attribute players
+    attribute possible_duplicates
+    attribute processed_match_ids
+    attribute replay_info
+
+enum RatingFormat(_StrEnum)
+    SINGLES = 'singles'
+    DOUBLES = 'doubles'
+    MIXED_DOUBLES = 'mixed_doubles'
+    DOUBLES_MEN = 'doubles_men'
+    DOUBLES_WOMEN = 'doubles_women'
+    property parent
+    property team_size
+
+dataclass RatingState(object) init=True repr=True eq=True order=False unsafe_hash=False frozen=False
+    field rating: float
+    field rd: float
+    field matches_played: int = 0
+    field last_played: date | None = None
+    field rd_as_of: date | None = None
+    field initial_rating: float = 3.5
+    field initial_source: str = 'open_provisional'
+    field initial_source_date: date | None = None
+    field initial_source_reliability: float | None = None
+    field initial_external_player_id: str | None = None
+    field initial_evidence_reference: str | None = None
+    field live_updates_since_replay: int = 0
+    field partners: dict[str, date] = factory {}
+    field opponents: dict[str, date] = factory {}
+    field inherited_live_updates: int = 0
+    field verified_matches_played: int = 0
+    __init__(self, rating: float, rd: float, matches_played: int = 0, last_played: date | None = None, rd_as_of: date | None = None, initial_rating: float = 3.5, initial_source: str = 'open_provisional', initial_source_date: date | None = None, initial_source_reliability: float | None = None, initial_external_player_id: str | None = None, initial_evidence_reference: str | None = None, live_updates_since_replay: int = 0, partners: dict[str, date] = <factory>, opponents: dict[str, date] = <factory>, inherited_live_updates: int = 0, verified_matches_played: int = 0) -> None
+
+exception ReferenceDateError(OpenEngineError)
+
+enum RejectionReason(_StrEnum)
+    DUPLICATE_MATCH_ID = 'duplicate_match_id'
+    GAME_FORMAT_NOT_ACCEPTED = 'game_format_not_accepted'
+    SELF_REPORTED_UNCONFIRMED = 'self_reported_unconfirmed'
+    SELF_REPORTED_REPEAT_LIMIT = 'self_reported_repeat_limit'
+    BEFORE_IMPORTED_BASELINE = 'before_imported_baseline'
+    SINGLES_RATING_GAP = 'singles_rating_gap'
+    DOUBLES_PARTNER_GAP = 'doubles_partner_gap'
+    POSSIBLE_DUPLICATE = 'possible_duplicate'
+    MATCH_NOT_COMPLETED = 'match_not_completed'
+
+dataclass ReplayInfo(object) init=True repr=True eq=True order=False unsafe_hash=False frozen=True
+    field as_of: date
+    field config_version: str
+    field config_fingerprint: str
+    field params_version: str | None
+    field parameter_fingerprint: str
+    field matches_considered: int
+    field matches_counted: int
+    field net_rating_created: Mapping[RatingFormat, float] = factory {RatingFormat.SINGLES: 0.0, RatingFormat.DOUBLES: 0.0, RatingFormat.MIXED_DOUBLES: 0.0, RatingFormat.DOUBLES_MEN: 0.0, RatingFormat.DOUBLES_WOMEN: 0.0}
+    __init__(self, as_of: date, config_version: str, config_fingerprint: str, params_version: str | None, parameter_fingerprint: str, matches_considered: int, matches_counted: int, net_rating_created: Mapping[RatingFormat, float] = <factory>) -> None
+
+dataclass ScaleFit(object) init=True repr=True eq=True order=False unsafe_hash=False frozen=True
+    field scoring: str
+    field scale: float
+    field default_scale: float
+    field fitted: EvaluationReport
+    field at_default: EvaluationReport
+    field profile: tuple[tuple[float, float], ...] = ()
+    field at_bound: bool = False
+    __init__(self, scoring: str, scale: float, default_scale: float, fitted: EvaluationReport, at_default: EvaluationReport, profile: tuple[tuple[float, float], ...] = (), at_bound: bool = False) -> None
+
+enum ScoringType(_StrEnum)
+    SIDE_OUT = 'side_out'
+    RALLY = 'rally'
+
+exception SnapshotError(OpenEngineError)
+
+exception UnknownPlayerError(PlayerError)
+
+dataclass WinCalibrationFit(object) init=True repr=True eq=True order=False unsafe_hash=False frozen=True
+    field scoring: str
+    field a: float
+    field brier: float
+    field brier_uncalibrated: float
+    field n: int
+    field at_bound: bool = False
+    __init__(self, scoring: str, a: float, brier: float, brier_uncalibrated: float, n: int, at_bound: bool = False) -> None
+
+def calibrate_win_probability(p: float, a: float) -> float
+
+def evaluate(matches: Iterable[Match], seed_players: Iterable[Player] = (), cfg [keyword_only]: Config | None = None, scoring [keyword_only]: ScoringType | None = None, burn_in_matches [keyword_only]: int = 5, mode [keyword_only]: PredictionMode = 'live', score_from [keyword_only]: date | None = None, anchor [keyword_only]: date | None = None) -> EvaluationReport
+
+def expected_point_share(team_a_rating: float, team_b_rating: float, scale: float) -> float
+
+def fit_scale(matches: Iterable[Match], seed_players: Iterable[Player] = (), cfg [keyword_only]: Config | None = None, scoring [keyword_only]: ScoringType = ScoringType.SIDE_OUT, low [keyword_only]: float = 1.0, high [keyword_only]: float = 8.0, tolerance [keyword_only]: float = 0.01, burn_in_matches [keyword_only]: int = 5, mode [keyword_only]: PredictionMode = 'live', score_from [keyword_only]: date | None = None, anchor [keyword_only]: date | None = None) -> ScaleFit
+
+def fit_win_calibration(matches: Iterable[Match], seed_players: Iterable[Player] = (), cfg [keyword_only]: Config | None = None, scoring [keyword_only]: ScoringType = ScoringType.SIDE_OUT, low [keyword_only]: float = 0.2, high [keyword_only]: float = 3.0, tolerance [keyword_only]: float = 0.001, burn_in_matches [keyword_only]: int = 5, mode [keyword_only]: PredictionMode = 'live', score_from [keyword_only]: date | None = None, anchor [keyword_only]: date | None = None) -> WinCalibrationFit
+
+def game_win_probability(p: float, game_format: GameFormat) -> float
+
+def ledger_order(match: Match) -> tuple[date, int, datetime, int, str]
+
+def match_win_probability(p: float, game_format: GameFormat, best_of: int) -> float
+
+def prequential_predictions(matches: Iterable[Match], seed_players: Iterable[Player] = (), cfg [keyword_only]: Config | None = None, scoring [keyword_only]: ScoringType | None = None, burn_in_matches [keyword_only]: int = 5, mode [keyword_only]: PredictionMode = 'live', score_from [keyword_only]: date | None = None, anchor [keyword_only]: date | None = None) -> list[PrequentialPrediction]
+
+def reliability(state: RatingState, cfg: Config, as_of: date) -> float
+
+def replay(matches: Iterable[Match], seed_players: Iterable[Player] = (), cfg [keyword_only]: Config | None = None, as_of [keyword_only]: date, from_snapshot [keyword_only]: Mapping[str, object] | None = None, whole_ledger [keyword_only]: bool = False) -> RatingEngine
+
+alias PredictionMode = Literal['live', 'scheduled']
