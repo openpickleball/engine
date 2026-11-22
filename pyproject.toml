@@ -31,7 +31,15 @@ Source = "https://github.com/openpickleball/engine"
 Issues = "https://github.com/openpickleball/engine/issues"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6", "mypy>=1.13", "build", "twine"]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+    "mypy>=1.13",
+    "build",
+    "twine",
+    "pytest-xdist>=3",
+]
 
 [tool.hatch.version]
 path = "src/open_engine/_version.py"

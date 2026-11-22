@@ -10,6 +10,26 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check .
+      - name: Check formatting
+        run: ruff format --check .
+      - name: Type check
+        run: mypy src
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -23,16 +43,18 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install
         run: pip install -e ".[dev]"
-      - name: Lint
-        run: ruff check .
-      - name: Check formatting
-        run: ruff format --check .
-      - name: Type check
-        run: mypy src
+      # Coverage tracing roughly triples the suite's run time, so only one
+      # version collects it. The others run the same tests without it.
       - name: Test
-        run: pytest --cov
+        if: matrix.python-version != '3.13'
+        run: pytest -n auto
+      - name: Test with coverage
+        if: matrix.python-version == '3.13'
+        run: pytest -n auto --cov
 
   package:
     runs-on: ubuntu-latest
