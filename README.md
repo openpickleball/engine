@@ -104,7 +104,7 @@ Rating:
 
 Inputs:
 
-- `Config`: every rating parameter, with a fingerprint for provenance. Its mapping fields are read-only copies, and a config is hashable. Equal configs have the same fingerprint and hash. `Config.to_dict()` and `Config.from_dict()` store and load one with the same fingerprint.
+- `Config`: every rating parameter, with a fingerprint for provenance. `params_version` labels a published parameter set (`None` or `v<N>`), and `parameter_fingerprint()` hashes the parameter values without `version` and `params_version`, so it stays the same across releases that change no parameter. Its mapping fields are read-only copies, and a config is hashable. Equal configs have the same fingerprint and hash. `Config.to_dict()` and `Config.from_dict()` store and load one with the same fingerprint.
 - `Match`: one match with its teams, game scores, date, format, and status. Only a completed match can count.
 - `MatchStatus`: how a match ended: completed, forfeit, retired, or incomplete (see "Match status").
 - `GameFormat`: how each game is scored (scoring type, points to, win by, cap).
@@ -121,7 +121,7 @@ Results:
 - `RejectionReason`: why a match was not counted. `MATCH_NOT_COMPLETED` covers every status other than completed.
 - `PlayerSummary`: a player's rating, reliability, established flag, network connectivity, and provenance in one format.
 - `NetworkConnectivity`: whether a player's pool connects to the main network in one format, with the pool size, fringe, outside players and dates, and the size of the player's group behind it.
-- `ReplayInfo`: the date, config version, config fingerprint, and match counts of a replay, and `net_rating_created`, the net rating its counted updates added to each rating format's pool.
+- `ReplayInfo`: the date, config version, config fingerprint, `params_version`, parameter fingerprint, and match counts of a replay, and `net_rating_created`, the net rating its counted updates added to each rating format's pool.
 
 Evaluation and calibration:
 
