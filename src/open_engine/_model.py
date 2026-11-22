@@ -549,7 +549,12 @@ def _zero_by_format() -> dict[RatingFormat, float]:
 @dataclass(frozen=True)
 class ReplayInfo:
     """
-    Provenance of one replay: as_of date, config version and fingerprint, counts.
+    Provenance of one replay: as_of date, config identity, and counts.
+
+    config_fingerprint is the config's fingerprint(), which hashes every
+    field. params_version is its published parameter set label (None when
+    it is not one), and parameter_fingerprint its parameter_fingerprint(),
+    which leaves out version and params_version.
 
     net_rating_created is, per rating format, the rating the replay's
     counted updates added to that pool (negative when they removed it):
@@ -579,6 +584,8 @@ class ReplayInfo:
     as_of: date
     config_version: str
     config_fingerprint: str
+    params_version: str | None
+    parameter_fingerprint: str
     matches_considered: int
     matches_counted: int
     net_rating_created: Mapping[RatingFormat, float] = field(default_factory=_zero_by_format)

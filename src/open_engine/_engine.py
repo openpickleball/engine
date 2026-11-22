@@ -249,7 +249,7 @@ class RatingEngine:
 
     def to_snapshot(self) -> dict[str, object]:
         """
-        The engine's whole state as JSON-safe data (schema version 8).
+        The engine's whole state as JSON-safe data (schema version 9).
 
         json.dumps(snapshot, allow_nan=False) works with no custom encoder,
         and RatingEngine.from_snapshot rebuilds the engine from it, or from
@@ -316,8 +316,9 @@ class RatingEngine:
         Args:
             snapshot: to_snapshot() output, or json.loads of its text.
             cfg: The Config the snapshot was taken under (default Config()): its
-                version and fingerprint must equal the snapshot's. The engine keeps
-                a copy of cfg rebuilt from its field values.
+                version and fingerprint must equal the snapshot's, and its
+                params_version and parameter_fingerprint() replay_info's. The
+                engine keeps a copy of cfg rebuilt from its field values.
 
         Returns:
             The rebuilt RatingEngine.

@@ -18,7 +18,7 @@ ON = date(2025, 1, 31)
 
 
 def _info(created: object) -> ReplayInfo:
-    return ReplayInfo(ON, "v", "f", 1, 1, created)  # type: ignore[arg-type]
+    return ReplayInfo(ON, "v", "f", None, "p", 1, 1, created)  # type: ignore[arg-type]
 
 
 def test_missing_formats_are_filled_with_zero() -> None:

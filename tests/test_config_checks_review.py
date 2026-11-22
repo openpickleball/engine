@@ -372,17 +372,19 @@ def test_int_subclass_keys_and_points_are_stored_as_ints() -> None:
 
 
 # Measured on origin/main (3845bec) before the key conversion. Every config here
-# builds on main, so its fingerprint must not change.
+# builds on main, so its fingerprint must not change. Re-pinned in issue #155
+# when params_version joined the fingerprint payload; the old pins were
+# confirmed equal to the same configs without that key.
 MAIN_FINGERPRINTS = [
-    pytest.param({}, "17f2981186edf96c", id="default"),
+    pytest.param({}, "40d9d88d4ae408cd", id="default"),
     pytest.param(
         {"scale_by_scoring": {"side_out": 2.9, "rally": 2.9}},
-        "17f2981186edf96c",
+        "40d9d88d4ae408cd",
         id="str-scale-keys",
     ),
     pytest.param(
         {"win_calibration_by_scoring": {"side_out": 1.2, "rally": 0.8}},
-        "6ba793d232e747e6",
+        "e9fc0d40c03dd4dc",
         id="str-calibration-keys",
     ),
     pytest.param(
@@ -394,12 +396,12 @@ MAIN_FINGERPRINTS = [
                 "self_reported": 0.3,
             }
         },
-        "291adeba7c2687ad",
+        "8dd21a9095eedff9",
         id="str-match-weight-keys",
     ),
     pytest.param(
         {"allowed_game_formats": frozenset({("rally", 11), ("side_out", 15)})},
-        "06a59b423762411f",
+        "c726f53b639c8618",
         id="str-format-entries",
     ),
     pytest.param(
@@ -408,7 +410,7 @@ MAIN_FINGERPRINTS = [
             "game_length_weights": {11: 1.0, 15: 1.05, 21: 1.25, 25: 1.4},
             "max_singles_rating_gap": 0.75,
         },
-        "0d6625d8e4604d24",
+        "32f66b5dc2639fa2",
         id="enum-custom",
     ),
 ]

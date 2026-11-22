@@ -67,14 +67,14 @@ def _state(snap: dict[str, object], pid: str = "syn-a", fmt: str = "doubles") ->
     raise AssertionError(pid)
 
 
-def test_snapshot_version_is_8() -> None:
-    assert _snapshot()["snapshot_version"] == 8
+def test_snapshot_version_is_9() -> None:
+    assert _snapshot()["snapshot_version"] == 9
 
 
 def test_version_5_snapshot_is_rejected() -> None:
     snap = _snapshot()
     snap["snapshot_version"] = 5
-    with pytest.raises(SnapshotError, match="snapshot_version must be 8, not 5"):
+    with pytest.raises(SnapshotError, match="snapshot_version must be 9, not 5"):
         RatingEngine.from_snapshot(snap)
 
 

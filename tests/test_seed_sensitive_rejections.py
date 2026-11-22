@@ -350,7 +350,7 @@ def test_resume_seed_for_a_checkpointed_player_already_in_the_snapshot_is_a_play
 
 def test_snapshot_form_and_version() -> None:
     snap = _json(_gap_engine())
-    assert snap["snapshot_version"] == 8
+    assert snap["snapshot_version"] == 9
     assert snap["seed_sensitive_rejections"] == {
         "syn-mx": {"players": ["syn-p", "syn-q", "syn-r", "syn-s"], "rating_format": "doubles"},
         "syn-pg": {"players": ["syn-b", "syn-v", "syn-w", "syn-x"], "rating_format": "doubles"},
@@ -373,7 +373,7 @@ def test_round_trip_restores_the_record_and_the_refusal() -> None:
 def test_a_version_7_snapshot_does_not_load() -> None:
     snap = _json(_gap_engine())
     snap["snapshot_version"] = 7
-    with pytest.raises(SnapshotError, match="snapshot_version must be 8, not 7"):
+    with pytest.raises(SnapshotError, match="snapshot_version must be 9, not 7"):
         RatingEngine.from_snapshot(snap, GAPS)
 
 

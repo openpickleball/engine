@@ -13,7 +13,7 @@ import pytest
 
 from open_engine import Config, ConfigError, MatchType, ScoringType
 
-DEFAULT_FINGERPRINT = "17f2981186edf96c"
+DEFAULT_FINGERPRINT = "40d9d88d4ae408cd"
 
 MAPPING_FIELDS = (
     "scale_by_scoring",

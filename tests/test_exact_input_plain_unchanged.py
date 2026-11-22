@@ -1,7 +1,10 @@
 """Plain inputs give the same fingerprint, ratings, report, and fit as before #116.
 
 The pinned values were measured on c23ab5a, before the exact input type
-checks (issues #116, #118, #119). All ids are synthetic.
+checks (issues #116, #118, #119). Issue #155 re-pinned the fingerprint and
+SNAPSHOT_SHA when params_version joined the fingerprint payload and
+snapshot_version became 9; the old pins were confirmed equal to the same
+state without those changes. All ids are synthetic.
 """
 
 from __future__ import annotations
@@ -111,7 +114,7 @@ def _snapshot_sha() -> str:
 
 
 def test_default_fingerprint_unchanged() -> None:
-    assert Config().fingerprint() == "17f2981186edf96c"
+    assert Config().fingerprint() == "40d9d88d4ae408cd"
 
 
 def test_replay_snapshot_unchanged() -> None:
@@ -128,7 +131,7 @@ def test_fit_scale_unchanged() -> None:
     assert asdict(fit) == FIT_SCALE
 
 
-SNAPSHOT_SHA = "6020a5917012308bbb014760ce197ce4e18fd3ff004a85f3d5631047928ca801"
+SNAPSHOT_SHA = "cbad0f9833c3161dd339d85c8e1c164b4a17c0682797aa9957e07f212a87c7aa"
 EVALUATE_REPORT = {
     "scoring": None,
     "scale": None,

@@ -20,6 +20,11 @@ The pinned ratings, predictions, fits, and digests do depend on Config's
 defaults and the rating math, so a change to a default or to rating
 behavior, which changes published ratings anyway, needs these values
 pinned again.
+
+Issue #155 re-pinned the snapshot digests when snapshot_version became 9.
+The old pins were confirmed equal to the same state with snapshot_version 8;
+the new params_version and parameter_fingerprint keys are left out like the
+other version and fingerprint keys.
 """
 
 from __future__ import annotations
@@ -76,6 +81,8 @@ def _snapshot_digest(engine: RatingEngine) -> str:
     if isinstance(info, dict):
         info.pop("config_version")
         info.pop("config_fingerprint")
+        info.pop("params_version")
+        info.pop("parameter_fingerprint")
     return _digest(snap)
 
 
@@ -475,7 +482,7 @@ RECORD_EXPECTED: dict[str, list[str]] = {
         "ok 3adc3c2129c3b164",
         "ok d5aefdc6e0ab7575",
         "ok 36a3e0e218a647a2",
-        "9525e5f050cd49cb",
+        "aeda9062f14eb3c0",
     ],
     "default": [
         "ok a208a4118c6d0e0a",
@@ -554,7 +561,7 @@ RECORD_EXPECTED: dict[str, list[str]] = {
         "ok 3adc3c2129c3b164",
         "ok d5aefdc6e0ab7575",
         "ok 36a3e0e218a647a2",
-        "9525e5f050cd49cb",
+        "aeda9062f14eb3c0",
     ],
     "nofeed": [
         "ok a208a4118c6d0e0a",
@@ -633,7 +640,7 @@ RECORD_EXPECTED: dict[str, list[str]] = {
         "ok b8a90b932fe6994e",
         "ok 2d2d0959194459a8",
         "ok 36a3e0e218a647a2",
-        "6ba6b605710ce23a",
+        "ef0c894ca1f04446",
     ],
     "strict": [
         "ok 5199f201fc6d9676",
@@ -712,7 +719,7 @@ RECORD_EXPECTED: dict[str, list[str]] = {
         "ok 3adc3c2129c3b164",
         "ok 5199f201fc6d9676",
         "ok 36a3e0e218a647a2",
-        "801cdc59400fd933",
+        "d1c5dbae6013cc60",
     ],
 }
 
@@ -1793,7 +1800,7 @@ SNAPSHOT_EXPECTED: dict[str, str] = {
     "snapshot.players[9].ratings.singles.opponents['q8'] "
     "is after calculated_as_of in a "
     "resumable snapshot",
-    "default resumable late partner": "engine 8acfa891cb92d093 | engine 7b057f7eda9d66a9",
+    "default resumable late partner": "engine d599f56e26a5bfc5 | engine 04eb6af494f57bc5",
     "default resumable late partner + late inherited": "SnapshotError: "
     "snapshot.players[9].ratings.singles.inherited_live_updates "
     "must be 0 unless the state is "
@@ -3907,7 +3914,7 @@ SNAPSHOT_EXPECTED: dict[str, str] = {
     "duplicate is rejected "
     "before any rating is "
     "read",
-    "strict rejections reserved singles": "engine f10e8842c3dee303 | engine 27c090dd02dadfe2",
+    "strict rejections reserved singles": "engine ce944d68f0e8b67d | engine 6b6951897eab7f96",
     "strict rejections reserved singles + not in ledger_player_ids": "SnapshotError: "
     "snapshot.seed_sensitive_rejections['m000'].players "
     "names 'q0', which "
@@ -4147,7 +4154,7 @@ SNAPSHOT_EXPECTED: dict[str, str] = {
     "snapshot.players[0].ratings.singles.opponents['q2'] "
     "is after calculated_as_of in a "
     "resumable snapshot",
-    "strict resumable early partner": "engine 9112a66656868710 | engine fa09ef92c4e2dac2",
+    "strict resumable early partner": "engine 8a1df08808a7b7c8 | engine e49e4b116d63223f",
     "strict resumable early partner + early inherited": "SnapshotError: "
     "snapshot.players[0].ratings.singles.inherited_live_updates "
     "must be 0 unless the state is "
@@ -4308,7 +4315,7 @@ SNAPSHOT_EXPECTED: dict[str, str] = {
     "snapshot.players[9].ratings.singles.opponents['q8'] "
     "is after calculated_as_of in a "
     "resumable snapshot",
-    "strict resumable late partner": "engine 9112a66656868710 | engine fa09ef92c4e2dac2",
+    "strict resumable late partner": "engine 8a1df08808a7b7c8 | engine e49e4b116d63223f",
     "strict resumable late partner + late inherited": "SnapshotError: "
     "snapshot.players[9].ratings.singles.inherited_live_updates "
     "must be 0 unless the state is "
