@@ -107,7 +107,7 @@ def _engine_state(eng: RatingEngine) -> dict[str, object]:
         "players": eng.players,
         "processed_match_ids": eng.processed_match_ids,
         "reserved_match_ids": eng._reserved_match_ids,
-        "self_reported_log": eng.self_reported_log,
+        "self_reported_log": eng._self_reported_log,
         "content_keys": eng._content_keys,
         "possible_duplicates": eng.possible_duplicates,
         "calculated_as_of": eng.calculated_as_of,
@@ -160,7 +160,7 @@ def test_round_trip_keeps_number_types(engine: RatingEngine, snapshot: dict[str,
 
 def test_round_trip_covers_what_the_fixture_exercises(engine: RatingEngine) -> None:
     # Guard the fixture itself, so the round trip test checks real content.
-    assert engine.self_reported_log
+    assert engine._self_reported_log
     assert engine.replay_info is not None and engine.replay_info.matches_counted >= 6
     assert engine.players["syn-a"].account_user_id == "acct-2"
     assert engine.players["syn-b"].external_ids == {"external_standard": "ext-2"}
@@ -264,7 +264,7 @@ def test_snapshot_covers_every_engine_attribute(snapshot: dict[str, object]) -> 
         "players",
         "processed_match_ids",
         "_reserved_match_ids",
-        "self_reported_log",
+        "_self_reported_log",
         "calculated_as_of",
         "replay_info",
         "_content_keys",

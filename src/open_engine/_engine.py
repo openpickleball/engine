@@ -156,6 +156,11 @@ class RatingEngine:
     Holds players and processed matches, and records matches one at a time.
 
     Ratings recorded live are provisional. Use replay() for authoritative ratings.
+
+    The public attributes are for reading: cfg, players, processed_match_ids,
+    possible_duplicates, calculated_as_of, and replay_info. Writing to them,
+    or to the objects they hold, is unsupported: it skips validation and the
+    mark that lets a snapshot resume. Use the methods to change state.
     """
 
     def __init__(self, cfg: Config | None = None):
@@ -189,7 +194,7 @@ class RatingEngine:
         # collapses into the first.
         # Never in processed_match_ids.
         self._reserved_match_ids: set[str] = set()
-        self.self_reported_log: dict[MatchupKey, list[date]] = {}
+        self._self_reported_log: dict[MatchupKey, list[date]] = {}
         self.calculated_as_of: date | None = None
         self.replay_info: ReplayInfo | None = None
         # Content key (see _content_key) of each counted match, to the
@@ -296,7 +301,7 @@ class RatingEngine:
                 (match_id, {"players": list(players), "rating_format": fmt.value})
                 for match_id, (fmt, players) in self._seed_sensitive_rejections.items()
             ),
-            "self_reported_log": _log_form(self.self_reported_log),
+            "self_reported_log": _log_form(self._self_reported_log),
             "snapshot_version": SNAPSHOT_VERSION,
         }
         _read_snapshot(snapshot, self.cfg)
@@ -1135,7 +1140,7 @@ class RatingEngine:
         if parent_updates and parent_format is not None:
             self._commit(parent_format, parent_updates, live)
         if matchup is not None:
-            self.self_reported_log.setdefault(matchup, []).append(match.played_on)
+            self._self_reported_log.setdefault(matchup, []).append(match.played_on)
         self._content_keys.setdefault(content_key, match.match_id)
         if twin is not None:
             self.possible_duplicates[match.match_id] = twin
@@ -1168,9 +1173,8 @@ class RatingEngine:
                     return unconfirmed, repeat_factor, matchup
             matchup = _matchup_key(match)
             cutoff = _days_before(match.played_on, cfg.self_reported_repeat_window_days)
-            prior = sum(
-                1 for d in self.self_reported_log.get(matchup, []) if cutoff <= d <= match.played_on
-            )
+            logged = self._self_reported_log.get(matchup, [])
+            prior = sum(1 for d in logged if cutoff <= d <= match.played_on)
             if prior >= cfg.self_reported_max_repeats:
                 limited = MatchResult(
                     False, match.rating_format, RejectionReason.SELF_REPORTED_REPEAT_LIMIT
@@ -1553,7 +1557,7 @@ def _load_snapshot(engine: RatingEngine, snapshot: object) -> None:
     engine.players = state.players
     engine.processed_match_ids = state.processed_match_ids
     engine._reserved_match_ids = state.reserved_match_ids
-    engine.self_reported_log = state.self_reported_log
+    engine._self_reported_log = state.self_reported_log
     engine._content_keys = state.content_keys
     engine.possible_duplicates = state.possible_duplicates
     engine.calculated_as_of = state.calculated_as_of

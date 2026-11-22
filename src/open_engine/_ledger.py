@@ -34,7 +34,8 @@ def ledger_order(match: Match) -> tuple[date, int, datetime, int, str]:
         match: Exactly a Match.
 
     Returns:
-        The match's sort key.
+        The match's sort key. Compare keys only: the order they give is
+        part of the stability promise, and the key's shape is not.
 
     Raises:
         InvalidMatchError: played_at must be timezone-aware; a naive value

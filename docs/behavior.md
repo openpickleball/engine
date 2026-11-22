@@ -8,6 +8,30 @@ This is a transparent, configurable rating engine. It is not a reproduction of a
 
 This page holds the engine's published behavior notes and the requirements the backend must meet, moved here from the `engine.py` module docstring, the public docstrings, and the README. [`docs/model.md`](model.md) states the rating math. Many public docstrings name the section here that holds their edge cases.
 
+## Stability
+
+From 1.0.0, the engine follows strict Semantic Versioning. A breaking change to anything this section lists as covered needs a new major version. Before 1.0.0, a minor release may break it, and the changelog marks each break. `tests/api_surface.txt` records the public surface, and a test fails when the code no longer matches it.
+
+Covered:
+
+- Every name in `open_engine.__all__`, which the README's "Public API" section lists.
+- The parameters of every public function, constructor, and method: their names, order, kind (positional or keyword-only), and defaults.
+- The fields of each public dataclass and their order, the members and values of each public enum, and the error class hierarchy. Each failure these notes document keeps its error class.
+- The `RatingEngine` attributes `cfg`, `players`, `processed_match_ids`, `possible_duplicates`, `calculated_as_of`, and `replay_info`. They are for reading. Writing to them, or to the objects they hold, is unsupported: it skips validation and the mark that lets a snapshot resume.
+- The ledger rules:
+  - the order `ledger_order` gives ([Ledger order](#ledger-order)), but not the shape of its key;
+  - every row passed in is validated, including rows after `as_of`;
+  - rows that repeat a `match_id` count once only when they are the same match, and any other repeat raises `LedgerConflictError`;
+  - the result does not depend on the order rows arrive in;
+  - resuming from a checkpoint equals a full replay of the same ledger and seeds, or raises `SnapshotError`, except for the limits in [Replay and resume](#replay-and-resume).
+
+Not covered:
+
+- Snapshots. A snapshot is a cache that a replay can rebuild, and the ledger is the source of truth. A minor release may raise `snapshot_version`. A snapshot of an older version then raises `SnapshotError`, and a full replay rebuilds it ([Snapshots and checkpoints](#snapshots-and-checkpoints)).
+- Rating values. A minor release may change default `Config` values when parameters are retuned, so the same ledger can give other ratings. The changelog records each change, and `params_version` and the fingerprints show it.
+- Additions in a minor release: new exports, new optional keyword parameters, new `Config` fields (each changes every fingerprint), new fields at the end of an output dataclass, and new `RejectionReason` members. Code that reads a `RejectionReason` should handle a value it does not know.
+- Error message text, `repr` output, names reached only through `open_engine.engine`, `open_engine.winprob`, or a private module, and pickles made by another version. Keep the ledger: a full replay rebuilds the state under any version.
+
 ## Input types
 
 Every public entry point takes exact input types for each argument it checks, with three carve-outs: Config(...) numbers, mappings, and allowed_game_formats, seed state numbers, ExternalRatingSnapshot numbers, and snapshot numbers are read once and converted to plain values; matches and seed_players may be any iterable, read once into a list before any row is checked; and output dataclasses are not inputs.

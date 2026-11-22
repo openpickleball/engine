@@ -178,7 +178,7 @@ def test_the_property_ledgers_exercise_what_they_should() -> None:
     engines = [
         replay(synthetic_ledger(seed), _seeds(), as_of=START + timedelta(DAYS)) for seed in range(5)
     ]
-    assert all(e.self_reported_log for e in engines)
+    assert all(e._self_reported_log for e in engines)
     assert all(e.players["syn-m0"].ratings[MX].matches_played for e in engines)
     assert all(e.players["syn-m1"].ratings.get(DM) for e in engines)
     assert all(e.players["syn-w1"].ratings.get(DW) for e in engines)
