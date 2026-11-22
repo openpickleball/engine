@@ -16,6 +16,11 @@ time. The pinned ratings, results, and digests do depend on Config's
 defaults and the rating math, so a change to a default or to rating
 behavior, which changes published ratings anyway, needs these values
 pinned again.
+
+Issue #155 re-pinned the snapshot digests when snapshot_version became 9.
+The old pins were confirmed equal to the same state with snapshot_version 8;
+the new params_version and parameter_fingerprint keys are left out like the
+other version and fingerprint keys.
 """
 
 from __future__ import annotations
@@ -68,11 +73,13 @@ def _snapshot_digest(engine: RatingEngine) -> str:
     if isinstance(info, dict):
         info.pop("config_version")
         info.pop("config_fingerprint")
+        info.pop("params_version")
+        info.pop("parameter_fingerprint")
     return _digest(snap)
 
 
 def _config_digest(cfg: Config) -> str:
-    """A digest of every parameter but the two labels, which change no rating."""
+    """A digest of every parameter but the two version labels, which change no rating."""
     data = cfg.to_dict()
     data.pop("version")
     data.pop("params_version")
@@ -494,9 +501,9 @@ def test_live_records_keep_their_results(cfg_name: str) -> None:
 
 
 REPLAY_EXPECTED: dict[str, str] = {
-    "default": "646b768729ff2bdd 646b768729ff2bdd",
-    "nofeed": "03888d162d9428ac 03888d162d9428ac",
-    "strict": "0b260d1cd2d968a9 0b260d1cd2d968a9",
+    "default": "c21ac5d7311db73d c21ac5d7311db73d",
+    "nofeed": "f06e6581de992349 f06e6581de992349",
+    "strict": "d1d381db7a337409 d1d381db7a337409",
 }
 
 
@@ -853,7 +860,7 @@ SNAPSHOT_CASES = (
     + ["verified", "verified + digests", "verified + digest value", "verified + ledger players"]
 )
 SNAPSHOT_EXPECTED: dict[str, str] = {
-    "base": "engine 0b260d1cd2d968a9",
+    "base": "engine d1d381db7a337409",
     "calculated_as_of + replay_info": "SnapshotError: snapshot.calculated_as_of must be a "
     "date in YYYY-MM-DD form",
     "config version + fingerprint": "SnapshotError: snapshot.config_version '0.0.0' does "

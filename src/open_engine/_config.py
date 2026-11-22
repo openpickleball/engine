@@ -201,7 +201,8 @@ class Config:
     version labels included. parameter_fingerprint() identifies the parameter
     values alone: it leaves out version and params_version, so it survives a
     release that changes no parameter value, though not one that adds,
-    removes, or renames a field. to_dict() and from_dict() store and load a config.
+    removes, or renames a field or changes how a value is written in the
+    payload. to_dict() and from_dict() store and load a config.
 
     Every field is checked when the config is built, and any failure
     raises ConfigError. Mapping fields are stored as read-only copies, and
@@ -790,8 +791,9 @@ class Config:
         version labels, version and params_version. So the same values under
         another package version or params_version give the same parameter
         fingerprint, and a change to any other field changes it. Adding,
-        removing, or renaming a field changes it for every config. 16
-        lowercase hex characters, like fingerprint().
+        removing, or renaming a field, or changing how a value is written
+        in the payload, changes it for every config. 16 lowercase hex
+        characters, like fingerprint().
         """
         payload = self._payload()
         for name in _CONFIG_LABEL_FIELDS:

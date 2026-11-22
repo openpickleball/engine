@@ -104,7 +104,7 @@ Rating:
 
 Inputs:
 
-- `Config`: every rating parameter, with a fingerprint for provenance. `params_version` labels a published parameter set (`None` or `v<N>`), and `parameter_fingerprint()` hashes the parameter values without `version` and `params_version`, so it stays the same across releases that change no parameter value (a release that adds, removes, or renames a `Config` field changes it). Its mapping fields are read-only copies, and a config is hashable. Equal configs have the same fingerprint and hash. `Config.to_dict()` and `Config.from_dict()` store and load one with the same fingerprint.
+- `Config`: every rating parameter, with a fingerprint for provenance. `params_version` labels a published parameter set (`None` or `v<N>`), and `parameter_fingerprint()` hashes the parameter values without `version` and `params_version`, so it stays the same across releases that change no parameter value (a release that adds, removes, or renames a `Config` field, or changes how a value is written in the payload, changes it). Its mapping fields are read-only copies, and a config is hashable. Equal configs have the same fingerprint and hash. `Config.to_dict()` and `Config.from_dict()` store and load one with the same fingerprint.
 - `Match`: one match with its teams, game scores, date, format, and status. Only a completed match can count.
 - `MatchStatus`: how a match ended: completed, forfeit, retired, or incomplete (see "Match status").
 - `GameFormat`: how each game is scored (scoring type, points to, win by, cap).

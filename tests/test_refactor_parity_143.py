@@ -20,6 +20,11 @@ The pinned ratings, predictions, fits, and digests do depend on Config's
 defaults and the rating math, so a change to a default or to rating
 behavior, which changes published ratings anyway, needs these values
 pinned again.
+
+Issue #155 re-pinned the snapshot digests when snapshot_version became 9.
+The old pins were confirmed equal to the same state with snapshot_version 8;
+the new params_version and parameter_fingerprint keys are left out like the
+other version and fingerprint keys.
 """
 
 from __future__ import annotations
@@ -76,6 +81,8 @@ def _snapshot_digest(engine: RatingEngine) -> str:
     if isinstance(info, dict):
         info.pop("config_version")
         info.pop("config_fingerprint")
+        info.pop("params_version")
+        info.pop("parameter_fingerprint")
     return _digest(snap)
 
 
@@ -1793,7 +1800,7 @@ SNAPSHOT_EXPECTED: dict[str, str] = {
     "snapshot.players[9].ratings.singles.opponents['q8'] "
     "is after calculated_as_of in a "
     "resumable snapshot",
-    "default resumable late partner": "engine e55456f67d9b13d9 | engine 1578ad3ec35c3201",
+    "default resumable late partner": "engine d599f56e26a5bfc5 | engine 04eb6af494f57bc5",
     "default resumable late partner + late inherited": "SnapshotError: "
     "snapshot.players[9].ratings.singles.inherited_live_updates "
     "must be 0 unless the state is "
@@ -3907,7 +3914,7 @@ SNAPSHOT_EXPECTED: dict[str, str] = {
     "duplicate is rejected "
     "before any rating is "
     "read",
-    "strict rejections reserved singles": "engine d09359f8d01ba8cc | engine 3d568420f1cc419e",
+    "strict rejections reserved singles": "engine ce944d68f0e8b67d | engine 6b6951897eab7f96",
     "strict rejections reserved singles + not in ledger_player_ids": "SnapshotError: "
     "snapshot.seed_sensitive_rejections['m000'].players "
     "names 'q0', which "
@@ -4147,7 +4154,7 @@ SNAPSHOT_EXPECTED: dict[str, str] = {
     "snapshot.players[0].ratings.singles.opponents['q2'] "
     "is after calculated_as_of in a "
     "resumable snapshot",
-    "strict resumable early partner": "engine 4274d8bc54a48889 | engine f46474cc56477143",
+    "strict resumable early partner": "engine 8a1df08808a7b7c8 | engine e49e4b116d63223f",
     "strict resumable early partner + early inherited": "SnapshotError: "
     "snapshot.players[0].ratings.singles.inherited_live_updates "
     "must be 0 unless the state is "
@@ -4308,7 +4315,7 @@ SNAPSHOT_EXPECTED: dict[str, str] = {
     "snapshot.players[9].ratings.singles.opponents['q8'] "
     "is after calculated_as_of in a "
     "resumable snapshot",
-    "strict resumable late partner": "engine 4274d8bc54a48889 | engine f46474cc56477143",
+    "strict resumable late partner": "engine 8a1df08808a7b7c8 | engine e49e4b116d63223f",
     "strict resumable late partner + late inherited": "SnapshotError: "
     "snapshot.players[9].ratings.singles.inherited_live_updates "
     "must be 0 unless the state is "
