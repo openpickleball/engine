@@ -28,7 +28,8 @@ In short: a rating is a performance-based Elo rating. Each match compares the sh
 16. [Win probability](#win-probability)
 17. [Evaluation and calibration](#evaluation-and-calibration)
 18. [Parameters](#parameters)
-19. [What the model does not do](#what-the-model-does-not-do)
+19. [Assumptions](#assumptions)
+20. [What the model does not do](#what-the-model-does-not-do)
 
 ## Notation
 
@@ -262,9 +263,21 @@ M = 1.00 * (1 + 0.12 * 0) = 1.0                       weight = 1.00 * 1.0 * 1.0 
 rd' = 0.80 (no rd_as_of)   f = 1                      K = 0.60
 team A delta = +0.60 * 1.0 * 0.11111 = +0.06667       team B delta = -0.06667
 rd_new = max(0.10, 0.80 * (1 - 0.08 * 1.0)) = 0.736   imbalance = 0.0
+team A after = 3.56667                                team B after = 3.43333
 ```
 
 Sixty days later the same four players meet in a league best of 3 (11-9, 8-11, 11-6). Each RD first grows: `rd' = sqrt(0.736**2 + 0.012**2 * 60) = 0.7418463`, so `K = 0.12 + 0.48 * (rd' - 0.10) / 0.70 = 0.56012`, computed from the unrounded `rd'`. The weight is `0.90 * 1.0 * min(1.30, 1.00 * (1 + 0.12 * 2)) = 1.116`.
+
+```
+R_A = 3.56667   R_B = 3.43333   E = 1 / (1 + 10**(-0.13333 / 2.9)) = 0.52644
+P = 30 / 56 = 0.53571            S = P (win_weight 0)       surprise = 0.00927
+rd' = 0.7418463                  K = 0.56012                weight = 1.116
+team A delta = +0.56012 * 1.116 * 0.00927 = +0.00580      team B delta = -0.00580
+rd_new = max(0.10, 0.7418463 * (1 - 0.08 * 1.116)) = 0.67561    imbalance = 0.0
+team A after = 3.57246                                    team B after = 3.42754
+```
+
+Team A won 30 of the 56 points, a little more than the 52.6% point share its higher rating predicted, so it gains a little. Both teams have the same K, and nothing is clamped or frozen, so the changes cancel. Each value above is rounded to 5 places, as `MatchResult` reports it. The engine computes from unrounded values, so a figure recomputed from the rounded ones can differ in the last place. `tests/test_model_worked_example.py` records both matches and checks every figure here against the engine.
 
 ## Reliability
 
@@ -322,6 +335,8 @@ P   = 1 / (1 + exp(-a * ln(p_c / (1 - p_c))))
 ```
 
 `a = 1.0`, the default, leaves the probability unchanged apart from the clip. `RatingEngine.predict_win_probability` returns the calibrated value. Win probability is a prediction only: no rating reads it.
+
+**A gap as a win probability.** Under the default config (scale 2.9, `a = 1.0`), take one side-out game to 11, win by 2, with no cap (`GameFormat()`), best of 1. A team rating gap of 0.5 gives the higher team an expected point share of about 59.8% and about 83.1% to win the game. A gap of 1.0 gives about 68.9% of the points and about 97.1% to win. A small edge on each point adds up over a game, so the win probability is much further from 50% than the point share. These figures rest on a placeholder scale and a placeholder calibration `a`, and on the point independence assumption above, which only approximates side-out scoring. Do not read them as measured win rates. A different game format or number of games gives different figures. `tests/test_model_worked_example.py` checks both against `RatingEngine.predict_win_probability`.
 
 ## Evaluation and calibration
 
@@ -406,12 +421,22 @@ Every `Config` field the math reads, with its default. Status says what the defa
 
 The engine also has fixed constants in `_math.py`, each with a comment saying why it has its value: the expected-share exponent clamp (12), the reliability blend (0.60 and 0.40), the clamp detection tolerance (1e-12), the visible rounding loss (5e-6), and the reported decimal places (5 for `MatchResult` numbers, 3 for `PlayerSummary.rating`, 4 for `PlayerSummary.rd`, 1 for reliability). The win probability clip (1e-6) is `PROBABILITY_CLIP` in `winprob.py`. They are not `Config` fields, so the fingerprint does not record them. A change to one changes the engine itself, so it needs a release and a changelog entry.
 
+## Assumptions
+
+These are assumptions of how the update works, not claims that they hold for real play. Whether ratings built on them predict well is a question for out-of-sample evaluation.
+
+- **Matches are independent given the ratings before them.** Each update reads the match and the players' stored states before it: in the format being updated and, for a category match that feeds overall doubles, in overall doubles. No other match's result moves a rating in it. No later match revises an earlier update: a replay records its rows one at a time in ledger order, with no batch or retroactive fit. Two checks do look at earlier matches. The self-reported repeat count sets `repeat_factor` and can reject a match (see [Evidence weight](#evidence-weight)), and the likely-duplicate check can reject a match with the same content as an earlier one. Both count or compare earlier matches. Neither feeds an earlier match's result into the update.
+- **One model for singles and doubles.** Singles, overall doubles, and each doubles category use the same expected point share, match performance, evidence weight, K, and update. A player has a separate state in each rating format. The scale and the win calibration depend on the scoring type, not the rating format. The formats differ in team size, in which gap filter applies (`cfg.max_singles_rating_gap` in singles, `cfg.max_doubles_partner_gap` in any doubles format), and in the link from a category to overall doubles, both its starting state and its update (see [Starting states](#starting-states) and [Categories and overall doubles](#categories-and-overall-doubles)).
+- **No partner effect.** A team rating is the mean of its players' ratings. The model has no term for a pair, or for how well two partners play together. A partner enters a player's update only through the partner's rating in the team mean. The partner gap filter can reject a match, but it changes no update that counts.
+- **A closed pool.** A rating is measured against the players a player has met, directly or through others. It is not tied to an outside measure of skill (see [What a rating means](#what-a-rating-means)).
+- **Win probability** adds its own assumptions about points and games. They are stated in [Win probability](#win-probability).
+
 ## What the model does not do
 
 - **No rating drift for inactivity.** Inactivity can widen RD, which can raise K and lower reliability. It never moves a rating.
 - **No rating for a match that is not completed.** A forfeit, retirement, or unfinished match changes no rating. Rating a retirement on its finished games would need a declared `Config` parameter backed by out-of-sample evaluation.
 - **No zero-sum guarantee.** Each player moves by their own K, so a match can add rating to the pool or remove it. `imbalance` and `ReplayInfo.net_rating_created` report it, and the engine does not cap it.
 - **No floor on a winner's change** other than the rating range. The match performance note gives the cases.
-- **No conversion of external scores.** An imported rating seeds a starting rating only, and an imported reliability is never turned into RD or OPEN reliability.
+- **No conversion of external scores.** An imported rating is a seed only: it sets a starting state (see [Starting states](#starting-states)), and an imported reliability is never turned into RD or OPEN reliability.
 - **No use of game order in the update.** From the game scores, the rating update reads only each team's total points, the number of games, and which team won more games. The likely-duplicate check does compare scores in order, so under `cfg.reject_content_duplicates` a copy with its games reordered can count where a copy in the same order is rejected.
 - **No dependence on the replay date, for the rows it counts.** `replay(as_of=d)` records only the rows dated on or before `d`, and gives the same ratings as recording those rows live in ledger order. The replay date decides which rows are recorded and labels the result, but changes no update of a row it records.

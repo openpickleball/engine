@@ -14,7 +14,7 @@ Issue #47 asked for `docs/method.md`. `docs/model.md` (issue #125) now holds tha
 
 ## Acceptance criteria
 
-1. **Worked example, complete.** `docs/model.md` "A worked example" carries the second match (league best of 3, 11-9, 8-11, 11-6, sixty days later) through to its result: `E`, `P` (30 / 56), surprise, the deltas, imbalance, and each player's rating and RD after it. Figures measured on the default branch (see Proof): `E = 0.52644`, `P = 0.53571`, surprise `0.00927`, delta `+0.0058` for team A and `-0.0058` for team B, imbalance `0.0`, rating after `3.57246` (team A) and `3.42754` (team B), `rd_new = 0.7418463 * (1 - 0.08 * 1.116) = 0.67561`. The first match's text gains its after ratings (`3.56667` and `3.43333`) if not already shown. Round as the existing block does.
+1. **Worked example, complete.** `docs/model.md` "A worked example" carries the second match (league best of 3, 11-9, 8-11, 11-6, sixty days later) through to its result: `E`, `P` (30 / 56), surprise, the deltas, imbalance, and each player's rating and RD after it. Figures measured on the default branch (see Proof): `E = 0.52644`, `P = 0.53571`, surprise `0.00927`, delta `+0.00580` for team A and `-0.00580` for team B (written to 5 places like the rest of the block, so the test's text check pins the last place; `MatchResult` reports `0.0058`), imbalance `0.0`, rating after `3.57246` (team A) and `3.42754` (team B), `rd_new = 0.7418463 * (1 - 0.08 * 1.116) = 0.67561`. The first match's text gains its after ratings (`3.56667` and `3.43333`) if not already shown. Round as the existing block does.
 2. **Worked example test.** A new `tests/test_model_worked_example.py` records both matches with `RatingEngine.record` under `Config()` (invented ids `a1`, `a2`, `b1`, `b2`, dates as the doc gives or any fixed date sixty days apart). For each figure the doc's worked example states, it asserts both: the engine's value rounds to the stated figure, and the stated figure's text appears in the "A worked example" section of `docs/model.md` (read the file, cut the section from its heading to the next `## `). So a change to either the engine or the doc fails the test. Use `pytest.mark.parametrize` over a table of (label, stated text, engine value getter) where it reads clearly.
 3. **Assumptions.** `docs/model.md` gets an "Assumptions" section, listed in the contents, right before "What the model does not do". It states, each checked against the code:
    - Matches are independent given the ratings before them: each update reads only the match and the stored states, never other matches' results (no batch or retroactive fit inside a replay).
@@ -24,12 +24,13 @@ Issue #47 asked for `docs/method.md`. `docs/model.md` (issue #125) now holds tha
    - The win probability's own assumptions stay in "Win probability" (link to them, do not repeat).
    Any claim that does not hold for every input its conditions allow is narrowed (CLAUDE.md "Writing style").
 4. **Gap as win probability.** "Win probability" gains a short example: under the default config (scale 2.9, `a = 1.0`), for one side-out game to 11, win by 2, no cap (`GameFormat()`), best of 1, a team rating gap of 0.5 gives team A about 83.1% to win and a gap of 1.0 about 97.1%. Say these rest on a placeholder scale and calibration and on the point independence assumption, which only approximates side-out scoring. The test from criterion 2 (or a second test in the same file) checks these two figures against `RatingEngine.predict_win_probability` and their text in the "Win probability" section.
-5. `CHANGELOG.md` `## [Unreleased]` `### Changed`: documentation and a test only, no rating change (issue #47).
-6. Gate passes: `ruff check .`, `ruff format --check .`, `mypy src`, `pytest`.
+5. **External seed bullet** (scope addition approved by the maintainer during the work). In "What the model does not do", the bullet "No conversion of external scores" said an imported rating seeds a starting rating only. A seed also sets RD to `cfg.external_seed_rd` and an `initial_source_date` that freezes the player in matches on or before it (`_store_external_seed`, `_frozen_players`). Reword it to say an imported rating is a seed only that sets a starting state (link "Starting states"), and keep the rest of the bullet. No test.
+6. `CHANGELOG.md` `## [Unreleased]` `### Changed`: documentation and a test only, no rating change (issue #47).
+7. Gate passes: `ruff check .`, `ruff format --check .`, `mypy src`, `pytest`.
 
 ## Files that change
 
-- `docs/model.md`: worked example, a new "Assumptions" section with its contents entry, the "Win probability" example.
+- `docs/model.md`: worked example, a new "Assumptions" section with its contents entry, the "Win probability" example, the external seed bullet in "What the model does not do".
 - `tests/test_model_worked_example.py`: new.
 - `CHANGELOG.md`: one entry.
 - This plan.
@@ -48,7 +49,7 @@ Issue #47 asked for `docs/method.md`. `docs/model.md` (issue #125) now holds tha
 - "Matches independent given ratings" can read as a claim about prediction quality. State it as how the update works.
 - Win probability figures look strong (97% for a 1.0 gap). Keep the placeholder and side-out caveats beside them so nobody reads them as calibrated.
 
-Chose not to do: a new `docs/method.md` (model.md is the spec); any change to the math; the "What the model does not do" bullet on external scores (out of scope).
+Chose not to do: a new `docs/method.md` (model.md is the spec); any change to the math.
 
 ## Proof
 
