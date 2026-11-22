@@ -59,13 +59,13 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"      # or: uv venv && uv pip install -e ".[dev]"
 ```
 
-The gate, the same commands CI runs (`.github/workflows/test.yml`) on every supported Python version:
+The gate, the same commands CI runs (`.github/workflows/test.yml`). CI lints and type checks once, on 3.11, and runs the tests on every supported Python version, with coverage on 3.13 only (coverage tracing roughly triples the run time):
 
 ```bash
 ruff check .
 ruff format --check .
 mypy src
-pytest
+pytest -n auto               # pytest-xdist; plain `pytest` also works
 ```
 
 Other commands:
