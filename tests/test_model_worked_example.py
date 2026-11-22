@@ -24,13 +24,46 @@ from open_engine import (
     MatchType,
     RatingEngine,
     RatingFormat,
+    ScoringType,
     expected_point_share,
 )
 
 MODEL_DOC = Path(__file__).resolve().parents[1] / "docs" / "model.md"
 DOUBLES = RatingFormat.DOUBLES
 CFG = Config()
-SECOND_GAMES = ((11, 9), (8, 11), (11, 6))
+TEAM_A = ("a1", "a2")
+TEAM_B = ("b1", "b2")
+
+# The two matches the test feeds the engine. The doc's description of each
+# match is built from these same objects, so the doc's inputs and the
+# engine's inputs cannot differ.
+FIRST_MATCH = Match(
+    match_id="worked-1",
+    team_a=TEAM_A,
+    team_b=TEAM_B,
+    games=((11, 7),),
+    played_on=date(2026, 1, 10),
+    rating_format=DOUBLES,
+    match_type=MatchType.TOURNAMENT,
+    best_of=1,
+    game_format=GameFormat(),
+)
+SECOND_MATCH = Match(
+    match_id="worked-2",
+    team_a=TEAM_A,
+    team_b=TEAM_B,
+    games=((11, 9), (8, 11), (11, 6)),
+    played_on=date(2026, 3, 11),
+    rating_format=DOUBLES,
+    match_type=MatchType.LEAGUE,
+    best_of=3,
+    game_format=GameFormat(),
+)
+SECOND_GAMES = SECOND_MATCH.games
+
+# How the doc writes the values it names.
+SCORING_WORDS = {ScoringType.SIDE_OUT: "side-out", ScoringType.RALLY: "rally"}
+DAY_WORDS = {30: "Thirty", 60: "Sixty", 90: "Ninety"}
 
 
 def _section(heading: str) -> str:
@@ -44,15 +77,23 @@ def _section(heading: str) -> str:
 def _part(name: str) -> str:
     """One part of the doc a figure is checked in.
 
-    The worked example splits at its code fences: "first" and "second" are the
-    two matches' code blocks, "between" the prose between them, and "after" the
-    prose after the second block.
+    The worked example splits at its code fences: "intro" is the prose before
+    the first block, "first" and "second" are the two matches' code blocks,
+    "between" the prose between them, and "after" the prose after the second
+    block.
     """
     if name == "win probability":
         return _section("Win probability")
     pieces = _section("A worked example").split("```")
     assert len(pieces) == 5, "the worked example should hold exactly two code blocks"
-    return {"first": pieces[1], "between": pieces[2], "second": pieces[3], "after": pieces[4]}[name]
+    parts = {
+        "intro": pieces[0],
+        "first": pieces[1],
+        "between": pieces[2],
+        "second": pieces[3],
+        "after": pieces[4],
+    }
+    return parts[name]
 
 
 def _occurrences(text: str, context: str, figure: str) -> int:
@@ -70,7 +111,7 @@ class WorkedExample:
 
 
 def _states(engine: RatingEngine) -> dict[str, tuple[float, float]]:
-    states = {pid: engine.state(pid, DOUBLES) for pid in ("a1", "a2", "b1", "b2")}
+    states = {pid: engine.state(pid, DOUBLES) for pid in TEAM_A + TEAM_B}
     return {pid: (s.rating, s.rd) for pid, s in states.items()}
 
 
@@ -78,41 +119,20 @@ def _states(engine: RatingEngine) -> dict[str, tuple[float, float]]:
 def worked() -> WorkedExample:
     engine = RatingEngine(CFG)
     # The players are new, so each starts from the new player state.
-    before_first = dict.fromkeys(("a1", "a2", "b1", "b2"), CFG.default_rating)
-    first = engine.record(
-        Match(
-            match_id="worked-1",
-            team_a=("a1", "a2"),
-            team_b=("b1", "b2"),
-            games=((11, 7),),
-            played_on=date(2026, 1, 10),
-            rating_format=DOUBLES,
-            match_type=MatchType.TOURNAMENT,
-            best_of=1,
-            game_format=GameFormat(),
-        )
-    )
+    before_first = dict.fromkeys(TEAM_A + TEAM_B, CFG.default_rating)
+    first = engine.record(FIRST_MATCH)
     after_first = _states(engine)
-    second = engine.record(
-        Match(
-            match_id="worked-2",
-            team_a=("a1", "a2"),
-            team_b=("b1", "b2"),
-            games=SECOND_GAMES,
-            played_on=date(2026, 3, 11),  # sixty days later
-            rating_format=DOUBLES,
-            match_type=MatchType.LEAGUE,
-            best_of=3,
-            game_format=GameFormat(),
-        )
-    )
+    second = engine.record(SECOND_MATCH)
     return WorkedExample(first, second, before_first, after_first, _states(engine))
 
 
 def _k_first(w: WorkedExample) -> float:
     """Team A's K in the first match, from the engine's unrounded rating change."""
     raw_delta = w.after_first["a1"][0] - w.before_first["a1"]
-    surprise = 11 / 18 - expected_point_share(3.5, 3.5, CFG.scale_by_scoring[GameFormat().scoring])
+    ((points_a, points_b),) = FIRST_MATCH.games
+    surprise = points_a / (points_a + points_b) - expected_point_share(
+        3.5, 3.5, CFG.scale_by_scoring[GameFormat().scoring]
+    )
     return raw_delta / (w.first.effective_weight * surprise)
 
 
@@ -121,7 +141,9 @@ def _k_second(w: WorkedExample) -> float:
     rating_a = w.after_first["a1"][0]
     rating_b = w.after_first["b1"][0]
     scale = CFG.scale_by_scoring[GameFormat().scoring]
-    surprise = 30 / 56 - expected_point_share(rating_a, rating_b, scale)
+    points_a = sum(a for a, _ in SECOND_GAMES)
+    points_all = sum(a + b for a, b in SECOND_GAMES)
+    surprise = points_a / points_all - expected_point_share(rating_a, rating_b, scale)
     raw_delta = w.after_second["a1"][0] - rating_a
     return raw_delta / (w.second.effective_weight * surprise)
 
@@ -310,6 +332,59 @@ def test_worked_example_states_second_point_totals() -> None:
     assert _occurrences(_part("after"), "Team A won ", "30 of the 56 points") == 1
 
 
+def _games_text(match: Match) -> str:
+    return ", ".join(f"{a}-{b}" for a, b in match.games)
+
+
+def test_worked_example_states_the_engine_inputs() -> None:
+    first, second = FIRST_MATCH, SECOND_MATCH
+    # One game, so "one ... game" in the doc is the first match's best_of.
+    assert first.best_of == 1
+    assert len(first.games) == 1
+    first_text = (
+        f"one {first.match_type.value} game of {SCORING_WORDS[first.game_format.scoring]}"
+        f" scoring to {first.game_format.points_to}, won {_games_text(first)} by team A."
+    )
+    assert _occurrences(_part("intro"), "", first_text) == 1
+    start_text = f"starts at rating {CFG.default_rating} and RD {CFG.new_player_rd:.2f},"
+    assert _occurrences(_part("intro"), "", start_text) == 1
+    days = (second.played_on - first.played_on).days
+    assert second.game_format == first.game_format
+    second_text = (
+        f"{DAY_WORDS[days]} days later the same four players meet in a"
+        f" {second.match_type.value} best of {second.best_of} ({_games_text(second)})."
+    )
+    assert _occurrences(_part("between"), "", second_text) == 1
+
+
+@pytest.mark.parametrize("after", ["after_first", "after_second"])
+def test_teammates_move_together(worked: WorkedExample, after: str) -> None:
+    # The doc states one figure per team, so both players on a team must have it.
+    states = getattr(worked, after)
+    for team in (TEAM_A, TEAM_B):
+        assert states[team[0]] == states[team[1]]
+    result = worked.first if after == "after_first" else worked.second
+    for team in (TEAM_A, TEAM_B):
+        assert result.deltas[team[0]] == result.deltas[team[1]]
+    assert result.deltas[TEAM_A[0]] == -result.deltas[TEAM_B[0]]
+
+
+WIN_FORMAT = GameFormat()
+WIN_BEST_OF = 1
+
+
+def test_win_probability_example_states_its_inputs() -> None:
+    fmt = WIN_FORMAT
+    assert fmt.cap is None
+    text = (
+        f"Under the default config (scale {CFG.scale_by_scoring[fmt.scoring]},"
+        f" `a = {CFG.win_calibration_by_scoring[fmt.scoring]}`), take one"
+        f" {SCORING_WORDS[fmt.scoring]} game to {fmt.points_to}, win by {fmt.win_by},"
+        f" with no cap (`GameFormat()`), best of {WIN_BEST_OF}."
+    )
+    assert _occurrences(_part("win probability"), "", text) == 1
+
+
 def _seeded_singles(gap: float) -> RatingEngine:
     engine = RatingEngine(CFG)
     for pid, rating in (("p1", 3.5 + gap), ("p2", 3.5)):
@@ -326,26 +401,39 @@ def _seeded_singles(gap: float) -> RatingEngine:
     return engine
 
 
-# (gap, context before the point share, point share, context before the win
-# probability, win probability), each figure a percent as the doc states it.
+# (gap, the doc's sentence with {gap}, {share}, and {win} for the figures,
+# point share, win probability), each figure a percent as the doc states it.
 GAP_FIGURES = [
-    (0.5, "point share of about ", "59.8", "% and about ", "83.1"),
-    (1.0, "gives about ", "68.9", "% of the points and about ", "97.1"),
+    (
+        0.5,
+        "A team rating gap of {gap} gives the higher team an expected point share"
+        " of about {share}% and about {win}% to win the game.",
+        "59.8",
+        "83.1",
+    ),
+    (
+        1.0,
+        "A gap of {gap} gives about {share}% of the points and about {win}% to win.",
+        "68.9",
+        "97.1",
+    ),
 ]
 
 
-@pytest.mark.parametrize(("gap", "share_context", "share", "win_context", "win"), GAP_FIGURES)
+@pytest.mark.parametrize(
+    ("gap", "sentence", "share", "win"), GAP_FIGURES, ids=["gap 0.5", "gap 1.0"]
+)
 def test_gap_win_probability_matches_engine_and_doc(
-    gap: float, share_context: str, share: str, win_context: str, win: str
+    gap: float, sentence: str, share: str, win: str
 ) -> None:
     engine = _seeded_singles(gap)
     point_share = engine.predict_point_share(
-        ("p1",), ("p2",), RatingFormat.SINGLES, GameFormat().scoring
+        ("p1",), ("p2",), RatingFormat.SINGLES, WIN_FORMAT.scoring
     )
     probability = engine.predict_win_probability(
-        ("p1",), ("p2",), RatingFormat.SINGLES, GameFormat(), best_of=1
+        ("p1",), ("p2",), RatingFormat.SINGLES, WIN_FORMAT, best_of=WIN_BEST_OF
     )
     assert round(100 * point_share, 1) == float(share)
     assert round(100 * probability, 1) == float(win)
-    text = _part("win probability")
-    assert _occurrences(text, share_context, share + win_context + win + "%") == 1
+    stated = sentence.format(gap=gap, share=share, win=win)
+    assert _occurrences(_part("win probability"), "", stated) == 1
