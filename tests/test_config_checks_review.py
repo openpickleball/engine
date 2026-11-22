@@ -372,7 +372,9 @@ def test_int_subclass_keys_and_points_are_stored_as_ints() -> None:
 
 
 # Measured on origin/main (3845bec) before the key conversion. Every config here
-# builds on main, so its fingerprint must not change.
+# builds on main, so its fingerprint must not change. Re-pinned in issue #155
+# when params_version joined the fingerprint payload; the old pins were
+# confirmed equal to the same configs without that key.
 MAIN_FINGERPRINTS = [
     pytest.param({}, "40d9d88d4ae408cd", id="default"),
     pytest.param(

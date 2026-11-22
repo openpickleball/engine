@@ -1,7 +1,10 @@
 """Plain inputs give the same fingerprint, ratings, report, and fit as before #116.
 
 The pinned values were measured on c23ab5a, before the exact input type
-checks (issues #116, #118, #119). All ids are synthetic.
+checks (issues #116, #118, #119). Issue #155 re-pinned the fingerprint and
+SNAPSHOT_SHA when params_version joined the fingerprint payload and
+snapshot_version became 9; the old pins were confirmed equal to the same
+state without those changes. All ids are synthetic.
 """
 
 from __future__ import annotations

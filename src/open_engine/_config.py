@@ -163,7 +163,6 @@ _CONFIG_DAY_FIELDS = (
     "self_reported_repeat_window_days",
     "import_reliability_max_age_days",
 )
-# Type failures that keep the message an earlier release already raised.
 # The form of Config.params_version: v, then a positive whole number in
 # ASCII digits with no leading zero. fullmatch, so no trailing newline passes.
 _PARAMS_VERSION = re.compile(r"v[1-9][0-9]*")
@@ -171,10 +170,10 @@ _PARAMS_VERSION_FORM = (
     "params_version must be None or v<N>, with N a positive whole number "
     "and no leading zero, such as v1"
 )
-# The fields that label a config and change no rating: parameter_fingerprint()
+# The two version labels, which change no rating: parameter_fingerprint()
 # leaves them out.
 _CONFIG_LABEL_FIELDS = ("version", "params_version")
-
+# Type failures that keep the message an earlier release already raised.
 _CONFIG_TYPE_MESSAGES = {
     "established_reliability_threshold": (
         "established_reliability_threshold must be between 0 and 100"
@@ -199,9 +198,10 @@ class Config:
     Each default is an uncalibrated placeholder, a declared choice, or a label
     that changes no rating, as the parameter table in docs/model.md marks it.
     fingerprint() identifies the exact config behind published ratings, both
-    labels included. parameter_fingerprint() identifies the parameter values
-    alone: it leaves out version and params_version, so it survives a
-    release that changes no parameter. to_dict() and from_dict() store and load a config.
+    version labels included. parameter_fingerprint() identifies the parameter
+    values alone: it leaves out version and params_version, so it survives a
+    release that changes no parameter value, though not one that adds,
+    removes, or renames a field. to_dict() and from_dict() store and load a config.
 
     Every field is checked when the config is built, and any failure
     raises ConfigError. Mapping fields are stored as read-only copies, and
@@ -779,7 +779,7 @@ class Config:
         return json.dumps(self._payload(), sort_keys=True)
 
     def fingerprint(self) -> str:
-        """Stable hash of every field, both labels included, stored with each replay."""
+        """Stable hash of every field, both version labels included, stored with each replay."""
         return hashlib.sha256(self._canonical().encode()).hexdigest()[:16]
 
     def parameter_fingerprint(self) -> str:
@@ -787,9 +787,10 @@ class Config:
         Stable hash of the parameter values alone, stored with each replay.
 
         The same walk over every field as fingerprint(), without the two
-        labels, version and params_version. So the same values under
+        version labels, version and params_version. So the same values under
         another package version or params_version give the same parameter
-        fingerprint, and a change to any other field changes it. 16
+        fingerprint, and a change to any other field changes it. Adding,
+        removing, or renaming a field changes it for every config. 16
         lowercase hex characters, like fingerprint().
         """
         payload = self._payload()

@@ -105,7 +105,8 @@ def test_format_points_with_an_overridden_int_keep_their_value() -> None:
     cfg = Config(allowed_game_formats=frozenset({(ScoringType.RALLY, _IntOver(11))}))
     assert [points for _, points in cfg.allowed_game_formats] == [11]
     assert all(type(points) is int for _, points in cfg.allowed_game_formats)
-    # Measured on origin/main (3845bec).
+    # Measured on origin/main (3845bec). Re-pinned in issue #155 when params_version
+    # joined the fingerprint payload, confirmed equal to the old pin without that key.
     assert cfg.fingerprint() == "48fedc9c95fa743d"
     assert _deltas(cfg, 11) == (True, {"a": 0.0225, "b": 0.0225, "c": -0.0225, "d": -0.0225})
     assert _deltas(cfg, 21) == (False, {})
@@ -118,7 +119,8 @@ def test_a_game_length_key_with_an_overridden_int_keeps_its_value() -> None:
     )
     assert sorted(cfg.game_length_weights) == [11, 15, 21]
     assert all(type(key) is int for key in cfg.game_length_weights)
-    # Measured on origin/main (3845bec).
+    # Measured on origin/main (3845bec). Re-pinned in issue #155 when params_version
+    # joined the fingerprint payload, confirmed equal to the old pin without that key.
     assert cfg.fingerprint() == "e41b5f8f68a32c50"
     assert _deltas(cfg, 11) == (
         True,

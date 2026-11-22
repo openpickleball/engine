@@ -316,8 +316,9 @@ class RatingEngine:
         Args:
             snapshot: to_snapshot() output, or json.loads of its text.
             cfg: The Config the snapshot was taken under (default Config()): its
-                version and fingerprint must equal the snapshot's. The engine keeps
-                a copy of cfg rebuilt from its field values.
+                version and fingerprint must equal the snapshot's, and its
+                params_version and parameter_fingerprint() replay_info's. The
+                engine keeps a copy of cfg rebuilt from its field values.
 
         Returns:
             The rebuilt RatingEngine.

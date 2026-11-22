@@ -90,7 +90,8 @@ def test_an_in_range_int_whose_float_lies_keeps_main_fingerprint_and_ratings() -
             match_type=MatchType.TOURNAMENT,
         )
     )
-    # Measured on origin/main (3845bec).
+    # Measured on origin/main (3845bec). Re-pinned in issue #155 when params_version
+    # joined the fingerprint payload, confirmed equal to the old pin without that key.
     assert cfg.fingerprint() == "c650c26b65339a9b"
     assert doubles.effective_weight == 2.0
     assert doubles.deltas == {"a": 0.44444, "b": 0.44444, "c": -0.44444, "d": -0.44444}

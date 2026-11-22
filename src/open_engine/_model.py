@@ -557,27 +557,28 @@ class ReplayInfo:
     which leaves out version and params_version.
 
     net_rating_created is, per rating format, the rating the replay's
-    counted updates added to that pool (negative when they removed it): the
-    sum over every counted update of the unrounded rating changes of every
-    player in it, a frozen player adding 0.0. A category match adds its
-    category update to its own format and, when category_feeds_parent is
-    on and its overall doubles update counts, that update to doubles. Each
-    player moves by their own K, so it can be nonzero when K differs
+    counted updates added to that pool (negative when they removed it):
+    the sum over every counted update of the unrounded rating changes of
+    every player in it, a frozen player adding 0.0. A category match adds
+    its category update to its own format and, when category_feeds_parent
+    is on and its overall doubles update counts, that update to doubles.
+    Each player moves by their own K, so it can be nonzero when K differs
     between the teams, a player is clamped or frozen, or float rounding
-    leaves a residue (at any rating, since the total is never rounded), and
-    colluding accounts can grow it on purpose. It is stored as a read-only
-    mapping with a key for every RatingFormat in definition order (0.0
-    where nothing counted). Building a ReplayInfo copies the mapping given:
-    a key may be a RatingFormat or its str value, a missing format gets
-    0.0, and a value that is not a mapping, an unknown key, or a format
-    given twice raises SnapshotError (a ReplayInfo is built only by replay
-    and by snapshot loading). Updates are added in ledger order, and a
-    resume continues from the checkpoint's total, so a resume gives the
-    same floats as a full replay. Live updates after the replay do not
-    change it. The backend can add team_size * imbalance of each live
-    MatchResult (and its parent) to follow them; that is approximate
-    (imbalance is rounded to 5 places), and the next replay gives the
-    exact total.
+    leaves a residue (at any rating, since the total is never rounded),
+    and colluding
+    accounts can grow it on purpose. It is
+    stored as a read-only mapping with a key for every RatingFormat in
+    definition order (0.0 where nothing counted). Building a ReplayInfo
+    copies the mapping given: a key may be a RatingFormat or its str
+    value, a missing format gets 0.0, and a value that is not a mapping,
+    an unknown key, or a format given twice raises SnapshotError (a
+    ReplayInfo is built only by replay and by snapshot loading). Updates
+    are added in ledger order, and a resume continues from the checkpoint's total, so
+    a resume gives the same floats as a full replay. Live updates after
+    the replay do not change it. The backend can add team_size *
+    imbalance of each live MatchResult (and its parent) to follow them;
+    that is approximate (imbalance is rounded to 5 places), and the next
+    replay gives the exact total.
     """
 
     as_of: date

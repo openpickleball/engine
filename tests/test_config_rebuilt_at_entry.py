@@ -528,6 +528,9 @@ def _pin_config() -> Config:
 
 
 # Measured on a1490cd (the same engine as aa3a2d0), before the rebuild.
+# PIN_FINGERPRINT, PIN_REPLAY_SHA, and PIN_MID_SHA were re-pinned in issue #155
+# when params_version joined the fingerprint payload and snapshot_version
+# became 9; the old pins were confirmed equal to the same state without them.
 PIN_FINGERPRINT = "77ffce566422e748"
 PIN_REPLAY_SHA = "e98caf959efca3f80c926f9cef9557569290cb5dfcbe41ec42fd4c59d8c0b6a8"
 PIN_MID_SHA = "0b36b9f6b5301b7cd04c937e6028c44a64c069bc6ad98463782a492c06044d21"
