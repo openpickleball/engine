@@ -44,13 +44,15 @@ from open_engine import Config
 cfg = Config.from_parameter_set(json.loads(Path("params/v1.json").read_text()))
 ```
 
-It builds the config with `version` set to the running package version and `params_version` set to the file's label. Then it checks that the built config's `parameter_fingerprint()` equals the recorded one. Any failure raises `ConfigError`. A label inside `parameters` is rejected, so the values cannot override the file's label. [Config validation](behavior.md#config-validation) lists every check in order.
+It checks the file's label and recorded fingerprint against the sets this release publishes, a table in the engine. The label must name a published set, and the recorded fingerprint must be the one published for it. Then it builds the config with `version` set to the running package version and `params_version` set to the file's label, and checks that the built config's `parameter_fingerprint()` equals the recorded one. So a file cannot pass other values off as a published set or relabel one, which a label set by hand cannot promise. Any failure raises `ConfigError`. A label inside `parameters` is rejected, so the values cannot override the file's label. [Config validation](behavior.md#config-validation) lists every check in order.
+
+Publishing a new set needs an engine release that adds its file under `params/`, its entry in PARAMETERS.md, and its entry in the engine's table, together.
 
 ## Why `Config()` is not v1
 
-A new set replaces the `Config()` defaults only when it passes the default-change rule. The rule is fixed before the evaluation runs. It compares `Config()` against the new set on held-out matches, with a bootstrap interval on the difference in Brier score and in log loss. The gain bar needs the lower bound of the improvement above 0.
+A new set replaces the `Config()` defaults only when it passes the default-change rule. The rule is fixed before the evaluation runs. It compares `Config()` against the new set on held-out matches, with a bootstrap interval on the difference in Brier score and in log loss. The gain bar needs the lower bound of the improvement above 0. The non-inferiority bar needs the Brier lower bound above -0.005.
 
-v1 did not clear the gain bar. It passed the non-inferiority bar, so it is no worse within the stated margin, but it is not shown to be better. So `Config()` keeps its defaults, and v1 ships as a named set that a caller loads on purpose. PARAMETERS.md has the numbers.
+v1 did not clear the gain bar. It passed the non-inferiority bar, a Brier lower bound above -0.005, so it is no worse on Brier within that margin, but it is not shown to be better. So `Config()` keeps its defaults, and v1 ships as a named set that a caller loads on purpose. PARAMETERS.md has the numbers.
 
 ## Existing ratings when a set changes
 
@@ -66,7 +68,7 @@ Before a re-rate goes live, the shift by percentile is published: the old rating
 
 A new set needs two things, both produced by the evaluation outside this repository, since it reads real match data:
 
-- A gate on held-out data, fixed before the run. For a set that would replace the defaults, that is the default-change rule above. A set that does not replace them still needs held-out evidence that it is no worse than `Config()`, as v1's non-inferiority result gives. Tuning and scoring on the same matches does not count.
+- A gate on held-out data, fixed before the run. For a set that would replace the defaults, that is the default-change rule above. A set that does not replace them still needs held-out evidence that it is no worse than `Config()`, as v1's Brier non-inferiority result gives. Tuning and scoring on the same matches does not count.
 - A shift report: how ratings move by percentile under the new set, on the same ledger.
 
 The register entry cites the evaluation record by repository and path.

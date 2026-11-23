@@ -1,6 +1,6 @@
 # Parameter sets
 
-This register lists every published parameter set in `params/`. Each set is a named group of `Config` values, loaded on purpose with `Config.from_parameter_set`. `Config()` is not a published set. [docs/parameters.md](docs/parameters.md) explains the file format, the loader, and the rules for a new set.
+This register lists every published parameter set in `params/`. Each set is a named group of `Config` values, loaded on purpose by passing the parsed JSON of its file to `Config.from_parameter_set`, which checks it against the sets this engine release publishes. `Config()` is not a published set. [docs/parameters.md](docs/parameters.md) explains the file format, the loader, and the rules for a new set.
 
 Status: demonstration only. The engine's output is not an OPEN rating, and no OPEN rating is live. A published parameter set does not change that.
 
@@ -37,7 +37,7 @@ The rule was fixed before the run. It compared `Config()` against v1 on 1,018 po
 - Brier score: +0.004680, interval [-0.004359, +0.013895].
 - Log loss: +0.009338, interval [-0.010563, +0.029472].
 
-The gain bar needed the lower bound above 0. It failed. The non-inferiority bar, a lower bound above -0.005, passed. So `Config()` keeps its defaults, and v1 ships as a named set that a caller loads on purpose. The defaults will be checked again with the same rule on new data, after the future-play test the evaluation registered in advance.
+The gain bar needed the lower bound above 0. It failed. The non-inferiority bar, a Brier lower bound above -0.005, passed. It is set on Brier only: the log loss lower bound is below -0.005, so v1 is not shown to be no worse on log loss. So `Config()` keeps its defaults, and v1 ships as a named set that a caller loads on purpose. The defaults will be checked again with the same rule on new data, after the future-play test the evaluation registered in advance.
 
 ### Shift summary
 

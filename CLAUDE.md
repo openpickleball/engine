@@ -26,8 +26,8 @@ The engine is a demonstration. Its methods have not been validated on real match
 - `docs/behavior.md`: the published behavior notes (input types, errors, ledger order, duplicates, late matches, imbalance, snapshots, and the rest) and the production requirements the backend must meet.
 - `docs/releasing.md`: the release workflow, its one-time setup, and the steps for each release.
 - `docs/parameters.md`: maintenance and parameter versioning: identity, the parameter set file format and loader, the default-change rule, the existing-ratings rule, and the retuning rules.
-- `params/`: the published parameter sets, one `v<N>.json` per set, loaded with `Config.from_parameter_set`. Parameter values and aggregate counts only, never match data. The sdist ships it, since `tests/test_parameter_sets.py` reads it; the wheel does not.
-- `PARAMETERS.md`: the register of published parameter sets, with each set's values, data, evidence, and fingerprints. A test checks that it has a heading and the fingerprint for every file in `params/`.
+- `params/`: the published parameter sets, one `v<N>.json` per set, loaded with `Config.from_parameter_set`. Parameter values and aggregate counts only, never match data. The sdist ships it, since the tests read it; the wheel does not. A new set adds its file, its `PARAMETERS.md` entry, and its pair in `_PUBLISHED_PARAMETER_SETS` in `_config.py` together, in a release; `tests/test_parameter_set_binding.py` checks the table matches the files.
+- `PARAMETERS.md`: the register of published parameter sets, with each set's values, data, evidence, and fingerprints. A test checks that it has a `## <label>` heading and the exact file and fingerprint line for every file in `params/`. The sdist ships it, since that test reads it.
 - `docs/plans/`: plans recorded for issues before their work lands.
 
 ## Stack

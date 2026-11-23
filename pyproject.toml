@@ -52,6 +52,7 @@ only-include = [
     "examples",
     "params",
     "README.md",
+    "PARAMETERS.md",
     "LICENSE",
     "CHANGELOG.md",
     "pyproject.toml",

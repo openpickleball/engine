@@ -19,6 +19,7 @@ ALLOWED = [
     "examples/basic_match.py",
     "params/v1.json",
     "README.md",
+    "PARAMETERS.md",
     "LICENSE",
     "CHANGELOG.md",
     "pyproject.toml",

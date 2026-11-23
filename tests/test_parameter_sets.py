@@ -117,8 +117,10 @@ def test_v1_file_fields() -> None:
     )
 
 
-def test_v1_file_is_sorted_two_space_json() -> None:
-    text = V1_PATH.read_text(encoding="utf-8")
+@pytest.mark.parametrize("path", sorted(PARAMS_DIR.glob("*.json")), ids=lambda p: p.name)
+def test_every_params_file_is_sorted_two_space_json(path: Path) -> None:
+    # A duplicate key or any other non-canonical form changes the text.
+    text = path.read_text(encoding="utf-8")
     assert text == json.dumps(json.loads(text), indent=2, sort_keys=True) + "\n"
 
 
@@ -361,19 +363,40 @@ def test_every_published_file_loads_under_its_name() -> None:
         assert path.name == f"{cfg.params_version}.json"
 
 
-def _register_section(label: str) -> str:
-    """The text of PARAMETERS.md under the "## <label>" heading, up to the next one."""
-    text = (ROOT / "PARAMETERS.md").read_text(encoding="utf-8")
-    heading = f"## {label}\n"
-    assert heading in text, f"PARAMETERS.md has no heading for {label}"
-    return text.split(heading, 1)[1].split("\n## ", 1)[0]
+def _register_section(label: str) -> list[str]:
+    """The lines of PARAMETERS.md under the whole line "## <label>", up to the next "## "."""
+    lines = (ROOT / "PARAMETERS.md").read_text(encoding="utf-8").splitlines()
+    heading = f"## {label}"
+    assert lines.count(heading) == 1, f"PARAMETERS.md has no single heading line {heading!r}"
+    rest = lines[lines.index(heading) + 1 :]
+    ends = [i for i, line in enumerate(rest) if line.startswith("## ")]
+    return rest[: ends[0]] if ends else rest
 
 
 def test_every_published_file_is_in_the_register() -> None:
     for path in sorted(PARAMS_DIR.glob("*.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
-        section = _register_section(data["params_version"])
-        assert f"`{data['parameter_fingerprint']}`" in section
+        label = data["params_version"]
+        fingerprint = data["parameter_fingerprint"]
+        line = f"File: `params/{label}.json`. Parameter fingerprint: `{fingerprint}`."
+        assert line in _register_section(label)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "## v10\n\nFile: `params/v1.json`. Parameter fingerprint: `f9149f3c38a01efc`.\n",
+        "### v1\n\nFile: `params/v1.json`. Parameter fingerprint: `f9149f3c38a01efc`.\n",
+        "## v1\n\nParameter fingerprint: `1058623faf5d9367`, not `f9149f3c38a01efc`.\n",
+    ],
+)
+def test_the_register_check_needs_the_exact_heading_and_line(
+    text: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "PARAMETERS.md").write_text(text, encoding="utf-8")
+    monkeypatch.setattr(f"{__name__}.ROOT", tmp_path)
+    with pytest.raises(AssertionError):
+        test_every_published_file_is_in_the_register()
 
 
 def test_params_holds_only_json_files() -> None:
