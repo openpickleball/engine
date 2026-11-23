@@ -879,32 +879,32 @@ class Config:
         """
         Load a published parameter set, the parsed JSON of a params/v<N>.json file.
 
-        The label is trusted only after the values hash to the recorded
-        parameter fingerprint. The engine reads no file: pass json.loads
-        output. Keys other than params_version, parameter_fingerprint, and
-        parameters (provenance, data volume, dates) are allowed and not read.
+        The label must name a set this release publishes, the recorded
+        fingerprint must be the one published for it, and the values must
+        hash to it, so a file cannot pass other values off as a published
+        set or relabel one. A new set needs an engine release that adds it.
+        The engine reads no file: pass json.loads output. Other keys are
+        allowed and not read.
 
         Args:
             data: Exactly a dict with exactly str keys, holding
-                params_version (the label, v<N>), parameter_fingerprint (the
-                recorded parameter_fingerprint()), and parameters (to_dict()
-                output without version and params_version).
+                params_version (v<N>), parameter_fingerprint, and parameters
+                (to_dict() output without version and params_version).
 
         Returns:
             The Config, with version the running package version and
             params_version the file's label.
 
         Raises:
-            ConfigError: in this order, data that is not exactly a dict; a
-                key that is not exactly a str; a missing params_version,
-                parameter_fingerprint, or parameters (all missing ones named,
-                sorted); a params_version or parameter_fingerprint (in that
-                order) that is not exactly a str; parameters that is not
-                exactly a dict, has a key that is not exactly a str, or holds
-                version or params_version; any from_dict() failure on the
-                parameters with the two labels added, then a params_version
-                that is not of the form v<N>; and a parameter_fingerprint()
-                of the built config that differs from the recorded one.
+            ConfigError: in this order, data not exactly a dict; a key not
+                exactly a str; a missing required key; a params_version, then
+                parameter_fingerprint, not exactly a str; parameters not
+                exactly a dict, with a key not exactly a str, or holding a
+                label; a fingerprint not 16 lowercase hex characters; a label
+                not v<N>; a label this release does not publish; a fingerprint
+                not the published one; a from_dict() failure; and values that
+                do not hash to the fingerprint. See docs/behavior.md, "Config
+                validation".
         """
         # Exactly dict and exactly str keys, as in from_dict(), checked
         # before any lookup so no caller code runs.
@@ -945,6 +945,31 @@ class Config:
                 f"Parameter set parameters must not hold {', '.join(smuggled)}:"
                 " the labels come from params_version and the running package"
             )
+        # Both passed the exact str check above.
+        label = cast(str, label)
+        recorded = cast(str, recorded)
+        # Neither str is echoed until it has passed its form check, so a
+        # message never grows with the caller's input.
+        if _FINGERPRINT_FORM.fullmatch(recorded) is None:
+            raise ConfigError(
+                "Parameter set parameter_fingerprint must be exactly 16 lowercase hex characters"
+            )
+        if _PARAMS_VERSION.fullmatch(label) is None:
+            raise ConfigError(
+                "Parameter set params_version must be v<N>, with N a positive whole"
+                " number and no leading zero, such as v1"
+            )
+        published = dict(_PUBLISHED_PARAMETER_SETS).get(label)
+        if published is None:
+            raise ConfigError(
+                "Parameter set params_version is not a parameter set this release publishes"
+                f" (it publishes {', '.join(name for name, _ in _PUBLISHED_PARAMETER_SETS)})"
+            )
+        if recorded != published:
+            raise ConfigError(
+                f"Parameter set {label} parameter_fingerprint {recorded!r} differs from"
+                f" the published {published!r}"
+            )
         cfg = cls.from_dict({**params, "version": __version__, "params_version": label})
         computed = cfg.parameter_fingerprint()
         if computed != recorded:
@@ -957,6 +982,15 @@ class Config:
 
 # The keys from_parameter_set() reads from a parameter set.
 _PARAMETER_SET_KEYS = ("params_version", "parameter_fingerprint", "parameters")
+# The form of a parameter_fingerprint(): 16 lowercase hex characters.
+_FINGERPRINT_FORM = re.compile(r"[0-9a-f]{16}")
+# The parameter sets this release publishes, as (params_version,
+# parameter_fingerprint) pairs in label order. A new set is published by
+# adding its file under params/, its PARAMETERS.md entry, and its pair
+# here, in one release. tests/test_parameter_set_binding.py checks that
+# this table and the params/ files match.
+_PUBLISHED_PARAMETER_SETS: tuple[tuple[str, str], ...] = (("v1", "f9149f3c38a01efc"),)
+
 _CONFIG_FIELD_NAMES = frozenset(f.name for f in fields(Config))
 
 

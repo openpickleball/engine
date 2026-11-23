@@ -28,8 +28,12 @@ From the merged evaluation record in the private repository GeoBradDev/open-engi
    3. The keys `params_version`, `parameter_fingerprint`, and `parameters` are present (message names the missing ones, sorted). Other keys (provenance, data volume, dates) are allowed and not read.
    4. `params_version` and then `parameter_fingerprint` are each exactly a `str`. (Added in implementation: `Config` accepts `params_version=None`, so without this check a file with a `null` label and the right values would load as an unlabelled config instead of raising, and criterion 4 requires `None` to raise. The form `v<N>` is still checked by `Config` in step 6.)
    5. `parameters` is exactly a `dict` with exactly-`str` keys, and holds neither `version` nor `params_version` (the labels come from the file's own `params_version` and the running package, never from the values).
-   6. The config is built with `Config.from_dict({**parameters, "version": __version__, "params_version": data["params_version"]})`, so `from_dict`'s key and value checks and `Config`'s `params_version` check (exact `str`, form `v<N>`) apply unchanged.
-   7. `cfg.parameter_fingerprint()` equals `data["parameter_fingerprint"]`, else `ConfigError` naming both the recorded and the computed fingerprint, and the label.
+   6. `parameter_fingerprint` is exactly 16 lowercase hex characters (`[0-9a-f]{16}`, full match). The message does not echo the value.
+   7. `params_version` has the form `v<N>` (the message does not echo the value).
+   8. `params_version` is a key of `_PUBLISHED_PARAMETER_SETS` in `_config.py`, the release's table of (label, parameter fingerprint) pairs, else `ConfigError` "is not a parameter set this release publishes" naming the published labels.
+   9. `parameter_fingerprint` equals the table's fingerprint for that label, else `ConfigError` naming the label, the recorded and the published fingerprint.
+   10. The config is built with `Config.from_dict({**parameters, "version": __version__, "params_version": data["params_version"]})`, so `from_dict`'s key and value checks apply unchanged.
+   11. `cfg.parameter_fingerprint()` equals `data["parameter_fingerprint"]`, else `ConfigError` naming both the recorded and the computed fingerprint, and the label.
    Returns the config, with `version` the running package version and `params_version` the file's label.
 2. **`params/v1.json`** at the repository root, JSON with two-space indent and sorted keys, ending in a newline:
    - `params_version`: `"v1"`.
@@ -49,8 +53,8 @@ From the merged evaluation record in the private repository GeoBradDev/open-engi
 1. `params/v1.json` exists with the fields in decision 2. `Config.from_parameter_set(json.loads(...))` returns a config with `params_version == "v1"`, `parameter_fingerprint() == "f9149f3c38a01efc"`, `version == __version__`, the four V1 values exactly as listed, and every other field equal to `Config()`'s.
 2. The file's `parameters` equal the loaded config's `to_dict()` without the two labels, key for key.
 3. Hashing the file's `parameters` plus `"version": "0.3.0.dev0"` with `json.dumps(sort_keys=True)` and SHA-256 (first 16 hex) gives `22b53a37587d6881`, the fingerprint the evaluation recorded.
-4. `from_parameter_set` raises `ConfigError` for: a non-dict (and a dict subclass); a non-str top-level key; each of the three required keys missing; a non-str `parameter_fingerprint`; a non-dict `parameters`; `parameters` with a non-str key; `parameters` holding `version` or `params_version`; a `parameters` missing a field or with an unknown field; a malformed or non-str `params_version` (`"v01"`, `"1"`, `1`, `None`); a changed value (for example `k_min` + 1e-12) with the original fingerprint; the right values with a wrong fingerprint. The mismatch message names the recorded and computed fingerprints. Extra top-level keys are accepted.
-5. Every `params/*.json` file loads, its name is `<params_version>.json`, and `PARAMETERS.md` has a heading for its label and states its `parameter_fingerprint` (a test checks both).
+4. `from_parameter_set` raises `ConfigError` for: a non-dict (and a dict subclass); a non-str top-level key; each of the three required keys missing; a non-str `parameter_fingerprint`; a non-dict `parameters`; `parameters` with a non-str key; `parameters` holding `version` or `params_version`; a `parameters` missing a field or with an unknown field; a malformed or non-str `params_version` (`"v01"`, `"1"`, `1`, `None`); a changed value (for example `k_min` + 1e-12) with the original fingerprint; the right values with a wrong fingerprint. The mismatch message names the recorded and computed fingerprints. Extra top-level keys are accepted. Review round 1 adds: a self-consistent forged `v1` (other values with their own true fingerprint), the v1 values relabelled `v2`, a self-consistent unknown label, a fingerprint that is not 16 lowercase hex characters (message bounded, value not echoed), a test that `_PUBLISHED_PARAMETER_SETS` and the `params/` files match exactly, and one test per adjacent pair of checks (`tests/test_parameter_set_binding.py` and `tests/test_parameter_set_check_order.py`, both frozen). A relabelled set no longer loads.
+5. Every `params/*.json` file loads, its name is `<params_version>.json`, its text is canonical (`json.dumps(json.loads(text), indent=2, sort_keys=True) + "\n"`), and `PARAMETERS.md` has the whole line `## <label>` with the exact line ``File: `params/<label>.json`. Parameter fingerprint: `<fp>`.`` in that section (a test checks each). The sdist ships `PARAMETERS.md` too, since the test reads it.
 6. `PlayerSummary` ends with `params_version` and `parameter_fingerprint`; a default engine's summary gives `None` and `"1058623faf5d9367"`, and an engine on the loaded v1 config gives `"v1"` and `"f9149f3c38a01efc"`.
 7. `Config()` defaults are unchanged (`Config().parameter_fingerprint() == "1058623faf5d9367"` still passes; no default edited).
 8. `tests/api_surface.txt` is regenerated by `python tests/test_api_surface.py` and differs only by `from_parameter_set` and the two `PlayerSummary` fields.
@@ -83,6 +87,14 @@ From the merged evaluation record in the private repository GeoBradDev/open-engi
 - A future `Config` field addition makes every published file fail to load (missing key and a new fingerprint). That is intended; the docs page says what that release must do. Not done here: rewriting files.
 - Riskiest step: docs claims about re-rating and identity; keep them true of the code (`from_snapshot`'s checks exist in `_snapshot.py`).
 - Not done: the change-cap helper, a `to_parameter_set` writer, a length bound on N, any `Config()` default change.
+
+## Review round 1
+
+- The loader compared the values only with a fingerprint from the same file, so any self-consistent file loaded under any label. It now checks the label and the recorded fingerprint against `_PUBLISHED_PARAMETER_SETS` (decision 1, checks 6 to 9). A new set needs an engine release that adds its file, its register entry, and its table entry together.
+- The documented order put the label form after `from_dict`, but `Config` checks it before any value. With the table check the label is validated before `from_dict`; the docstring and docs state the real order, and a test covers each adjacent pair.
+- A malformed fingerprint was echoed into the message without bound. Messages now echo a fingerprint or label only after it passed its form check.
+- Docs: the non-inferiority bar is on Brier only; `docs/model.md` names the two labels again; the changelog marks the two new `PlayerSummary` fields as breaking (no defaults); the loader is described as taking parsed JSON and checking the published table.
+- Tests: the register test requires the exact heading and fingerprint line, and every `params/*.json` file is checked for canonical text. `PARAMETERS.md` ships in the sdist.
 
 ## Proof
 
