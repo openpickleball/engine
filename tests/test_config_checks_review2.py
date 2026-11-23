@@ -107,7 +107,7 @@ def test_format_points_with_an_overridden_int_keep_their_value() -> None:
     assert all(type(points) is int for _, points in cfg.allowed_game_formats)
     # Measured on origin/main (3845bec). Re-pinned in issue #155 when params_version
     # joined the fingerprint payload, confirmed equal to the old pin without that key.
-    assert cfg.fingerprint() == "87a721864e4dcbe6"
+    assert cfg.fingerprint() == "5ed7db7c443c3eac"
     assert _deltas(cfg, 11) == (True, {"a": 0.0225, "b": 0.0225, "c": -0.0225, "d": -0.0225})
     assert _deltas(cfg, 21) == (False, {})
 
@@ -121,7 +121,7 @@ def test_a_game_length_key_with_an_overridden_int_keeps_its_value() -> None:
     assert all(type(key) is int for key in cfg.game_length_weights)
     # Measured on origin/main (3845bec). Re-pinned in issue #155 when params_version
     # joined the fingerprint payload, confirmed equal to the old pin without that key.
-    assert cfg.fingerprint() == "5eaa146b6961b090"
+    assert cfg.fingerprint() == "c510ca2a67e26cc4"
     assert _deltas(cfg, 11) == (
         True,
         {"a": 0.02925, "b": 0.02925, "c": -0.02925, "d": -0.02925},

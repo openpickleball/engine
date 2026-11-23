@@ -39,10 +39,10 @@ A standard external rating system is the intended source of imported ratings, wh
 
 ## Install
 
-A release candidate is on TestPyPI, the Python test index. It is not on PyPI. Install it with:
+A release candidate is on TestPyPI, the Python test index. Install it with:
 
 ```bash
-pip install -i https://test.pypi.org/simple/ openpickleball-engine==1.0.0rc1
+pip install -i https://test.pypi.org/simple/ openpickleball-engine==1.0.0rc2
 ```
 
 A release candidate is for trying the package and for pinning an evaluation to a released version. Its outputs are not OPEN ratings.

@@ -89,7 +89,7 @@ The sdist ships only the paths in `only-include` under `[tool.hatch.build.target
 
 CI also runs `.github/workflows/dco.yml` (the `sign-off` check) on every pull request and the OpenSSF Scorecard workflow. GitHub Actions are pinned by commit SHA with the version in a comment; keep that form when Dependabot or a contributor bumps one.
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`, which calls `test.yml` as its gate and publishes to TestPyPI (see `docs/releasing.md`). The `package` job and the release build install their tools from `.github/requirements/release.txt`, a hash-pinned lock. Never edit it by hand: regenerate it with the command in its header, on Linux (see `docs/releasing.md`).
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which calls `test.yml` as its gate and publishes to TestPyPI and then, after a second approval, to PyPI (see `docs/releasing.md`). The `package` job and the release build install their tools from `.github/requirements/release.txt`, a hash-pinned lock. Never edit it by hand: regenerate it with the command in its header, on Linux (see `docs/releasing.md`).
 
 ## Tests
 

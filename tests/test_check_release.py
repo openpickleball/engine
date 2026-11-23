@@ -35,6 +35,7 @@ def check_release() -> ModuleType:
     [
         pytest.param("v0.2.0", [sdist("0.2.0"), wheel("0.2.0")], id="release"),
         pytest.param("v0.3.0.dev1", [sdist("0.3.0.dev1"), wheel("0.3.0.dev1")], id="dev"),
+        pytest.param("v1.0.0rc2", [sdist("1.0.0rc2"), wheel("1.0.0rc2")], id="rc"),
         pytest.param("v0.2.0", [wheel("0.2.0"), sdist("0.2.0")], id="wheel-first"),
     ],
 )
@@ -70,6 +71,12 @@ def test_matching_tag_and_files_pass(
             [sdist("0.3.0.dev1"), wheel("0.3.0.dev1")],
             r"tag 'v0\.3\.0-dev1' does not match version '0\.3\.0\.dev1'",
             id="non-canonical",
+        ),
+        pytest.param(
+            "v1.0.0-rc2",
+            [sdist("1.0.0rc2"), wheel("1.0.0rc2")],
+            r"tag 'v1\.0\.0-rc2' does not match version '1\.0\.0rc2'",
+            id="non-canonical-rc",
         ),
         pytest.param(
             "v0.2.0",
