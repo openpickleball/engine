@@ -32,7 +32,7 @@ A repository admin does this by hand, before the first tag is pushed.
    - Workflow name: `release.yml`
    - Environment name: `pypi`
 
-   Do this before pushing the first tag that should reach PyPI. Without it, `publish-pypi` fails after TestPyPI has already taken the version. Then register the publisher and use "Re-run failed jobs" on that run, not "Re-run all jobs": TestPyPI rejects a second upload of the same version.
+   Do this before pushing the first tag that should reach PyPI. Without it, `publish-pypi` fails after TestPyPI has already taken the version. If that happens, register the publisher on pypi.org and, within 30 days of the run, use "Re-run failed jobs" on it, not "Re-run all jobs": TestPyPI rejects a second upload of the same version.
 
 The first successful publish to each index turns its pending publisher into a normal one and creates the project there.
 
