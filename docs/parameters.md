@@ -10,7 +10,7 @@ A config has two labels and two fingerprints.
 
 - `Config.version` is the package version. It changes in every release.
 - `Config.params_version` is the parameter set label, `v<N>`, or `None` when the config is not a published set. Any config can carry any label, so a label alone proves nothing.
-- `Config.parameter_fingerprint()` hashes every field but those two labels. It names the parameter values. The same values under another release or another label give the same fingerprint.
+- `Config.parameter_fingerprint()` hashes every field but those two labels. It names the parameter values. The same values under another label, or under another release that does not change the `Config` payload, give the same fingerprint.
 - `Config.fingerprint()` hashes every field, both labels included. It names the exact config.
 
 A label is trusted only when the parameter fingerprint equals the one published for that set.
@@ -83,4 +83,10 @@ Early on, parameters are retuned at data milestones, such as 5,000, 10,000, and 
 
 ## A release that changes the `Config` payload
 
-Adding, removing, or renaming a `Config` field, or changing how `to_dict()` writes a value, changes every parameter fingerprint. Every published file then fails to load: the loader reports a missing or unknown key, or a fingerprint that does not match. That is intended, since a fingerprint must name exactly the values behind a rating. Such a release must publish new files for the sets it keeps, each under a new label, with a register entry that says what changed and gives the new fingerprint.
+Adding, removing, or renaming a `Config` field, or changing how `to_dict()` writes a value, changes every parameter fingerprint. A file written for the old payload then fails to load: the loader reports a missing or unknown key, or a fingerprint that does not match. That is intended, since a fingerprint must name exactly the values behind a rating.
+
+A label keeps naming the same rating behavior across releases. So a release that changes the payload rewrites each published file in the same change. The file keeps its label. A new field is set to the value that leaves every rating as it was, and a removed or renamed field is removed or renamed. The file gets the new `parameter_fingerprint`, and the engine's table of published sets (`_PUBLISHED_PARAMETER_SETS`) gets the matching entry. The set's register entry in PARAMETERS.md records the release and both the old and the new fingerprint.
+
+If no value can keep a set's ratings unchanged, the set is retired: that change removes its file and its table entry, and its register entry says so. A new label is published for the new behavior, with the evidence a new set needs.
+
+A file and its table entry always describe the payload of the release that ships them. So every file in `params/` loads under the release it ships with.

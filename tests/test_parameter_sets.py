@@ -399,6 +399,12 @@ def test_the_register_check_needs_the_exact_heading_and_line(
         test_every_published_file_is_in_the_register()
 
 
+def test_the_published_table_repeats_no_label() -> None:
+    from open_engine._config import _PUBLISHED_PARAMETER_SETS
+
+    assert len(_PUBLISHED_PARAMETER_SETS) == len(dict(_PUBLISHED_PARAMETER_SETS))
+
+
 def test_params_holds_only_json_files() -> None:
     assert sorted(p.suffix for p in PARAMS_DIR.iterdir()) == [".json"] * len(
         list(PARAMS_DIR.iterdir())
