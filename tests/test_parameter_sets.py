@@ -1,9 +1,10 @@
 """Published parameter sets and their loader (issue #48, the V1 part).
 
-params/v<N>.json holds a named parameter set. Config.from_parameter_set
-loads one and trusts its label only after the values hash to the recorded
-parameter fingerprint. The files hold parameter values and aggregate counts
-only, no match data. All player and match ids in this module are synthetic.
+src/open_engine/params/v<N>.json holds a named parameter set.
+Config.from_parameter_set loads one and trusts its label only after the
+values hash to the recorded parameter fingerprint. The files hold parameter
+values and aggregate counts only, no match data. All player and match ids
+in this module are synthetic.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from open_engine import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-PARAMS_DIR = ROOT / "params"
+PARAMS_DIR = ROOT / "src" / "open_engine" / "params"
 V1_PATH = PARAMS_DIR / "v1.json"
 START = date(2026, 3, 2)
 LABELS = ("version", "params_version")
@@ -378,15 +379,19 @@ def test_every_published_file_is_in_the_register() -> None:
         data = json.loads(path.read_text(encoding="utf-8"))
         label = data["params_version"]
         fingerprint = data["parameter_fingerprint"]
-        line = f"File: `params/{label}.json`. Parameter fingerprint: `{fingerprint}`."
+        line = (
+            f"File: `src/open_engine/params/{label}.json`. Parameter fingerprint: `{fingerprint}`."
+        )
         assert line in _register_section(label)
 
 
 @pytest.mark.parametrize(
     "text",
     [
-        "## v10\n\nFile: `params/v1.json`. Parameter fingerprint: `f9149f3c38a01efc`.\n",
-        "### v1\n\nFile: `params/v1.json`. Parameter fingerprint: `f9149f3c38a01efc`.\n",
+        "## v10\n\nFile: `src/open_engine/params/v1.json`."
+        " Parameter fingerprint: `f9149f3c38a01efc`.\n",
+        "### v1\n\nFile: `src/open_engine/params/v1.json`."
+        " Parameter fingerprint: `f9149f3c38a01efc`.\n",
         "## v1\n\nParameter fingerprint: `1058623faf5d9367`, not `f9149f3c38a01efc`.\n",
     ],
 )

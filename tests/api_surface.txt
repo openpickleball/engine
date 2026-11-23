@@ -45,6 +45,8 @@ dataclass Config(object) init=True repr=True eq=False order=False unsafe_hash=Fa
     classmethod from_dict(cls, data: Mapping[str, object]) -> Config
     classmethod from_parameter_set(cls, data: Mapping[str, object]) -> Config
     def parameter_fingerprint(self) -> str
+    classmethod published(cls, label: str) -> Config
+    classmethod published_sets(cls) -> tuple[str, ...]
     def to_dict(self) -> dict[str, object]
 
 exception ConfigError(OpenEngineError)

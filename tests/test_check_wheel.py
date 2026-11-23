@@ -10,6 +10,7 @@ from types import ModuleType
 import pytest
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "check_wheel.py"
+PACKAGE_DIR = Path(__file__).parents[1] / "src" / "open_engine"
 DIST_INFO = "openpickleball_engine-0.0.0.dist-info"
 PACKAGE = [
     "open_engine/__init__.py",
@@ -30,6 +31,7 @@ PACKAGE = [
     "open_engine/engine.py",
     "open_engine/winprob.py",
     "open_engine/py.typed",
+    "open_engine/params/v1.json",
 ]
 METADATA = [
     f"{DIST_INFO}/METADATA",
@@ -85,6 +87,10 @@ def test_problems_is_empty_for_clean_names(check_wheel: ModuleType) -> None:
         f"{DIST_INFO}/../stray.txt",
         f"{DIST_INFO}//RECORD",
         "open_engine/./engine.py",
+        "open_engine/params/v2.json",
+        "open_engine/params/sub/v1.json",
+        "open_engine/params//v1.json",
+        "params/v1.json",
     ],
 )
 def test_unexpected_member_fails(
@@ -124,8 +130,19 @@ def test_more_than_one_dist_info_fails(check_wheel: ModuleType) -> None:
 
 
 def test_directory_entries_are_allowed(check_wheel: ModuleType) -> None:
-    names = ["open_engine/", f"{DIST_INFO}/", *ALLOWED]
+    names = ["open_engine/", "open_engine/params/", f"{DIST_INFO}/", *ALLOWED]
     assert check_wheel.problems(names) == []
+
+
+def test_package_files_are_the_files_in_the_package_directory(check_wheel: ModuleType) -> None:
+    """A file added under src/open_engine, a parameter set among them, must be in the check."""
+    on_disk = {
+        path.relative_to(PACKAGE_DIR).as_posix()
+        for path in PACKAGE_DIR.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts
+    }
+    assert set(check_wheel.PACKAGE_FILES) == on_disk
+    assert {name.removeprefix("open_engine/") for name in PACKAGE} == on_disk
 
 
 @pytest.mark.parametrize(
@@ -135,6 +152,11 @@ def test_directory_entries_are_allowed(check_wheel: ModuleType) -> None:
             [*ALLOWED, "open_engine/__pycache__/"],
             "unexpected member: open_engine/__pycache__/",
             id="package-subdirectory-entry",
+        ),
+        pytest.param(
+            [*ALLOWED, "open_engine/params/sub/"],
+            "unexpected member: open_engine/params/sub/",
+            id="params-subdirectory-entry",
         ),
         pytest.param(
             [*ALLOWED, "open_engine/sub/pkg/"],
