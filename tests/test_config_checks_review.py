@@ -376,15 +376,15 @@ def test_int_subclass_keys_and_points_are_stored_as_ints() -> None:
 # when params_version joined the fingerprint payload; the old pins were
 # confirmed equal to the same configs without that key.
 MAIN_FINGERPRINTS = [
-    pytest.param({}, "7334117efa23cc98", id="default"),
+    pytest.param({}, "30dc01fa90e94c97", id="default"),
     pytest.param(
         {"scale_by_scoring": {"side_out": 2.9, "rally": 2.9}},
-        "7334117efa23cc98",
+        "30dc01fa90e94c97",
         id="str-scale-keys",
     ),
     pytest.param(
         {"win_calibration_by_scoring": {"side_out": 1.2, "rally": 0.8}},
-        "2d99846043c85440",
+        "376c5da83fe155f6",
         id="str-calibration-keys",
     ),
     pytest.param(
@@ -396,12 +396,12 @@ MAIN_FINGERPRINTS = [
                 "self_reported": 0.3,
             }
         },
-        "0dced2b08a369675",
+        "af2b1d3c73e4129f",
         id="str-match-weight-keys",
     ),
     pytest.param(
         {"allowed_game_formats": frozenset({("rally", 11), ("side_out", 15)})},
-        "9795ad22cb234629",
+        "192717fa32b75fcc",
         id="str-format-entries",
     ),
     pytest.param(
@@ -410,7 +410,7 @@ MAIN_FINGERPRINTS = [
             "game_length_weights": {11: 1.0, 15: 1.05, 21: 1.25, 25: 1.4},
             "max_singles_rating_gap": 0.75,
         },
-        "6c883029c4c96142",
+        "fe61faacaea10515",
         id="enum-custom",
     ),
 ]

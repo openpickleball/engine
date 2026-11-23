@@ -114,7 +114,7 @@ def _snapshot_sha() -> str:
 
 
 def test_default_fingerprint_unchanged() -> None:
-    assert Config().fingerprint() == "7334117efa23cc98"
+    assert Config().fingerprint() == "30dc01fa90e94c97"
 
 
 def test_replay_snapshot_unchanged() -> None:
@@ -131,7 +131,7 @@ def test_fit_scale_unchanged() -> None:
     assert asdict(fit) == FIT_SCALE
 
 
-SNAPSHOT_SHA = "9a383acaed4886f37e67220d6fa50c93dc1607219702049b00d7ba7ba2092440"
+SNAPSHOT_SHA = "23b83d59f5db1ca169a307282a624dc4f330d7b43489ab4021d06526fd35d2cb"
 EVALUATE_REPORT = {
     "scoring": None,
     "scale": None,

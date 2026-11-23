@@ -39,13 +39,13 @@ A standard external rating system is the intended source of imported ratings, wh
 
 ## Install
 
-A release candidate is on TestPyPI, the Python test index. Install it with:
+The package is on PyPI. Install it with:
 
 ```bash
-pip install -i https://test.pypi.org/simple/ openpickleball-engine==1.0.0rc2
+pip install openpickleball-engine
 ```
 
-A release candidate is for trying the package and for pinning an evaluation to a released version. Its outputs are not OPEN ratings.
+To reproduce a result, such as an evaluation, pin the exact version (`openpickleball-engine==1.0.0`). The package's outputs are not OPEN ratings.
 
 ## Setup and tests
 
@@ -111,11 +111,11 @@ The rules behind each step are in [`docs/behavior.md`](https://github.com/openpi
 ## Public API
 
 <!-- public-api:start -->
-These are the public names, all importable from `open_engine`. The API may change in any 0.x release.
+These are the public names, all importable from `open_engine`.
 
 Names not listed here are internal, including everything reached only through `open_engine.engine` or `open_engine.winprob`. They can change or disappear in any release.
 
-From 1.0.0, the public API follows strict Semantic Versioning: a breaking change needs a new major version. The promise covers the names below, the parameters and defaults of every public function and method (other than `Config` defaults), the fields of each dataclass, the members and values of each enum, the error classes and which one each documented failure raises, and the `RatingEngine` attributes `cfg`, `players`, `processed_match_ids`, `possible_duplicates`, `calculated_as_of`, and `replay_info`, which are for reading only. It also covers the ledger rules: the order `ledger_order` gives, the duplicate and conflict rules, and that resuming equals a full replay or raises, within the limits in [Replay and resume](https://github.com/openpickleball/engine/blob/main/docs/behavior.md#replay-and-resume). It does not cover snapshots (a minor release may raise `snapshot_version`, an older snapshot raises `SnapshotError`, and a full replay rebuilds it), rating values and default `Config` values (retuned in minor releases and recorded in the changelog), additions in a minor release, stored `Config.to_dict()` output, error message text, internal modules, or pickles made by another version. `RatingEngine.player()` returns the engine's own `Player` record, not a copy, and `RatingEngine.state()` returns the engine's own stored `RatingState` (a starting state for a format with no stored state is a new copy). A later update replaces a stored `RatingState` with a new object, so one returned earlier keeps the old values. Changing a `Player` or `RatingState` in place is unsupported and outside this promise. A `MatchResult` is new output for each call. A published parameter set's values never change: retuning publishes a new label, such as `v2`, and a change to the `Config()` defaults comes in a minor release. [Stability](https://github.com/openpickleball/engine/blob/main/docs/behavior.md#stability) has the full list.
+Since 1.0.0, the public API follows strict Semantic Versioning: a breaking change needs a new major version. The promise covers the names below, the parameters and defaults of every public function and method (other than `Config` defaults), the fields of each dataclass, the members and values of each enum, the error classes and which one each documented failure raises, and the `RatingEngine` attributes `cfg`, `players`, `processed_match_ids`, `possible_duplicates`, `calculated_as_of`, and `replay_info`, which are for reading only. It also covers the ledger rules: the order `ledger_order` gives, the duplicate and conflict rules, and that resuming equals a full replay or raises, within the limits in [Replay and resume](https://github.com/openpickleball/engine/blob/main/docs/behavior.md#replay-and-resume). It does not cover snapshots (a minor release may raise `snapshot_version`, an older snapshot raises `SnapshotError`, and a full replay rebuilds it), rating values and default `Config` values (retuned in minor releases and recorded in the changelog), additions in a minor release, stored `Config.to_dict()` output, error message text, internal modules, or pickles made by another version. `RatingEngine.player()` returns the engine's own `Player` record, not a copy, and `RatingEngine.state()` returns the engine's own stored `RatingState` (a starting state for a format with no stored state is a new copy). A later update replaces a stored `RatingState` with a new object, so one returned earlier keeps the old values. Changing a `Player` or `RatingState` in place is unsupported and outside this promise. A `MatchResult` is new output for each call. A published parameter set's values never change: retuning publishes a new label, such as `v2`, and a change to the `Config()` defaults comes in a minor release. [Stability](https://github.com/openpickleball/engine/blob/main/docs/behavior.md#stability) has the full list.
 
 Rating:
 

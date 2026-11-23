@@ -21,7 +21,7 @@ from open_engine import (
     ScoringType,
 )
 
-DEFAULT_FINGERPRINT = "7334117efa23cc98"
+DEFAULT_FINGERPRINT = "30dc01fa90e94c97"
 LIMIT = 2.0**511
 MAX_DAYS = (date.max - date.min).days
 HUGE_INT = 10**5000

@@ -506,7 +506,8 @@ def test_readme_lists_exactly_the_public_api() -> None:
 
 def test_readme_api_section_states_its_limits() -> None:
     section = _readme_api_section()
-    assert "The API may change in any 0.x release." in section
+    assert "Since 1.0.0, the public API follows strict Semantic Versioning" in section
+    assert "0.x release" not in section
     assert "`open_engine.engine`" in section
     assert "`open_engine.winprob`" in section
     assert "internal" in section

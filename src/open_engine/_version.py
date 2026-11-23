@@ -6,4 +6,4 @@ outputs are not OPEN ratings, and a version number does not change that.
 
 from __future__ import annotations
 
-__version__ = "1.0.0rc2"
+__version__ = "1.0.0"
