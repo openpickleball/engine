@@ -22,7 +22,6 @@ Highlights since 1.0.0rc1:
 ### Added
 
 - `.github/workflows/release.yml` has a `publish-pypi` job. It runs after `publish-testpypi` succeeds, in the `pypi` environment, and publishes the same files to PyPI with trusted publishing. `docs/releasing.md` describes the two approvals and the one-time PyPI setup (issue #169).
-
 - `Config.published(label)`, a classmethod that loads a parameter set this release publishes, such as `Config.published("v1")`, from the file the package ships. It reads `open_engine/params/<label>.json` with `importlib.resources` and passes the parsed JSON to `Config.from_parameter_set`, so it makes the same label and fingerprint checks. A label that is not exactly a str, a label this release does not publish, and a packaged file that is missing, unreadable, or not JSON raise `ConfigError`, the error `from_parameter_set` raises for an unpublished label. Only a label in the engine's table is used to find a file, and the message for an unpublished label does not show it. `docs/behavior.md` ("Config validation") lists the checks in order (issue #165).
 - `Config.published_sets()`, a classmethod that returns the labels this release publishes, in order, so callers do not hard-code them. It returns `("v1",)` (issue #165).
 - The wheel ships the published parameter sets, so an installed package loads `v1` without a repository checkout. CI's `package` job now installs the built wheel alone in a clean virtual environment and loads every published set from it (`scripts/check_installed_wheel.py`) (issue #165).

@@ -32,7 +32,7 @@ A repository admin does this by hand, before the first tag is pushed.
    - Workflow name: `release.yml`
    - Environment name: `pypi`
 
-   Do this before pushing the first tag that should reach PyPI. Without it, `publish-pypi` fails after TestPyPI has already taken the version, and the release needs the next version number.
+   Do this before pushing the first tag that should reach PyPI. Without it, `publish-pypi` fails after TestPyPI has already taken the version. Then register the publisher and use "Re-run failed jobs" on that run, not "Re-run all jobs": TestPyPI rejects a second upload of the same version.
 
 The first successful publish to each index turns its pending publisher into a normal one and creates the project there.
 
@@ -56,17 +56,17 @@ GitHub runs the `release.yml` from the tagged commit. Someone who can push a tag
 
    If you tag a local commit instead (for example after pushing straight to `main`), push `main` first. A tag on a commit that is not yet on `main` fails the `main` check.
 3. Watch the Release run. The `testpypi` approval request appears only after `build` succeeds. Before approving, check that the commit SHA of the run is the merged release commit on `main`.
-4. Check the project page at https://test.pypi.org/p/openpickleball-engine.
-5. Approve `pypi`. Its request appears only after `publish-testpypi` succeeds. Check the commit SHA again before approving.
-6. Check the project page at https://pypi.org/p/openpickleball-engine, then install the release from PyPI in a clean virtual environment outside the checkout and load a published parameter set:
+4. Check the project page at https://test.pypi.org/p/openpickleball-engine, then install the release from TestPyPI in a clean virtual environment outside the checkout and load a published parameter set. The package has no dependencies, so TestPyPI alone is enough:
 
    ```bash
-   python -m venv /tmp/open-engine-check && /tmp/open-engine-check/bin/pip install --no-cache-dir openpickleball-engine==1.0.0rc2 && cd /tmp && /tmp/open-engine-check/bin/python -I -c "import open_engine; print(open_engine.__version__, open_engine.Config.published('v1').parameter_fingerprint())"
+   python3 -m venv --clear /tmp/open-engine-check && /tmp/open-engine-check/bin/pip install --no-cache-dir -i https://test.pypi.org/simple/ openpickleball-engine==1.0.0rc2 && cd /tmp && /tmp/open-engine-check/bin/python -I -c "import open_engine; print(open_engine.__version__, open_engine.Config.published('v1').parameter_fingerprint())"
    ```
 
    Use the version you tagged. It prints that version and `v1`'s parameter fingerprint, `f9149f3c38a01efc`. A release candidate installs only when the version is pinned, as here, or with `pip install --pre`.
+5. Approve `pypi` only after that check passes. Its request appears only after `publish-testpypi` succeeds. Check the commit SHA again before approving. If the check fails, reject the request: the version stays on TestPyPI only, and the fix ships as the next version.
+6. Check the project page at https://pypi.org/p/openpickleball-engine, then run the same check against PyPI: the same command without `-i https://test.pypi.org/simple/`.
 
-A version can be uploaded only once. If a publish fails after the upload, or the build was wrong, bump to the next version and tag again: the next dev number for a dev release (`0.3.0.dev2`), the next candidate number for a release candidate (`1.0.0rc2`), or the next patch version for a final release (`0.3.1`). Do not move an existing tag.
+A version can be uploaded only once. If a publish fails after the upload, or the build was wrong, bump to the next version and tag again: the next dev number for a dev release (`0.3.0.dev2`), the next candidate number for a release candidate (`1.0.0rc3`), or the next patch version for a final release (`0.3.1`). Do not move an existing tag.
 
 ## The build tool lock
 
