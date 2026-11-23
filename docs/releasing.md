@@ -1,6 +1,6 @@
 # Releasing
 
-Pushing a tag that starts with `v` runs `.github/workflows/release.yml`. It builds the package and publishes it to TestPyPI. The real PyPI is not set up yet. The engine is still a demonstration, and a published package is not an OPEN rating.
+Pushing a tag that starts with `v` runs `.github/workflows/release.yml`. It builds the package and publishes it to TestPyPI. The real PyPI is not set up yet. The engine is the reference implementation, and a published package is not an OPEN rating.
 
 The workflow uses Trusted Publishing. TestPyPI trusts a short-lived token that GitHub issues to this one workflow, so no upload token is stored anywhere.
 
@@ -38,7 +38,7 @@ GitHub runs the `release.yml` from the tagged commit. Someone who can push a tag
 
 ## Making a release
 
-1. In a pull request, set `__version__` in `src/open_engine/_version.py` to the new version. It is the one place the version is set: `open_engine.__version__`, the `Config.version` default, and the build all read it. A dev release such as `0.3.0.dev1` counts as a release. Use the canonical version form (`0.3.0.dev1`, not `0.3.0-dev1`). Update the TestPyPI install line in `README.md` to the same version; `tests/test_readme.py` fails if it pins any other. For every release, dev releases included, move the `## [Unreleased]` entries in `CHANGELOG.md` under a new section for the version, and update the compare links at the bottom.
+1. In a pull request, set `__version__` in `src/open_engine/_version.py` to the new version. It is the one place the version is set: `open_engine.__version__`, the `Config.version` default, and the build all read it. A dev release such as `0.3.0.dev1` or a release candidate such as `1.0.0rc1` counts as a release. Use the canonical version form (`0.3.0.dev1`, not `0.3.0-dev1`; `1.0.0rc1`, not `1.0.0-rc1`). Update the TestPyPI install line in `README.md` to the same version; `tests/test_readme.py` fails if it pins any other. For every release, dev releases and release candidates included, move the `## [Unreleased]` entries in `CHANGELOG.md` under a new section for the version, and update the compare links at the bottom.
 2. Merge it, then tag the commit on `main` and push the tag:
 
    ```bash
@@ -49,7 +49,7 @@ GitHub runs the `release.yml` from the tagged commit. Someone who can push a tag
 3. Watch the Release run. The `testpypi` approval request appears only after `build` succeeds. Before approving, check that the commit SHA of the run is the merged release commit on `main`.
 4. Check the project page at https://test.pypi.org/p/openpickleball-engine.
 
-A version can be uploaded only once. If a publish fails after the upload, or the build was wrong, bump to the next version and tag again: the next dev number for a dev release (`0.3.0.dev2`), or the next patch version for a final release (`0.3.1`). Do not move an existing tag.
+A version can be uploaded only once. If a publish fails after the upload, or the build was wrong, bump to the next version and tag again: the next dev number for a dev release (`0.3.0.dev2`), the next candidate number for a release candidate (`1.0.0rc2`), or the next patch version for a final release (`0.3.1`). Do not move an existing tag.
 
 ## The build tool lock
 

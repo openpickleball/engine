@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 import inspect
+from pathlib import Path
 
 import pytest
 
@@ -12,6 +14,7 @@ import open_engine.engine as engine_module
 MODULE_DOC_MAX_LINES = 40
 PUBLIC_DOC_MAX_LINES = 30
 SUMMARY_MAX_CHARS = 100
+SOURCE_MODULES = sorted((Path(__file__).parents[1] / "src" / "open_engine").glob("*.py"))
 
 
 def _public_objects() -> list[tuple[str, object]]:
@@ -51,13 +54,25 @@ PUBLIC = _public_objects()
 FUNCTIONS_WITH_PARAMETERS = [(name, obj) for name, obj in PUBLIC if _has_parameters(obj)]
 
 
-def test_module_docstring_keeps_the_demonstration_label() -> None:
+def test_module_docstring_keeps_the_status_label() -> None:
     doc = engine_module.__doc__
     assert doc is not None
     text = " ".join(doc.split())
-    assert "Status: demonstration only." in text
-    assert "the outputs are not OPEN ratings" in text
+    assert "Status: reference implementation." in text
+    assert "The outputs are not OPEN ratings." in text
+    assert "Ratings are provisional" in text
     assert "Do not use this engine to rate real players." in text
+
+
+@pytest.mark.parametrize("path", SOURCE_MODULES, ids=[path.name for path in SOURCE_MODULES])
+def test_every_module_docstring_carries_the_status_label(path: Path) -> None:
+    doc = ast.get_docstring(ast.parse(path.read_text(encoding="utf-8")))
+    assert doc is not None, path.name
+    text = " ".join(doc.split())
+    assert "reference implementation" in text.lower(), path.name
+    assert "not OPEN ratings" in text, path.name
+    assert "without notice" not in text, path.name
+    assert "demonstration" not in text.lower(), path.name
 
 
 def test_module_docstring_stays_short_and_points_to_the_docs() -> None:

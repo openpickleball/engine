@@ -1,7 +1,7 @@
 """OPEN (Open Pickleball Evaluation Network) rating engine.
 
-Demonstration only: not validated on real match data, outputs are not OPEN
-ratings, and the API may change without notice. Do not use it to rate real
+Reference implementation: outputs are not OPEN ratings, and ratings are
+provisional (see "Status" in docs/behavior.md). Do not use it to rate real
 players.
 """
 

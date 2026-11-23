@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "openpickleball-engine"
 dynamic = ["version"]
-description = "Demonstration rating engine for OPEN, the Open Pickleball Evaluation Network (unvalidated, not for production use)"
+description = "Reference rating engine for OPEN, the Open Pickleball Evaluation Network (outputs are not OPEN ratings, not for production use)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "AGPL-3.0-or-later"

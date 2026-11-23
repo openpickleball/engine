@@ -1,8 +1,8 @@
 """
 Prequential evaluation and calibration: evaluate, fit_scale, fit_win_calibration.
 
-Demonstration only: not validated on real match data, outputs are not OPEN
-ratings, and the API may change without notice.
+Reference implementation: outputs are not OPEN ratings, and ratings are
+provisional (see "Status" in docs/behavior.md).
 """
 
 from __future__ import annotations

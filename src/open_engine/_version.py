@@ -1,9 +1,9 @@
 """The package version, read by hatchling, open_engine, and Config.
 
-This is the only place a release sets the version. Demonstration only: a
-version number does not make engine output an OPEN rating.
+This is the only place a release sets the version. Reference implementation:
+outputs are not OPEN ratings, and a version number does not change that.
 """
 
 from __future__ import annotations
 
-__version__ = "0.3.0.dev0"
+__version__ = "1.0.0rc1"

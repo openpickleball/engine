@@ -2,7 +2,7 @@
 
 This register lists every published parameter set in `params/`. Each set is a named group of `Config` values, loaded on purpose by passing the parsed JSON of its file to `Config.from_parameter_set`, which checks it against the sets this engine release publishes. `Config()` is not a published set. [docs/parameters.md](docs/parameters.md) explains the file format, the loader, and the rules for a new set.
 
-Status: demonstration only. The engine's output is not an OPEN rating, and no OPEN rating is live. A published parameter set does not change that.
+Status: reference implementation. The engine's output is not an OPEN rating, and no OPEN rating is live. Ratings are provisional: they come from one club's closed pool, pools that share no players are not comparable, and parameters are retuned on a published schedule ([docs/parameters.md](docs/parameters.md#schedule)). A published parameter set does not change that.
 
 ## v1
 

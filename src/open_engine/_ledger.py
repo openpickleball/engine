@@ -2,8 +2,8 @@
 Ledger order and the match ledger: validation, duplicate collapse, match
 digests, matchup keys, and content keys.
 
-Demonstration only: not validated on real match data, outputs are not OPEN
-ratings, and the API may change without notice.
+Reference implementation: outputs are not OPEN ratings, and ratings are
+provisional (see "Status" in docs/behavior.md).
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """Exception classes for the OPEN rating engine.
 
-Demonstration only: not validated on real match data, outputs are not OPEN
-ratings, and the API may change without notice.
+Reference implementation: outputs are not OPEN ratings, and ratings are
+provisional (see "Status" in docs/behavior.md).
 
 Every class is a ValueError subclass, so code that catches ValueError keeps
 working.
