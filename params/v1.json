@@ -1,0 +1,108 @@
+{
+  "data": {
+    "data_version": "28bcab9de3af",
+    "doubles": 1601,
+    "first_match_date": "2025-08-10",
+    "fit_window_start": "2026-04-12",
+    "last_match_date": "2026-11-20",
+    "league": 1283,
+    "match_dates": 52,
+    "matches": 1601,
+    "players": 189,
+    "rally": 0,
+    "side_out": 1601,
+    "tournament": 318
+  },
+  "evidence": "GeoBradDev/open-engine-evaluation, reports/v1-fit-2026-11/v1-fit.md, evaluation commit 995de996541608632b585c1d59d1089b2b6bc2c4",
+  "fitted_on_engine": {
+    "commit": "e62468c508126ed46b5a26a82f175ba17dd78371",
+    "default_fingerprint": "17f2981186edf96c",
+    "fingerprint": "22b53a37587d6881",
+    "note": "These two fingerprints use the scheme before parameter_fingerprint(), which hashed the package version and had no params_version key.",
+    "version": "0.3.0.dev0"
+  },
+  "frozen_on": "2026-11-20",
+  "parameter_fingerprint": "f9149f3c38a01efc",
+  "parameters": {
+    "allowed_game_formats": [
+      [
+        "rally",
+        11
+      ],
+      [
+        "rally",
+        15
+      ],
+      [
+        "rally",
+        21
+      ],
+      [
+        "side_out",
+        11
+      ],
+      [
+        "side_out",
+        15
+      ],
+      [
+        "side_out",
+        21
+      ]
+    ],
+    "category_feeds_parent": true,
+    "category_seed_rd": 0.5,
+    "connectivity_min_contact_days": 3,
+    "connectivity_min_outside_players": 8,
+    "connectivity_min_shared_contacts": 4,
+    "connectivity_reliability_cap": null,
+    "default_rating": 3.5,
+    "diversity_target": 12,
+    "diversity_window_days": 365,
+    "established_min_verified_matches": 3,
+    "established_reliability_threshold": 60.0,
+    "external_seed_rd": 0.42,
+    "game_count_bonus": 0.12,
+    "game_length_weights": {
+      "11": 1.0,
+      "15": 1.1,
+      "21": 1.2
+    },
+    "import_reliability_carry_matches": 10,
+    "import_reliability_max_age_days": 365,
+    "k_max": 0.539568345323741,
+    "k_min": 0.1079136690647482,
+    "match_weights": {
+      "league": 0.9,
+      "rec_verified": 0.75,
+      "self_reported": 0.4,
+      "tournament": 1.0
+    },
+    "max_doubles_partner_gap": null,
+    "max_information_multiplier": 1.3,
+    "max_rating": 8.0,
+    "max_singles_rating_gap": null,
+    "min_rating": 2.0,
+    "new_player_rd": 0.8,
+    "rd_growth_per_day": 0.012,
+    "rd_max": 0.8,
+    "rd_min": 0.1,
+    "rd_shrink_per_match": 0.08,
+    "reject_content_duplicates": false,
+    "replay_interval_days": 7,
+    "scale_by_scoring": {
+      "rally": 1.0,
+      "side_out": 1.0
+    },
+    "self_reported_max_repeats": 4,
+    "self_reported_repeat_factor": 0.5,
+    "self_reported_repeat_window_days": 90,
+    "self_reported_requires_both_teams": true,
+    "win_calibration_by_scoring": {
+      "rally": 1.0,
+      "side_out": 0.476
+    },
+    "win_weight": 0.0
+  },
+  "params_version": "v1"
+}

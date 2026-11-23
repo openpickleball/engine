@@ -26,7 +26,7 @@ From the merged evaluation record in the private repository GeoBradDev/open-engi
    1. `data` is exactly a `dict`.
    2. Every key is exactly a `str` (checked before any set operation or lookup, as `from_dict` does).
    3. The keys `params_version`, `parameter_fingerprint`, and `parameters` are present (message names the missing ones, sorted). Other keys (provenance, data volume, dates) are allowed and not read.
-   4. `parameter_fingerprint` is exactly a `str`.
+   4. `params_version` and then `parameter_fingerprint` are each exactly a `str`. (Added in implementation: `Config` accepts `params_version=None`, so without this check a file with a `null` label and the right values would load as an unlabelled config instead of raising, and criterion 4 requires `None` to raise. The form `v<N>` is still checked by `Config` in step 6.)
    5. `parameters` is exactly a `dict` with exactly-`str` keys, and holds neither `version` nor `params_version` (the labels come from the file's own `params_version` and the running package, never from the values).
    6. The config is built with `Config.from_dict({**parameters, "version": __version__, "params_version": data["params_version"]})`, so `from_dict`'s key and value checks and `Config`'s `params_version` check (exact `str`, form `v<N>`) apply unchanged.
    7. `cfg.parameter_fingerprint()` equals `data["parameter_fingerprint"]`, else `ConfigError` naming both the recorded and the computed fingerprint, and the label.

@@ -874,7 +874,89 @@ class Config:
         except TypeError as exc:
             raise ConfigError(f"Config data has a value of the wrong type: {exc}") from exc
 
+    @classmethod
+    def from_parameter_set(cls, data: Mapping[str, object]) -> Config:
+        """
+        Load a published parameter set, the parsed JSON of a params/v<N>.json file.
 
+        The label is trusted only after the values hash to the recorded
+        parameter fingerprint. The engine reads no file: pass json.loads
+        output. Keys other than params_version, parameter_fingerprint, and
+        parameters (provenance, data volume, dates) are allowed and not read.
+
+        Args:
+            data: Exactly a dict with exactly str keys, holding
+                params_version (the label, v<N>), parameter_fingerprint (the
+                recorded parameter_fingerprint()), and parameters (to_dict()
+                output without version and params_version).
+
+        Returns:
+            The Config, with version the running package version and
+            params_version the file's label.
+
+        Raises:
+            ConfigError: in this order, data that is not exactly a dict; a
+                key that is not exactly a str; a missing params_version,
+                parameter_fingerprint, or parameters (all missing ones named,
+                sorted); a params_version or parameter_fingerprint (in that
+                order) that is not exactly a str; parameters that is not
+                exactly a dict, has a key that is not exactly a str, or holds
+                version or params_version; any from_dict() failure on the
+                parameters with the two labels added, then a params_version
+                that is not of the form v<N>; and a parameter_fingerprint()
+                of the built config that differs from the recorded one.
+        """
+        # Exactly dict and exactly str keys, as in from_dict(), checked
+        # before any lookup so no caller code runs.
+        if type(data) is not dict:
+            raise ConfigError(
+                f"Parameter set must be a mapping, exactly a dict, not {_type_name(data)}"
+            )
+        odd = sorted({_type_name(key) for key in data if type(key) is not str})
+        if odd:
+            raise ConfigError(f"Parameter set has unknown keys: keys of type {', '.join(odd)}")
+        missing = sorted(set(_PARAMETER_SET_KEYS) - set(data))
+        if missing:
+            raise ConfigError(f"Parameter set has missing keys: {', '.join(missing)}")
+        label = data["params_version"]
+        recorded = data["parameter_fingerprint"]
+        params = data["parameters"]
+        # A None label would load as an unlabelled config, so the label
+        # must be a str here, not only None or a str as Config allows.
+        for name, value in (("params_version", label), ("parameter_fingerprint", recorded)):
+            if type(value) is not str:
+                raise ConfigError(
+                    f"Parameter set {name} must be exactly a str, not {_type_name(value)}"
+                )
+        if type(params) is not dict:
+            raise ConfigError(
+                f"Parameter set parameters must be exactly a dict, not {_type_name(params)}"
+            )
+        odd = sorted({_type_name(key) for key in params if type(key) is not str})
+        if odd:
+            raise ConfigError(
+                f"Parameter set parameters has unknown keys: keys of type {', '.join(odd)}"
+            )
+        # The labels come from the file's own params_version and the running
+        # package, never from the values.
+        smuggled = sorted(name for name in _CONFIG_LABEL_FIELDS if name in params)
+        if smuggled:
+            raise ConfigError(
+                f"Parameter set parameters must not hold {', '.join(smuggled)}:"
+                " the labels come from params_version and the running package"
+            )
+        cfg = cls.from_dict({**params, "version": __version__, "params_version": label})
+        computed = cfg.parameter_fingerprint()
+        if computed != recorded:
+            raise ConfigError(
+                f"Parameter set {label} parameter_fingerprint {recorded!r} does not match"
+                f" its values, which hash to {computed!r}"
+            )
+        return cfg
+
+
+# The keys from_parameter_set() reads from a parameter set.
+_PARAMETER_SET_KEYS = ("params_version", "parameter_fingerprint", "parameters")
 _CONFIG_FIELD_NAMES = frozenset(f.name for f in fields(Config))
 
 
