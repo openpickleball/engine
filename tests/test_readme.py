@@ -10,9 +10,8 @@ import pytest
 import open_engine
 
 README = Path(__file__).parents[1] / "README.md"
-INSTALL = re.compile(
-    r"^pip install -i https://test\.pypi\.org/simple/ openpickleball-engine==(\S+)$", re.MULTILINE
-)
+INSTALL_LINE = "pip install openpickleball-engine"
+PIN = re.compile(r"openpickleball-engine==([^\s`]+)")
 
 
 def quick_start_block(readme: Path) -> str:
@@ -54,22 +53,38 @@ def test_missing_quick_start_section_fails(tmp_path: Path) -> None:
         quick_start_block(readme)
 
 
+def install_lines(readme: Path) -> list[str]:
+    """Return every README line that installs the package with pip."""
+    text = readme.read_text(encoding="utf-8")
+    return [
+        line
+        for line in text.splitlines()
+        if line.startswith("pip install") and "openpickleball-engine" in line
+    ]
+
+
 def install_pins(readme: Path) -> list[str]:
-    """Return every version pinned by a TestPyPI install line in the README."""
-    return INSTALL.findall(readme.read_text(encoding="utf-8"))
+    """Return every version the README pins with openpickleball-engine==<version>."""
+    return PIN.findall(readme.read_text(encoding="utf-8"))
+
+
+def test_install_line_is_the_plain_pypi_install() -> None:
+    # A final release installs from PyPI with no index, --pre, or pin.
+    assert install_lines(README) == [INSTALL_LINE]
 
 
 def test_install_line_pins_package_version() -> None:
-    # _version.py is the one place the version is set; the README must follow it.
+    # _version.py is the one place the version is set; the README pin must follow it.
     assert install_pins(README) == [open_engine.__version__]
 
 
-def test_stale_install_pin_is_caught(tmp_path: Path) -> None:
+def test_stale_install_lines_are_caught(tmp_path: Path) -> None:
     readme = tmp_path / "README.md"
     readme.write_text(
         "## Install\n\n```bash\n"
         "pip install -i https://test.pypi.org/simple/ openpickleball-engine==0.0.1\n```\n",
         "utf-8",
     )
+    assert install_lines(readme) != [INSTALL_LINE]
     assert install_pins(readme) == ["0.0.1"]
     assert install_pins(readme) != [open_engine.__version__]

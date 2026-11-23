@@ -14,7 +14,7 @@ This page holds the engine's published behavior notes and the requirements the b
 
 ## Stability
 
-From 1.0.0, the engine follows strict Semantic Versioning. A breaking change to anything this section lists as covered needs a new major version. Before 1.0.0, a minor release may break it, and the changelog marks each break. `tests/api_surface.txt` records the public surface, and a test fails when the code no longer matches it. The file also records a few details this section leaves out, such as the `ledger_order` key type and the `Config` defaults, so that a change to them is deliberate.
+Since 1.0.0, the engine follows strict Semantic Versioning. A breaking change to anything this section lists as covered needs a new major version. Before 1.0.0, a minor release could break it, and the changelog marked each break. `tests/api_surface.txt` records the public surface, and a test fails when the code no longer matches it. The file also records a few details this section leaves out, such as the `ledger_order` key type and the `Config` defaults, so that a change to them is deliberate.
 
 Covered:
 

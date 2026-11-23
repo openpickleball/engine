@@ -47,7 +47,7 @@ GitHub runs the `release.yml` from the tagged commit. Someone who can push a tag
 
 ## Making a release
 
-1. In a pull request, set `__version__` in `src/open_engine/_version.py` to the new version. It is the one place the version is set: `open_engine.__version__`, the `Config.version` default, and the build all read it. A dev release such as `0.3.0.dev1` or a release candidate such as `1.0.0rc1` counts as a release. Use the canonical version form (`0.3.0.dev1`, not `0.3.0-dev1`; `1.0.0rc1`, not `1.0.0-rc1`). Update the TestPyPI install line in `README.md` to the same version; `tests/test_readme.py` fails if it pins any other. For every release, dev releases and release candidates included, move the `## [Unreleased]` entries in `CHANGELOG.md` under a new section for the version, and update the compare links at the bottom.
+1. In a pull request, set `__version__` in `src/open_engine/_version.py` to the new version. It is the one place the version is set: `open_engine.__version__`, the `Config.version` default, and the build all read it. A dev release such as `0.3.0.dev1` or a release candidate such as `1.0.0rc1` counts as a release. Use the canonical version form (`0.3.0.dev1`, not `0.3.0-dev1`; `1.0.0rc1`, not `1.0.0-rc1`). Update the pinned version in the Install section of `README.md` (`openpickleball-engine==<version>`) to the same version; `tests/test_readme.py` fails if it pins any other. Leave the plain install line, `pip install openpickleball-engine`, as it is. For every release, dev releases and release candidates included, move the `## [Unreleased]` entries in `CHANGELOG.md` under a new section for the version, and update the compare links at the bottom.
 2. Merge it, then tag the commit on `main` and push the tag:
 
    ```bash
@@ -59,10 +59,10 @@ GitHub runs the `release.yml` from the tagged commit. Someone who can push a tag
 4. Check the project page at https://test.pypi.org/p/openpickleball-engine, then install the release from TestPyPI in a clean virtual environment outside the checkout and load a published parameter set. The package has no dependencies, so TestPyPI alone is enough:
 
    ```bash
-   python3 -m venv --clear /tmp/open-engine-check && /tmp/open-engine-check/bin/pip install --no-cache-dir -i https://test.pypi.org/simple/ openpickleball-engine==1.0.0rc2 && cd /tmp && /tmp/open-engine-check/bin/python -I -c "import open_engine; print(open_engine.__version__, open_engine.Config.published('v1').parameter_fingerprint())"
+   python3 -m venv --clear /tmp/open-engine-check && /tmp/open-engine-check/bin/pip install --no-cache-dir -i https://test.pypi.org/simple/ openpickleball-engine==1.0.0 && cd /tmp && /tmp/open-engine-check/bin/python -I -c "import open_engine; print(open_engine.__version__, open_engine.Config.published('v1').parameter_fingerprint())"
    ```
 
-   Use the version you tagged. It prints that version and `v1`'s parameter fingerprint, `f9149f3c38a01efc`. A release candidate installs only when the version is pinned, as here, or with `pip install --pre`.
+   Use the version you tagged. It prints that version and `v1`'s parameter fingerprint, `f9149f3c38a01efc`. A release candidate or dev release installs only when the version is pinned, as here, or with `pip install --pre`. A final release such as 1.0.0 needs neither.
 5. Approve `pypi` only after that check passes. Its request appears only after `publish-testpypi` succeeds. Check the commit SHA again before approving. If the check fails, reject the request: the version stays on TestPyPI only, and the fix ships as the next version.
 6. Check the project page at https://pypi.org/p/openpickleball-engine, then run the same check against PyPI: the same command without `-i https://test.pypi.org/simple/`.
 
