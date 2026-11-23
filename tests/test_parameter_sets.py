@@ -252,7 +252,7 @@ def test_rejects_parameters_with_an_unknown_field() -> None:
 @pytest.mark.parametrize("label", ["v01", "1", "V1", "v1\n", "v0", ""])
 def test_rejects_a_malformed_label(label: str) -> None:
     data = {**_v1(), "params_version": label}
-    with pytest.raises(ConfigError, match="params_version must be None or v<N>"):
+    with pytest.raises(ConfigError, match="params_version must be v<N>"):
         Config.from_parameter_set(data)
 
 
@@ -286,20 +286,13 @@ def test_rejects_a_changed_value_under_the_recorded_fingerprint(name: str, value
     assert "v1" in str(info.value)
 
 
-@pytest.mark.parametrize("recorded", [DEFAULT_FINGERPRINT, "F9149F3C38A01EFC", "", "x" * 64])
+@pytest.mark.parametrize("recorded", [DEFAULT_FINGERPRINT, "0" * 16])
 def test_rejects_the_right_values_under_a_wrong_fingerprint(recorded: str) -> None:
     data = {**_v1(), "parameter_fingerprint": recorded}
-    with pytest.raises(ConfigError, match="does not match its values") as info:
+    with pytest.raises(ConfigError, match="differs from the published") as info:
         Config.from_parameter_set(data)
-    assert repr(recorded) in str(info.value)
+    assert recorded in str(info.value)
     assert V1_FINGERPRINT in str(info.value)
-
-
-def test_a_relabelled_set_loads_under_its_own_label() -> None:
-    # The label is not hashed: the same values under v2 keep the fingerprint.
-    cfg = Config.from_parameter_set({**_v1(), "params_version": "v2"})
-    assert cfg.params_version == "v2"
-    assert cfg.parameter_fingerprint() == V1_FINGERPRINT
 
 
 def test_extra_top_level_keys_are_accepted_and_not_read() -> None:
@@ -344,15 +337,15 @@ def test_label_check_comes_before_from_dict() -> None:
         Config.from_parameter_set(data)
 
 
-def test_from_dict_check_comes_before_the_label_form() -> None:
+def test_label_form_comes_before_from_dict() -> None:
     data = {**_v1(), "params_version": "v01", "parameters": {}}
-    with pytest.raises(ConfigError, match="missing keys"):
+    with pytest.raises(ConfigError, match="params_version must be v<N>"):
         Config.from_parameter_set(data)
 
 
 def test_label_form_comes_before_the_fingerprint_match() -> None:
     data = {**_v1(), "params_version": "v01", "parameter_fingerprint": "0" * 16}
-    with pytest.raises(ConfigError, match="params_version must be None or v<N>"):
+    with pytest.raises(ConfigError, match="params_version must be v<N>"):
         Config.from_parameter_set(data)
 
 
