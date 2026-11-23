@@ -514,7 +514,9 @@ class PlayerSummary:
     reliability. established and connectivity are labels and change no
     rating. live_updates_since_recalculation counts the live updates since
     the last replay that are in the state's rating. It is 0 right after a
-    replay.
+    replay. config_version, params_version, and parameter_fingerprint name
+    the engine's config: its package version, its published parameter set
+    label (None when it is not one), and its parameter_fingerprint().
 
     See docs/behavior.md, "Player summaries", "Established", and "Network connectivity".
     """
@@ -537,6 +539,8 @@ class PlayerSummary:
     config_version: str
     account_linked: bool
     connectivity: NetworkConnectivity  # whether the pool connects to the main network
+    params_version: str | None  # the config's parameter set label, None when unlabelled
+    parameter_fingerprint: str  # the config's parameter_fingerprint()
 
 
 _FORMAT_VALUES = frozenset(fmt.value for fmt in RatingFormat)

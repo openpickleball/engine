@@ -874,6 +874,122 @@ class Config:
         except TypeError as exc:
             raise ConfigError(f"Config data has a value of the wrong type: {exc}") from exc
 
+    @classmethod
+    def from_parameter_set(cls, data: Mapping[str, object]) -> Config:
+        """
+        Load a published parameter set, the parsed JSON of a params/v<N>.json file.
+
+        The label must name a set this release publishes, the recorded
+        fingerprint must be the one published for it, and the values must
+        hash to it, so a file cannot pass other values off as a published
+        set or relabel one. A new set needs an engine release that adds it.
+        The engine reads no file: pass json.loads output. Other keys are
+        allowed and not read.
+
+        Args:
+            data: Exactly a dict with exactly str keys, holding
+                params_version (v<N>), parameter_fingerprint, and parameters
+                (to_dict() output without version and params_version).
+
+        Returns:
+            The Config, with version the running package version and
+            params_version the file's label.
+
+        Raises:
+            ConfigError: in this order, data not exactly a dict; a key not
+                exactly a str; a missing required key; a params_version, then
+                parameter_fingerprint, not exactly a str; parameters not
+                exactly a dict, with a key not exactly a str, or holding a
+                label; a fingerprint not 16 lowercase hex characters; a label
+                not v<N>; a label this release does not publish; a fingerprint
+                not the published one; a from_dict() failure; and values that
+                do not hash to the fingerprint. See docs/behavior.md, "Config
+                validation".
+        """
+        # Exactly dict and exactly str keys, as in from_dict(), checked
+        # before any lookup so no caller code runs.
+        if type(data) is not dict:
+            raise ConfigError(
+                f"Parameter set must be a mapping, exactly a dict, not {_type_name(data)}"
+            )
+        odd = sorted({_type_name(key) for key in data if type(key) is not str})
+        if odd:
+            raise ConfigError(f"Parameter set has unknown keys: keys of type {', '.join(odd)}")
+        missing = sorted(set(_PARAMETER_SET_KEYS) - set(data))
+        if missing:
+            raise ConfigError(f"Parameter set has missing keys: {', '.join(missing)}")
+        label = data["params_version"]
+        recorded = data["parameter_fingerprint"]
+        params = data["parameters"]
+        # A None label would load as an unlabelled config, so the label
+        # must be a str here, not only None or a str as Config allows.
+        for name, value in (("params_version", label), ("parameter_fingerprint", recorded)):
+            if type(value) is not str:
+                raise ConfigError(
+                    f"Parameter set {name} must be exactly a str, not {_type_name(value)}"
+                )
+        if type(params) is not dict:
+            raise ConfigError(
+                f"Parameter set parameters must be exactly a dict, not {_type_name(params)}"
+            )
+        odd = sorted({_type_name(key) for key in params if type(key) is not str})
+        if odd:
+            raise ConfigError(
+                f"Parameter set parameters has unknown keys: keys of type {', '.join(odd)}"
+            )
+        # The labels come from the file's own params_version and the running
+        # package, never from the values.
+        smuggled = sorted(name for name in _CONFIG_LABEL_FIELDS if name in params)
+        if smuggled:
+            raise ConfigError(
+                f"Parameter set parameters must not hold {', '.join(smuggled)}:"
+                " the labels come from params_version and the running package"
+            )
+        # Both passed the exact str check above.
+        label = cast(str, label)
+        recorded = cast(str, recorded)
+        # Neither str is echoed until it has passed its form check, so a
+        # message never grows with the caller's input.
+        if _FINGERPRINT_FORM.fullmatch(recorded) is None:
+            raise ConfigError(
+                "Parameter set parameter_fingerprint must be exactly 16 lowercase hex characters"
+            )
+        if _PARAMS_VERSION.fullmatch(label) is None:
+            raise ConfigError(
+                "Parameter set params_version must be v<N>, with N a positive whole"
+                " number and no leading zero, such as v1"
+            )
+        published = dict(_PUBLISHED_PARAMETER_SETS).get(label)
+        if published is None:
+            raise ConfigError(
+                "Parameter set params_version is not a parameter set this release publishes"
+                f" (it publishes {', '.join(name for name, _ in _PUBLISHED_PARAMETER_SETS)})"
+            )
+        if recorded != published:
+            raise ConfigError(
+                f"Parameter set {label} parameter_fingerprint {recorded!r} differs from"
+                f" the published {published!r}"
+            )
+        cfg = cls.from_dict({**params, "version": __version__, "params_version": label})
+        computed = cfg.parameter_fingerprint()
+        if computed != recorded:
+            raise ConfigError(
+                f"Parameter set {label} parameter_fingerprint {recorded!r} does not match"
+                f" its values, which hash to {computed!r}"
+            )
+        return cfg
+
+
+# The keys from_parameter_set() reads from a parameter set.
+_PARAMETER_SET_KEYS = ("params_version", "parameter_fingerprint", "parameters")
+# The form of a parameter_fingerprint(): 16 lowercase hex characters.
+_FINGERPRINT_FORM = re.compile(r"[0-9a-f]{16}")
+# The parameter sets this release publishes, as (params_version,
+# parameter_fingerprint) pairs in label order. A new set is published by
+# adding its file under params/, its PARAMETERS.md entry, and its pair
+# here, in one release. tests/test_parameter_set_binding.py checks that
+# this table and the params/ files match.
+_PUBLISHED_PARAMETER_SETS: tuple[tuple[str, str], ...] = (("v1", "f9149f3c38a01efc"),)
 
 _CONFIG_FIELD_NAMES = frozenset(f.name for f in fields(Config))
 

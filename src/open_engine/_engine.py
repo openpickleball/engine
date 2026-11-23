@@ -1520,6 +1520,8 @@ class RatingEngine:
             config_version=cfg.version,
             account_linked=player.account_user_id is not None,
             connectivity=connectivity,
+            params_version=cfg.params_version,
+            parameter_fingerprint=cfg.parameter_fingerprint(),
         )
 
     def _connectivity_of(
