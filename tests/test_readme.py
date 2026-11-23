@@ -11,6 +11,7 @@ import open_engine
 
 README = Path(__file__).parents[1] / "README.md"
 INSTALL_LINE = "pip install openpickleball-engine"
+PIP = re.compile(r"^(?:python3? -m )?pip install ")
 PIN = re.compile(r"openpickleball-engine==([^\s`]+)")
 
 
@@ -56,11 +57,8 @@ def test_missing_quick_start_section_fails(tmp_path: Path) -> None:
 def install_lines(readme: Path) -> list[str]:
     """Return every README line that installs the package with pip."""
     text = readme.read_text(encoding="utf-8")
-    return [
-        line
-        for line in text.splitlines()
-        if line.startswith("pip install") and "openpickleball-engine" in line
-    ]
+    lines = (line.strip() for line in text.splitlines())
+    return [line for line in lines if PIP.search(line) and "openpickleball-engine" in line]
 
 
 def install_pins(readme: Path) -> list[str]:
