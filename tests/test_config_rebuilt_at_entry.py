@@ -531,9 +531,9 @@ def _pin_config() -> Config:
 # PIN_FINGERPRINT, PIN_REPLAY_SHA, and PIN_MID_SHA were re-pinned in issue #155
 # when params_version joined the fingerprint payload and snapshot_version
 # became 9; the old pins were confirmed equal to the same state without them.
-PIN_FINGERPRINT = "b2a95ebfe7e8096e"
-PIN_REPLAY_SHA = "bc0f49e14bca4b56c1ac8c44e0041dd33a0a67cdc3c606c36f9273611e877fcb"
-PIN_MID_SHA = "189e5dfe1ead21cb8469347148640aa8066ea1dd4e81c90da8fda14abcf5a45b"
+PIN_FINGERPRINT = "0f464f4edb589fb3"
+PIN_REPLAY_SHA = "3ce82a5e704085deeed457aa7b4ae0b81e28b6c42fd8c406bd4c5475fb65dbc6"
+PIN_MID_SHA = "39e9acbdd34c9dc835182430ff1331136ff20b1860a0657386d57f681444a694"
 PIN_EVALUATE = {
     "scoring": None,
     "scale": None,

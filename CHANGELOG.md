@@ -6,7 +6,22 @@ The engine is the reference implementation of the OPEN rating method. Its output
 
 ## [Unreleased]
 
+## [1.0.0rc2] - 2026-11-23
+
+The second release candidate for 1.0.0. It is the first release the workflow publishes to PyPI as well as TestPyPI (issue #169), so the backend can test against it, and 1.0.0 then comes from the same code. The package is the reference implementation of the OPEN rating method. Its outputs are not OPEN ratings, and no OPEN rating is live.
+
+The stability promise in `docs/behavior.md` ("Stability") and the README's "Public API" section takes effect at 1.0.0, not at this release candidate.
+
+Highlights since 1.0.0rc1:
+
+- **Packaged parameter sets** (issue #165). The wheel ships `v1`, and `Config.published("v1")` loads it from an installed package without a repository checkout. `Config.published_sets()` lists the labels.
+- **API decisions and known limitations** (issue #167). The README lists the known limitations the evaluation's simulations found, and the stability promise now says what it covers for returned objects, published parameter sets, and `Config()` defaults.
+- **Breaking change**: the `scoring` fields of `EvaluationReport`, `ScaleFit`, and `WinCalibrationFit` are typed `ScoringType`, not str (issue #167).
+- The version change gives a new default `Config().fingerprint()`, `7334117efa23cc98` (it was `4012bfec9bfddd48`), so a snapshot made under 1.0.0rc1 with the default `Config.version` fails `from_snapshot` under the 1.0.0rc2 default `Config()` with a config version mismatch. A full replay rebuilds it. `parameter_fingerprint()` does not change: `Config()` stays `1058623faf5d9367`, and `v1` stays `f9149f3c38a01efc`.
+
 ### Added
+
+- `.github/workflows/release.yml` has a `publish-pypi` job. It runs after `publish-testpypi` succeeds, in the `pypi` environment, and publishes the same files to PyPI with trusted publishing. `docs/releasing.md` describes the two approvals and the one-time PyPI setup (issue #169).
 
 - `Config.published(label)`, a classmethod that loads a parameter set this release publishes, such as `Config.published("v1")`, from the file the package ships. It reads `open_engine/params/<label>.json` with `importlib.resources` and passes the parsed JSON to `Config.from_parameter_set`, so it makes the same label and fingerprint checks. A label that is not exactly a str, a label this release does not publish, and a packaged file that is missing, unreadable, or not JSON raise `ConfigError`, the error `from_parameter_set` raises for an unpublished label. Only a label in the engine's table is used to find a file, and the message for an unpublished label does not show it. `docs/behavior.md` ("Config validation") lists the checks in order (issue #165).
 - `Config.published_sets()`, a classmethod that returns the labels this release publishes, in order, so callers do not hard-code them. It returns `("v1",)` (issue #165).
@@ -249,7 +264,8 @@ The first dev release, published to TestPyPI.
 - First demonstration release of the `openpickleball-engine` package (`open_engine`), with no runtime dependencies, for Python 3.10 and later.
 - A basic match example in `examples/basic_match.py`.
 
-[Unreleased]: https://github.com/openpickleball/engine/compare/v1.0.0rc1...HEAD
+[Unreleased]: https://github.com/openpickleball/engine/compare/v1.0.0rc2...HEAD
+[1.0.0rc2]: https://github.com/openpickleball/engine/compare/v1.0.0rc1...v1.0.0rc2
 [1.0.0rc1]: https://github.com/openpickleball/engine/compare/v0.3.0.dev0...v1.0.0rc1
 [0.3.0.dev0]: https://github.com/openpickleball/engine/compare/v0.1.0...v0.3.0.dev0
 [0.1.0]: https://github.com/openpickleball/engine/releases/tag/v0.1.0

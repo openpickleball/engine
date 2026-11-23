@@ -42,7 +42,7 @@ from open_engine._config import (
 D = RatingFormat.DOUBLES
 AS_OF = date(2026, 11, 1)
 CAPTURED = date(2026, 10, 1)
-PLAIN_FINGERPRINT = "4012bfec9bfddd48"
+PLAIN_FINGERPRINT = "7334117efa23cc98"
 LEDGER = [Match("m1", ("syn-p", "syn-q"), ("syn-r", "syn-s"), ((11, 7),), date(2026, 10, 5), D)]
 
 
