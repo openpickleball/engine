@@ -10,7 +10,7 @@ File: `params/v1.json`. Parameter fingerprint: `f9149f3c38a01efc`.
 
 ### Reason
 
-v1 is the first set fitted on match data. The `Config()` defaults are uncalibrated placeholders. v1 sets the side-out scale to a declared unit of 1.0, rescales K to match, and fits the side-out win calibration, which the defaults leave at 1.0. It is published as a named set so that a rating made with it names its parameters, while the defaults wait for more data (see "Default-change rule and result").
+v1 is the first set fitted on match data. The `Config()` defaults are uncalibrated placeholders. v1 declares a scale of 1.0 for side-out and for rally scoring, scales K by the fitted side-out scale (1.0 / 1.112), and fits the side-out win calibration, which the defaults leave at 1.0. It ships as a named set, not as the default, and the defaults are revisited on new data (see "Default-change rule and result").
 
 ### Values
 
@@ -52,7 +52,7 @@ None: no OPEN rating has been published, so there is nothing to shift.
 - Parameter fingerprint on this engine: `f9149f3c38a01efc`. `Config().parameter_fingerprint()` is `1058623faf5d9367`.
 - The evaluation recorded `22b53a37587d6881` for v1 and `17f2981186edf96c` for `Config()`. It ran engine 0.3.0.dev0 at commit `e62468c508126ed46b5a26a82f175ba17dd78371`.
 
-The two pairs differ because the evaluation used the scheme before `parameter_fingerprint()`. That scheme hashed the package version, and its payload had no `params_version` key. `parameter_fingerprint()` leaves out both labels. The values are the same: hashing the file's `parameters` with `version` set to `"0.3.0.dev0"` gives `22b53a37587d6881` again, and a test checks it. The rating math has not changed between that commit and the release that published v1.
+The two pairs differ because the evaluation used the scheme before `parameter_fingerprint()`. That scheme hashed the package version, and its payload had no `params_version` key. `parameter_fingerprint()` leaves out both labels. The values are the same: hashing the file's `parameters` with `version` set to `"0.3.0.dev0"` gives `22b53a37587d6881` again, and a test checks it. The rating math has not changed between that commit and the engine that added v1.
 
 ### Evidence
 
