@@ -83,10 +83,6 @@ Early on, parameters are retuned at data milestones, such as 5,000, 10,000, and 
 
 ## A release that changes the `Config` payload
 
-Adding, removing, or renaming a `Config` field, or changing how `to_dict()` writes a value, changes every parameter fingerprint. A file written for the old payload then fails to load: the loader reports a missing or unknown key, or a fingerprint that does not match. That is intended, since a fingerprint must name exactly the values behind a rating.
+Adding, removing, or renaming a `Config` field, or changing how `to_dict()` writes a value, can change every parameter fingerprint, the published ones included. A file written for the old payload then fails to load with `ConfigError` (which check fails depends on what changed), and the tests that pin each published set fail. Updating the file alone does not help: the engine's table of published sets (`_PUBLISHED_PARAMETER_SETS`) still holds the old fingerprint. That is intended: a fingerprint must name exactly the values behind a rating.
 
-A label keeps naming the same rating behavior across releases. So a release that changes the payload rewrites each published file in the same change. The file keeps its label. A new field is set to the value that leaves every rating as it was, and a removed or renamed field is removed or renamed. The file gets the new `parameter_fingerprint`, and the engine's table of published sets (`_PUBLISHED_PARAMETER_SETS`) gets the matching entry. The set's register entry in PARAMETERS.md records the release and both the old and the new fingerprint.
-
-If no value can keep a set's ratings unchanged, the set is retired: that change removes its file and its table entry, and its register entry says so. A new label is published for the new behavior, with the evidence a new set needs.
-
-A file and its table entry always describe the payload of the release that ships them. So every file in `params/` loads under the release it ships with.
+No such release has happened since v1 was published. How a published set carries across one (rewritten under the same label, or replaced by a new label) is not decided yet. It will be settled with the rest of issue #48, before any release that changes the payload.
