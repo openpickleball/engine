@@ -8,12 +8,15 @@ Exits 1, naming each problem, when a wheel has:
 - a member name that appears more than once;
 - a member that is neither an allowed open_engine file nor a file under that
   dist-info directory, including one with a '.', '..', or empty path segment;
-- a directory entry other than open_engine/ and the dist-info directory itself;
+- a directory entry other than open_engine/, a directory of an allowed
+  open_engine file (open_engine/params/), and the dist-info directory itself;
 - a missing allowed open_engine file (py.typed among them), or a dist-info
   without METADATA, WHEEL, or RECORD.
 Exits 1 when given no paths. Exits 0 otherwise. Standard library only.
 
-Add a new module in src/open_engine/ to PACKAGE_FILES, or this check fails.
+Add a new file in src/open_engine/ (a module, or a parameter set in
+src/open_engine/params/) to PACKAGE_FILES, or this check fails.
+tests/test_check_wheel.py checks that PACKAGE_FILES lists every file there.
 """
 
 from __future__ import annotations
@@ -22,7 +25,8 @@ import sys
 import zipfile
 
 PACKAGE = "open_engine"
-# Every file the wheel ships from src/open_engine/. All of them are required.
+# Every file the wheel ships from src/open_engine/, as a path under it. All of
+# them are required.
 PACKAGE_FILES: frozenset[str] = frozenset(
     {
         "__init__.py",
@@ -43,7 +47,12 @@ PACKAGE_FILES: frozenset[str] = frozenset(
         "engine.py",
         "winprob.py",
         "py.typed",
+        "params/v1.json",
     }
+)
+# The package's subdirectories that hold an allowed file, each with its slash.
+PACKAGE_DIRS: frozenset[str] = frozenset(
+    f"{file.rsplit('/', 1)[0]}/" for file in PACKAGE_FILES if "/" in file
 )
 # Hatchling names the metadata directory openpickleball_engine-<version>.dist-info.
 DIST_INFO_PREFIX = "openpickleball_engine-"
@@ -91,7 +100,9 @@ def problems(names: list[str]) -> list[str]:
             continue
         seen.add(name)
         if name.endswith("/"):
-            if name not in (f"{PACKAGE}/", f"{dist_info}/"):
+            allowed_dirs = {f"{PACKAGE}/", f"{dist_info}/"}
+            allowed_dirs.update(f"{PACKAGE}/{directory}" for directory in PACKAGE_DIRS)
+            if name not in allowed_dirs:
                 unexpected.add(name)
             continue
         parts = name.split("/")
@@ -99,8 +110,8 @@ def problems(names: list[str]) -> list[str]:
             unexpected.add(name)
         elif parts[0] == dist_info and len(parts) > 1:
             dist_info_present.add("/".join(parts[1:]))
-        elif parts[0] == PACKAGE and len(parts) == 2 and parts[1] in PACKAGE_FILES:
-            present.add(parts[1])
+        elif parts[0] == PACKAGE and "/".join(parts[1:]) in PACKAGE_FILES:
+            present.add("/".join(parts[1:]))
         else:
             unexpected.add(name)
     found = [f"duplicate member: {name}" for name in sorted(duplicates)]

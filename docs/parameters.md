@@ -2,7 +2,7 @@
 
 Status: reference implementation. The engine's output is not an OPEN rating, and no OPEN rating is live. Ratings are provisional: they come from one club's closed pool, pools that share no players are not comparable, and parameters are retuned on the [schedule](#schedule) below. This page sets the rules a published parameter set follows. Following them does not make engine output an OPEN rating.
 
-A parameter set is a named group of `Config` values, such as `v1`. The sets live in `params/` at the repository root. [PARAMETERS.md](../PARAMETERS.md) lists each one with its values, data, evidence, and fingerprints.
+A parameter set is a named group of `Config` values, such as `v1`. The sets live in `src/open_engine/params/` and ship in the package, so an installed wheel loads them without a repository checkout. [PARAMETERS.md](../PARAMETERS.md) lists each one with its values, data, evidence, and fingerprints.
 
 ## Identity
 
@@ -23,7 +23,7 @@ Take the engine version from the installed package (`open_engine.__version__`), 
 
 ## The file format
 
-Each set is one file, `params/v<N>.json`, named after its label. It is JSON with sorted keys and a two-space indent, ending in a newline. The loader reads three keys:
+Each set is one file, `src/open_engine/params/v<N>.json`, named after its label. It is JSON with sorted keys and a two-space indent, ending in a newline. The loader reads three keys:
 
 - `params_version`: the label, such as `"v1"`.
 - `parameter_fingerprint`: the recorded `parameter_fingerprint()` of the values.
@@ -33,20 +33,21 @@ The other keys are provenance for people, and the loader does not read them: `fr
 
 ## The loader
 
-`Config.from_parameter_set(data)` takes the parsed file (`json.loads` output). The engine reads no file, and the wheel does not ship `params/`. A caller reads the file and passes the result:
+`Config.published(label)` loads a set this release publishes from the installed package:
 
 ```python
-import json
-from pathlib import Path
-
 from open_engine import Config
 
-cfg = Config.from_parameter_set(json.loads(Path("params/v1.json").read_text()))
+Config.published_sets()  # ("v1",)
+cfg = Config.published("v1")
+cfg.parameter_fingerprint()  # "f9149f3c38a01efc"
 ```
 
-It checks the file's label and recorded fingerprint against the sets this release publishes, a table in the engine. The label must name a published set, and the recorded fingerprint must be the one published for it. Then it builds the config with `version` set to the running package version and `params_version` set to the file's label, and checks that the built config's `parameter_fingerprint()` equals the recorded one. So a file cannot pass other values off as a published set or relabel one, which a label set by hand cannot promise. Any failure raises `ConfigError`. A label inside `parameters` is rejected, so the values cannot override the file's label. [Config validation](behavior.md#config-validation) lists every check in order.
+`published` takes only a label in `published_sets()`. Any other label raises `ConfigError`, the error `from_parameter_set` raises for a label this release does not publish. It reads the packaged file and passes its parsed JSON to `Config.from_parameter_set(data)`, so the packaged file gets every check below.
 
-Publishing a new set needs an engine release that adds its file under `params/`, its entry in PARAMETERS.md, and its entry in the engine's table, together.
+`Config.from_parameter_set(data)` takes a parsed file (`json.loads` output) and reads no file itself. It checks the file's label and recorded fingerprint against the sets this release publishes, a table in the engine. The label must name a published set, and the recorded fingerprint must be the one published for it. Then it builds the config with `version` set to the running package version and `params_version` set to the file's label, and checks that the built config's `parameter_fingerprint()` equals the recorded one. So a file cannot pass other values off as a published set or relabel one, which a label set by hand cannot promise. Any failure raises `ConfigError`. A label inside `parameters` is rejected, so the values cannot override the file's label. [Config validation](behavior.md#config-validation) lists every check in order.
+
+Publishing a new set needs an engine release that adds its file under `src/open_engine/params/`, its entry in PARAMETERS.md, and its entry in the engine's table, together. CI builds the wheel, installs it alone in a clean environment, and loads every published set from it.
 
 ## Why `Config()` is not v1
 

@@ -41,6 +41,13 @@ jobs:
         run: python scripts/check_sdist.py dist/*.tar.gz
       - name: Check wheel contents
         run: python scripts/check_wheel.py dist/*.whl
+      # The wheel this job publishes, installed alone in a clean virtual
+      # environment, must load every published parameter set.
+      - name: Load parameter sets from the installed wheel
+        run: |
+          python -m venv "$RUNNER_TEMP/wheel-venv"
+          "$RUNNER_TEMP/wheel-venv/bin/python" -m pip install --no-index --no-deps dist/*.whl
+          "$RUNNER_TEMP/wheel-venv/bin/python" -I scripts/check_installed_wheel.py
       - name: Check tag matches version
         env:
           TAG: ${{ github.ref_name }}

@@ -17,7 +17,7 @@ ALLOWED = [
     "src/open_engine/py.typed",
     "tests/test_engine.py",
     "examples/basic_match.py",
-    "params/v1.json",
+    "src/open_engine/params/v1.json",
     "README.md",
     "PARAMETERS.md",
     "LICENSE",
@@ -70,6 +70,7 @@ def test_allowed_set_passes(
         (".superpowers/review.diff", ".superpowers"),
         ("CLAUDE.md", "CLAUDE.md"),
         ("docs/plans/x.md", "docs"),
+        ("params/v1.json", "params"),
     ],
 )
 def test_unexpected_top_level_entry_fails(

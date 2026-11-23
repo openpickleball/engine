@@ -6,6 +6,16 @@ The engine is the reference implementation of the OPEN rating method. Its output
 
 ## [Unreleased]
 
+### Added
+
+- `Config.published(label)`, a classmethod that loads a parameter set this release publishes, such as `Config.published("v1")`, from the file the package ships. It reads `open_engine/params/<label>.json` with `importlib.resources` and passes the parsed JSON to `Config.from_parameter_set`, so it makes the same label and fingerprint checks. A label that is not exactly a str, a label this release does not publish, and a packaged file that is missing, unreadable, or not JSON raise `ConfigError`, the error `from_parameter_set` raises for an unpublished label. Only a label in the engine's table is used to find a file, and the message for an unpublished label does not show it. `docs/behavior.md` ("Config validation") lists the checks in order (issue #165).
+- `Config.published_sets()`, a classmethod that returns the labels this release publishes, in order, so callers do not hard-code them. It returns `("v1",)` (issue #165).
+- The wheel ships the published parameter sets, so an installed package loads `v1` without a repository checkout. CI's `package` job now installs the built wheel alone in a clean virtual environment and loads every published set from it (`scripts/check_installed_wheel.py`) (issue #165).
+
+### Changed
+
+- The published parameter set files moved from `params/` at the repository root to `src/open_engine/params/`, the one copy, which the wheel and the sdist ship. `params/v1.json` is now `src/open_engine/params/v1.json`, with the same content and parameter fingerprint `f9149f3c38a01efc`. The sdist no longer has a top-level `params/`. `Config.from_parameter_set` is unchanged (issue #165).
+
 ## [1.0.0rc1] - 2026-11-23
 
 The first release candidate for 1.0.0, published to TestPyPI. It is the version an evaluation can pin. The package is the reference implementation of the OPEN rating method. Its outputs are not OPEN ratings, and no OPEN rating is live.

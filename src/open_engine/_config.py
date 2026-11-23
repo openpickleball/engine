@@ -8,6 +8,7 @@ provisional (see "Status" in docs/behavior.md).
 from __future__ import annotations
 
 import hashlib
+import importlib.resources
 import json
 import math
 import re
@@ -225,7 +226,8 @@ class Config:
     version: str = __version__
 
     # The published parameter set's label, "v<N>" with N a positive whole
-    # number and no leading zero, so it names a file such as params/v1.json.
+    # number and no leading zero, so it names a file such as
+    # src/open_engine/params/v1.json.
     # None, the default, means the config is not a published parameter set.
     # A label only: it changes no rating. parameter_fingerprint() leaves it
     # out, and fingerprint() includes it.
@@ -877,14 +879,15 @@ class Config:
     @classmethod
     def from_parameter_set(cls, data: Mapping[str, object]) -> Config:
         """
-        Load a published parameter set, the parsed JSON of a params/v<N>.json file.
+        Load a published parameter set from the parsed JSON of its file.
 
-        The label must name a set this release publishes, the recorded
-        fingerprint must be the one published for it, and the values must
-        hash to it, so a file cannot pass other values off as a published
-        set or relabel one. A new set needs an engine release that adds it.
-        The engine reads no file: pass json.loads output. Other keys are
-        allowed and not read.
+        The files are src/open_engine/params/v<N>.json, shipped in the
+        package; published() reads one and calls this. The label must name
+        a set this release publishes, the recorded fingerprint must be the
+        one published for it, and the values must hash to it, so a file
+        cannot pass other values off as a published set or relabel one. A
+        new set needs an engine release that adds it. This method reads no
+        file: pass json.loads output. Other keys are allowed and not read.
 
         Args:
             data: Exactly a dict with exactly str keys, holding
@@ -979,16 +982,76 @@ class Config:
             )
         return cfg
 
+    @classmethod
+    def published(cls, label: str) -> Config:
+        """
+        Load a parameter set this release publishes, from the package.
 
+        Reads open_engine/params/<label>.json, which the wheel ships, and
+        passes its parsed JSON to from_parameter_set(), so the packaged file
+        gets the same label and fingerprint checks. published_sets() lists
+        the labels.
+
+        Args:
+            label: Exactly a str, a label in published_sets(), such as "v1".
+
+        Returns:
+            The Config, as from_parameter_set() returns it: version the
+            running package version and params_version the label.
+
+        Raises:
+            ConfigError: in this order, label not exactly a str; a label
+                this release does not publish (the message names the ones it
+                does and not the label); a packaged file that is missing,
+                unreadable, or not JSON; and any from_parameter_set() failure.
+        """
+        if type(label) is not str:
+            raise ConfigError(f"Parameter set label must be exactly a str, not {_type_name(label)}")
+        # Only a label from the table names a file, so no caller string
+        # reaches a path, and the message never grows with the input.
+        if label not in dict(_PUBLISHED_PARAMETER_SETS):
+            raise ConfigError(
+                "Parameter set label is not a parameter set this release publishes"
+                f" (it publishes {', '.join(cls.published_sets())})"
+            )
+        try:
+            data = json.loads(_packaged_parameter_set_text(label))
+        except (OSError, ValueError, RecursionError) as exc:
+            raise ConfigError(
+                f"Parameter set {label} could not be read from the installed package: {exc}"
+            ) from exc
+        return cls.from_parameter_set(data)
+
+    @classmethod
+    def published_sets(cls) -> tuple[str, ...]:
+        """
+        The labels of the parameter sets this release publishes, in label order.
+
+        Each one loads with published(). The tuple is the same on every call
+        within a release.
+        """
+        return tuple(label for label, _ in _PUBLISHED_PARAMETER_SETS)
+
+
+def _packaged_parameter_set_text(label: str) -> str:
+    """The text of the packaged file for a published label, read as UTF-8."""
+    resource = importlib.resources.files(_PACKAGE) / _PARAMS_DIRECTORY / f"{label}.json"
+    return resource.read_text(encoding="utf-8")
+
+
+# The package that ships the parameter set files, and their directory in it.
+_PACKAGE = "open_engine"
+_PARAMS_DIRECTORY = "params"
 # The keys from_parameter_set() reads from a parameter set.
 _PARAMETER_SET_KEYS = ("params_version", "parameter_fingerprint", "parameters")
 # The form of a parameter_fingerprint(): 16 lowercase hex characters.
 _FINGERPRINT_FORM = re.compile(r"[0-9a-f]{16}")
 # The parameter sets this release publishes, as (params_version,
 # parameter_fingerprint) pairs in label order. A new set is published by
-# adding its file under params/, its PARAMETERS.md entry, and its pair
-# here, in one release. tests/test_parameter_set_binding.py checks that
-# this table and the params/ files match.
+# adding its file under src/open_engine/params/, its PARAMETERS.md entry,
+# its path in PACKAGE_FILES in scripts/check_wheel.py, and its pair here,
+# in one release. tests/test_parameter_set_binding.py checks that this
+# table and the packaged files match.
 _PUBLISHED_PARAMETER_SETS: tuple[tuple[str, str], ...] = (("v1", "f9149f3c38a01efc"),)
 
 _CONFIG_FIELD_NAMES = frozenset(f.name for f in fields(Config))

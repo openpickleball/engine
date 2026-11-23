@@ -73,5 +73,12 @@ jobs:
         run: python scripts/check_sdist.py dist/*.tar.gz
       - name: Check wheel contents
         run: python scripts/check_wheel.py dist/*.whl
+      # Installs the built wheel alone into a clean virtual environment and loads
+      # every published parameter set from it. -I keeps the checkout off sys.path.
+      - name: Load parameter sets from the installed wheel
+        run: |
+          python -m venv "$RUNNER_TEMP/wheel-venv"
+          "$RUNNER_TEMP/wheel-venv/bin/python" -m pip install --no-index --no-deps dist/*.whl
+          "$RUNNER_TEMP/wheel-venv/bin/python" -I scripts/check_installed_wheel.py
       - name: Check metadata
         run: twine check --strict dist/*

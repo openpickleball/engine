@@ -20,7 +20,9 @@ V1_FINGERPRINT = "f9149f3c38a01efc"
 
 
 def _v1() -> dict[str, object]:
-    data = json.loads((ROOT / "params" / "v1.json").read_text(encoding="utf-8"))
+    data = json.loads(
+        (ROOT / "src" / "open_engine" / "params" / "v1.json").read_text(encoding="utf-8")
+    )
     assert type(data) is dict
     return data
 
@@ -80,7 +82,7 @@ def test_the_published_table_matches_the_params_files() -> None:
     from open_engine._config import _PUBLISHED_PARAMETER_SETS
 
     files = {}
-    for path in sorted((ROOT / "params").glob("*.json")):
+    for path in sorted((ROOT / "src" / "open_engine" / "params").glob("*.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
         assert path.name == f"{data['params_version']}.json"
         files[data["params_version"]] = data["parameter_fingerprint"]

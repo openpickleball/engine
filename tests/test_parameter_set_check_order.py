@@ -21,7 +21,9 @@ UNKNOWN = "is not a parameter set this release publishes"
 
 
 def _v1() -> dict[str, object]:
-    data = json.loads((ROOT / "params" / "v1.json").read_text(encoding="utf-8"))
+    data = json.loads(
+        (ROOT / "src" / "open_engine" / "params" / "v1.json").read_text(encoding="utf-8")
+    )
     assert type(data) is dict
     return data
 

@@ -4,7 +4,7 @@
 
 Status: reference implementation. The outputs are not OPEN ratings, and no OPEN rating is live. Do not use this engine to rate real players.
 
-The engine was evaluated on one club's closed pool: 1,601 doubles matches among 189 players. A forthcoming report describes the evaluation. Under the rule for changing defaults, fixed before that evaluation ran, parameter set `v1` did not pass the gain bar. So the `Config()` defaults remain placeholders, and `v1` is a named set that a caller loads explicitly with `Config.from_parameter_set` ([parameters.md](parameters.md#why-config-is-not-v1)).
+The engine was evaluated on one club's closed pool: 1,601 doubles matches among 189 players. A forthcoming report describes the evaluation. Under the rule for changing defaults, fixed before that evaluation ran, parameter set `v1` did not pass the gain bar. So the `Config()` defaults remain placeholders, and `v1` is a named set that a caller loads explicitly with `Config.published("v1")` ([parameters.md](parameters.md#why-config-is-not-v1)).
 
 Ratings are provisional. They come from one club's closed pool. Ratings from pools that share no players are not comparable ([What a rating means](model.md#what-a-rating-means)). Parameters are retuned on a published schedule ([parameters.md](parameters.md#schedule), issue #48).
 
@@ -81,7 +81,7 @@ fingerprint(), to_dict(), and == called on a rewritten Config itself read its re
 - replay_interval_days, diversity_window_days, and self_reported_repeat_window_days are from 1 to 3,652,058 (the days from date.min to date.max, which timedelta holds), and import_reliability_max_age_days from 0 to that. A window that reaches back before date.min from a match or reference date stops at date.min instead of raising OverflowError. diversity_target, self_reported_max_repeats, and the three connectivity counts are at least 1; import_reliability_carry_matches and established_min_verified_matches at least 0.
 - The gap filters are None or at least 0.
 
-`Config.from_parameter_set(data)` loads a published parameter set from the parsed JSON of a `params/v<N>.json` file (see [Maintenance and parameter versioning](parameters.md)). It trusts the label only when it names a set this release publishes, the recorded fingerprint is the one published for it, and the values hash to it. So a file cannot pass other values off as a published set or relabel one, and publishing a new set needs an engine release that adds it. It raises ConfigError, checking in this order:
+`Config.from_parameter_set(data)` loads a published parameter set from the parsed JSON of a `src/open_engine/params/v<N>.json` file (see [Maintenance and parameter versioning](parameters.md)). It trusts the label only when it names a set this release publishes, the recorded fingerprint is the one published for it, and the values hash to it. So a file cannot pass other values off as a published set or relabel one, and publishing a new set needs an engine release that adds it. It raises ConfigError, checking in this order:
 
 1. data is not exactly a dict.
 2. A key is not exactly a str.
@@ -96,6 +96,15 @@ fingerprint(), to_dict(), and == called on a rewritten Config itself read its re
 11. The built config's `parameter_fingerprint()` differs from the recorded one. The message names the label, the recorded fingerprint, and the computed one.
 
 It returns the config, with version the running package version and params_version the file's label.
+
+`Config.published(label)` loads a set this release publishes from the file the package ships, and `Config.published_sets()` lists the labels in order. `published` raises ConfigError, checking in this order:
+
+1. label is not exactly a str.
+2. label is not in `published_sets()`. The message names the sets this release publishes and does not show the label. Only a label in the table is used to find a file.
+3. The packaged file is missing, cannot be read, or is not JSON. The message names the label.
+4. Any check of `Config.from_parameter_set` above, on the packaged file's parsed JSON.
+
+It returns what `from_parameter_set` returns for that file.
 
 ## Errors
 
@@ -453,7 +462,7 @@ Uses the raw win probabilities computed with cfg's scale, so fit the scale first
 - Assign match_ids in the backend. A party that can choose a match_id can submit a match that gets rejected under it first (for example one that is not completed or not confirmed), and then the real match with that id never counts live (replay raises LedgerConflictError for the pair). DUPLICATE_MATCH_ID does not say whether the id was counted or reserved.
 - Give a corrected resubmission a new match_id, keep the rejected row in the ledger, and resubmit only after the rejections [Match ids, rejections, and resubmission](#match-ids-rejections-and-resubmission) allows.
 - Require verified identity and authorized evidence before importing an external rating. An external refresh can never overwrite an OPEN-earned rating once OPEN matches have been processed.
-- Show `params_version` with every published rating, and keep its `parameter_fingerprint` with it, as `PlayerSummary` gives them. Load a published parameter set with `Config.from_parameter_set` rather than setting `params_version` by hand: it checks the label and the values against the sets this release publishes, while a label set by hand proves nothing. A new set needs an engine release that adds it. When a new set goes live, rebuild authoritative ratings with a full replay of the whole ledger, and publish the shift by percentile first (see [Maintenance and parameter versioning](parameters.md#existing-ratings-when-a-set-changes)).
+- Show `params_version` with every published rating, and keep its `parameter_fingerprint` with it, as `PlayerSummary` gives them. Load a published parameter set with `Config.published` (which goes through `Config.from_parameter_set`) rather than setting `params_version` by hand: it checks the label and the values against the sets this release publishes, while a label set by hand proves nothing. A new set needs an engine release that adds it. When a new set goes live, rebuild authoritative ratings with a full replay of the whole ledger, and publish the shift by percentile first (see [Maintenance and parameter versioning](parameters.md#existing-ratings-when-a-set-changes)).
 - Store each replay's `ReplayInfo` (as_of date, config version, config fingerprint, params_version, parameter fingerprint, counts, net_rating_created) for auditability. Identify a published rating by the engine version, `params_version`, and the parameter fingerprint; the config fingerprint gives exact provenance. Take the engine version from the installed package (`open_engine.__version__` of the pinned release), not from `config_version`: that is `Config.version`, which a caller can set to any str without changing the parameter fingerprint. A `params_version` is self-asserted, since any config can carry any label. The label alone proves nothing: trust it only when the parameter fingerprint equals the one published for that set. Watch net_rating_created for a pool that grows or shrinks: colluding accounts with different K can create rating, and the engine does not cap it.
 - Reject a match whose `played_on` is after the date it was submitted. The engine never reads the clock, so it cannot tell. A future-dated live match, by typo or on purpose, holds last_played, rd_as_of, and partner and opponent dates at that future date for every player in it until the next replay: RD stops growing, reliability is held up, and player_summary's default reference date jumps ahead. A later honest match with those players that counts in the same rating format comes back with `late` set to True. For a category match, `parent.late` covers the overall doubles rating.
 - To avoid replaying the whole ledger every time, persist the snapshot of each scheduled replay and resume the next one from it, as [Replay and resume](#replay-and-resume) and [Snapshots and checkpoints](#snapshots-and-checkpoints) describe: take the snapshot right after the replay, store a match before the replay that covers its date, pass the whole ledger with `whole_ledger=True`, and run a full replay for a void, an edit, a backdated row, or a seed withdrawn or corrected after the checkpoint (the checkpoint already holds the old seed). A snapshot does not replace the ledger: keep the ledger as the source of truth and run a full replay when in doubt.

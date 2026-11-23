@@ -26,6 +26,7 @@ Domain skills: none applicable. This is a standard library Python package with n
 - `scripts/check_wheel.py`: `PACKAGE_FILES` gains `params/v1.json`; members may sit in a subdirectory listed in `PACKAGE_FILES`, and a directory entry for such a subdirectory is allowed.
 - New `scripts/check_installed_wheel.py`: run with the clean venv's interpreter under `-I`. Fails unless `open_engine` is imported from outside the checkout, `Config.published("v1").parameter_fingerprint()` is `f9149f3c38a01efc`, and every label in `Config.published_sets()` loads with its table fingerprint.
 - `.github/workflows/test.yml`, `package` job: after the wheel check, a step makes a venv in `$RUNNER_TEMP`, installs `dist/*.whl` with `--no-index --no-deps`, and runs the new script with that venv's Python under `-I`.
+- `.github/workflows/release.yml`, `build` job: the same step, so the wheel a release publishes is checked too (added after review).
 - Tests:
   - `tests/test_parameter_set_binding.py`, `tests/test_parameter_sets.py`, `tests/test_parameter_set_check_order.py`: read from `src/open_engine/params`.
   - New `tests/test_published_parameter_sets.py`: `published("v1")` equals `from_parameter_set` of the file and has fingerprint `f9149f3c38a01efc`; `published_sets()` equals the table labels and the file names; every published label loads; unknown, malformed, and non-str labels raise `ConfigError` with the shared wording and without echoing the label; a table label with no file and a file with invalid JSON raise `ConfigError`.

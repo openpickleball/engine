@@ -1,12 +1,12 @@
 # Parameter sets
 
-This register lists every published parameter set in `params/`. Each set is a named group of `Config` values, loaded on purpose by passing the parsed JSON of its file to `Config.from_parameter_set`, which checks it against the sets this engine release publishes. `Config()` is not a published set. [docs/parameters.md](docs/parameters.md) explains the file format, the loader, and the rules for a new set.
+This register lists every published parameter set in `src/open_engine/params/`, which the package ships. Each set is a named group of `Config` values, loaded on purpose with `Config.published("<label>")`, which reads the packaged file and checks it with `Config.from_parameter_set` against the sets this engine release publishes. `Config()` is not a published set. [docs/parameters.md](docs/parameters.md) explains the file format, the loader, and the rules for a new set.
 
 Status: reference implementation. The engine's output is not an OPEN rating, and no OPEN rating is live. Ratings are provisional: they come from one club's closed pool, pools that share no players are not comparable, and parameters are retuned on a published schedule ([docs/parameters.md](docs/parameters.md#schedule)). A published parameter set does not change that.
 
 ## v1
 
-File: `params/v1.json`. Parameter fingerprint: `f9149f3c38a01efc`.
+File: `src/open_engine/params/v1.json`. Parameter fingerprint: `f9149f3c38a01efc`.
 
 ### Reason
 
