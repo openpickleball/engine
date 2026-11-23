@@ -173,7 +173,9 @@ dataclass PlayerSummary(object) init=True repr=True eq=True order=False unsafe_h
     field config_version: str
     field account_linked: bool
     field connectivity: NetworkConnectivity
-    __init__(self, player_id: str, rating_format: RatingFormat, rating: float, reliability: float, imported_reliability: float | None, established: bool, rd: float, matches_played: int, last_played: date | None, initial_rating: float, initial_source: str, initial_source_reliability: float | None, initial_source_date: date | None, calculated_as_of: date | None, live_updates_since_recalculation: int, config_version: str, account_linked: bool, connectivity: NetworkConnectivity) -> None
+    field params_version: str | None
+    field parameter_fingerprint: str
+    __init__(self, player_id: str, rating_format: RatingFormat, rating: float, reliability: float, imported_reliability: float | None, established: bool, rd: float, matches_played: int, last_played: date | None, initial_rating: float, initial_source: str, initial_source_reliability: float | None, initial_source_date: date | None, calculated_as_of: date | None, live_updates_since_recalculation: int, config_version: str, account_linked: bool, connectivity: NetworkConnectivity, params_version: str | None, parameter_fingerprint: str) -> None
 
 dataclass PrequentialPrediction(object) init=True repr=True eq=True order=False unsafe_hash=False frozen=True
     field match_id: str

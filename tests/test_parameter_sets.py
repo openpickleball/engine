@@ -11,15 +11,28 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from dataclasses import fields
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
 
-from open_engine import Config, ConfigError, __version__
+from open_engine import (
+    Config,
+    ConfigError,
+    Match,
+    MatchType,
+    PlayerSummary,
+    RatingEngine,
+    RatingFormat,
+    __version__,
+    replay,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 PARAMS_DIR = ROOT / "params"
 V1_PATH = PARAMS_DIR / "v1.json"
+START = date(2026, 3, 2)
 LABELS = ("version", "params_version")
 REQUIRED = ("params_version", "parameter_fingerprint", "parameters")
 V1_FINGERPRINT = "f9149f3c38a01efc"
@@ -359,6 +372,54 @@ def test_params_holds_only_json_files() -> None:
     assert sorted(p.suffix for p in PARAMS_DIR.iterdir()) == [".json"] * len(
         list(PARAMS_DIR.iterdir())
     )
+
+
+# -- criterion 6: a player summary names the parameter set ----------------------
+
+
+def _ledger() -> list[Match]:
+    ids = ["syn-p1", "syn-p2", "syn-p3", "syn-p4"]
+    rows = []
+    for i in range(6):
+        rows.append(
+            Match(
+                f"syn-m{i}",
+                (ids[i % 4], ids[(i + 1) % 4]),
+                (ids[(i + 2) % 4], ids[(i + 3) % 4]),
+                ((11, 4 + i % 5),),
+                START + timedelta(days=3 * i),
+                RatingFormat.DOUBLES,
+                match_type=MatchType.TOURNAMENT,
+            )
+        )
+    return rows
+
+
+def test_player_summary_ends_with_the_parameter_set_fields() -> None:
+    names = [f.name for f in fields(PlayerSummary)]
+    assert names[-3:] == ["connectivity", "params_version", "parameter_fingerprint"]
+
+
+@pytest.mark.parametrize(
+    ("load", "label", "fingerprint"),
+    [(False, None, DEFAULT_FINGERPRINT), (True, "v1", V1_FINGERPRINT)],
+)
+def test_player_summary_carries_the_config_label_and_fingerprint(
+    load: bool, label: str | None, fingerprint: str
+) -> None:
+    cfg = Config.from_parameter_set(_v1()) if load else Config()
+    engine = replay(_ledger(), cfg=cfg, as_of=START + timedelta(days=30))
+    summary = engine.player_summary("syn-p1", RatingFormat.DOUBLES)
+    assert summary.params_version == label
+    assert summary.parameter_fingerprint == fingerprint
+    assert summary.config_version == __version__
+
+
+def test_player_summary_of_a_fresh_engine_names_the_set() -> None:
+    engine = RatingEngine(Config.from_parameter_set(_v1()))
+    engine.seed_provisional_rating("syn-p9", RatingFormat.DOUBLES)
+    summary = engine.player_summary("syn-p9", RatingFormat.DOUBLES, as_of=START)
+    assert (summary.params_version, summary.parameter_fingerprint) == ("v1", V1_FINGERPRINT)
 
 
 # -- criterion 7: Config() defaults are unchanged -------------------------------

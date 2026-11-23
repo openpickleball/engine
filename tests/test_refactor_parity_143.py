@@ -5249,9 +5249,16 @@ SUMMARY_EXPECTED: dict[str, str] = {
 
 
 def _summary(engine: RatingEngine, pid: object, fmt: object, as_of: object) -> object:
-    """player_summary's fields but config_version, which changes with a release."""
+    """
+    player_summary's fields but the config labels.
+
+    config_version changes with a release. params_version and
+    parameter_fingerprint (issue #48) were added after these digests were
+    recorded, and name the config rather than a rating value.
+    """
     fields = dataclasses.asdict(engine.player_summary(pid, fmt, as_of))  # type: ignore[arg-type]
-    fields.pop("config_version")
+    for name in ("config_version", "params_version", "parameter_fingerprint"):
+        fields.pop(name)
     return fields
 
 

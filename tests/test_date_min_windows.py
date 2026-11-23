@@ -151,7 +151,11 @@ def test_large_diversity_window_summary_equals_covering_window() -> None:
     huge = replay(_ledger(NORMAL), cfg=Config(diversity_window_days=800_000), as_of=as_of)
     covering = replay(_ledger(NORMAL), cfg=Config(diversity_window_days=700_000), as_of=as_of)
     for pid in PLAYERS:
-        assert huge.player_summary(pid, D) == covering.player_summary(pid, D)
+        # The configs differ, so only their parameter fingerprints may.
+        got = huge.player_summary(pid, D)
+        want = covering.player_summary(pid, D)
+        assert got.parameter_fingerprint != want.parameter_fingerprint
+        assert got == dataclasses.replace(want, parameter_fingerprint=got.parameter_fingerprint)
 
 
 def test_large_repeat_window_record_equals_covering_window() -> None:

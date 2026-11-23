@@ -325,6 +325,8 @@ SUMMARY_FIELDS = [
     "config_version",
     "account_linked",
     "connectivity",
+    "params_version",
+    "parameter_fingerprint",
 ]
 
 
@@ -367,6 +369,8 @@ def test_player_summary_values_for_an_imported_baseline() -> None:
     assert summary.live_updates_since_recalculation == 1
     assert summary.config_version == eng.cfg.version
     assert summary.account_linked is False
+    assert summary.params_version is None
+    assert summary.parameter_fingerprint == eng.cfg.parameter_fingerprint()
 
 
 def test_player_summary_for_a_provisional_player_after_replay() -> None:
