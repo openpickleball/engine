@@ -106,7 +106,7 @@ Rating:
 
 Inputs:
 
-- `Config`: every rating parameter, with a fingerprint for provenance. `params_version` labels a published parameter set (`None` or `v<N>`), and `parameter_fingerprint()` hashes the parameter values without `version` and `params_version`, so it stays the same across releases that change no parameter value (a release that adds, removes, or renames a `Config` field, or changes how a value is written in the payload, changes it). Its mapping fields are read-only copies, and a config is hashable. Equal configs have the same fingerprint and hash. `Config.to_dict()` and `Config.from_dict()` store and load one with the same fingerprint.
+- `Config`: every rating parameter, with a fingerprint for provenance. `params_version` labels a published parameter set (`None` or `v<N>`), and `parameter_fingerprint()` hashes the parameter values without `version` and `params_version`, so it stays the same across releases that change no parameter value (a release that adds, removes, or renames a `Config` field, or changes how a value is written in the payload, changes it). Its mapping fields are read-only copies, and a config is hashable. Equal configs have the same fingerprint and hash. `Config.to_dict()` and `Config.from_dict()` store and load one with the same fingerprint. `Config.from_parameter_set()` loads a published parameter set from `params/` after checking its recorded parameter fingerprint.
 - `Match`: one match with its teams, game scores, date, format, and status. Only a completed match can count.
 - `MatchStatus`: how a match ended: completed, forfeit, retired, or incomplete (see "Match status").
 - `GameFormat`: how each game is scored (scoring type, points to, win by, cap).
@@ -121,7 +121,7 @@ Results:
 
 - `MatchResult`: what `record` did with a match, including the rating changes.
 - `RejectionReason`: why a match was not counted. `MATCH_NOT_COMPLETED` covers every status other than completed.
-- `PlayerSummary`: a player's rating, reliability, established flag, network connectivity, and provenance in one format.
+- `PlayerSummary`: a player's rating, reliability, established flag, network connectivity, and provenance in one format, including the config's `params_version` and parameter fingerprint.
 - `NetworkConnectivity`: whether a player's pool connects to the main network in one format, with the pool size, fringe, outside players and dates, and the size of the player's group behind it.
 - `ReplayInfo`: the date, config version, config fingerprint, `params_version`, parameter fingerprint, and match counts of a replay, and `net_rating_created`, the net rating its counted updates added to each rating format's pool.
 
@@ -158,6 +158,8 @@ Errors (every class is a `ValueError`). [Errors](https://github.com/openpickleba
 ## Config values
 
 `Config` holds every rating parameter. It checks every field when it is built and raises `ConfigError` for any value it rejects, such as a NaN, a value out of range, or a missing mapping key. Compare an engine's config with `==` or `fingerprint()`, not `is`. See [Config validation](https://github.com/openpickleball/engine/blob/main/docs/behavior.md#config-validation) for every rule, and the [parameter table](https://github.com/openpickleball/engine/blob/main/docs/model.md#parameters) for what each one does.
+
+`Config()` is not a published parameter set. The published sets, such as `v1`, are in `params/` and listed in [PARAMETERS.md](https://github.com/openpickleball/engine/blob/main/PARAMETERS.md). Load one with `Config.from_parameter_set`. See [Maintenance and parameter versioning](https://github.com/openpickleball/engine/blob/main/docs/parameters.md) for the file format, the existing-ratings rule, and the retuning rules. Engine output under a published set is still not an OPEN rating.
 
 ## Ledger order
 

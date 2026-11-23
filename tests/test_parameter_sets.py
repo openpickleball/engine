@@ -368,6 +368,21 @@ def test_every_published_file_loads_under_its_name() -> None:
         assert path.name == f"{cfg.params_version}.json"
 
 
+def _register_section(label: str) -> str:
+    """The text of PARAMETERS.md under the "## <label>" heading, up to the next one."""
+    text = (ROOT / "PARAMETERS.md").read_text(encoding="utf-8")
+    heading = f"## {label}\n"
+    assert heading in text, f"PARAMETERS.md has no heading for {label}"
+    return text.split(heading, 1)[1].split("\n## ", 1)[0]
+
+
+def test_every_published_file_is_in_the_register() -> None:
+    for path in sorted(PARAMS_DIR.glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        section = _register_section(data["params_version"])
+        assert f"`{data['parameter_fingerprint']}`" in section
+
+
 def test_params_holds_only_json_files() -> None:
     assert sorted(p.suffix for p in PARAMS_DIR.iterdir()) == [".json"] * len(
         list(PARAMS_DIR.iterdir())
