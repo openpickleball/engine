@@ -5,8 +5,8 @@ result is exact under the independent-points assumption, which suits rally
 scoring and only approximates side-out scoring, where only the serving side can
 score.
 
-Demonstration only: not validated on real match data, outputs are not OPEN
-ratings, and the API may change without notice.
+Reference implementation: outputs are not OPEN ratings, and ratings are
+provisional (see "Status" in docs/behavior.md).
 """
 
 from __future__ import annotations

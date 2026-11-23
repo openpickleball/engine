@@ -99,7 +99,7 @@ def test_replay_ratings_rds_and_info_are_pinned() -> None:
     assert info is not None
     assert (info.as_of, info.matches_considered, info.matches_counted) == (AS_OF, 60, 60)
     assert info.config_version == Config().version
-    assert info.config_fingerprint == Config().fingerprint() == "40d9d88d4ae408cd"
+    assert info.config_fingerprint == Config().fingerprint() == "4012bfec9bfddd48"
 
 
 def test_fit_scale_profile_is_pinned() -> None:

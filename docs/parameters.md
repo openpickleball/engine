@@ -1,6 +1,6 @@
 # Maintenance and parameter versioning
 
-Status: demonstration only. The engine's output is not an OPEN rating, and no OPEN rating is live. This page sets the rules a published parameter set follows. Following them does not make engine output an OPEN rating.
+Status: reference implementation. The engine's output is not an OPEN rating, and no OPEN rating is live. Ratings are provisional: they come from one club's closed pool, pools that share no players are not comparable, and parameters are retuned on the [schedule](#schedule) below. This page sets the rules a published parameter set follows. Following them does not make engine output an OPEN rating.
 
 A parameter set is a named group of `Config` values, such as `v1`. The sets live in `params/` at the repository root. [PARAMETERS.md](../PARAMETERS.md) lists each one with its values, data, evidence, and fingerprints.
 

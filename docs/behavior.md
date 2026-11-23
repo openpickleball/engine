@@ -2,7 +2,11 @@
 
 ## Status
 
-Status: demonstration only. These methods have not been validated on real match data, the outputs are not OPEN ratings, and the API may change without notice. Do not use this engine to rate real players.
+Status: reference implementation. The outputs are not OPEN ratings, and no OPEN rating is live. Do not use this engine to rate real players.
+
+The engine was evaluated on one club's closed pool: 1,601 doubles matches among 189 players. A forthcoming report describes the evaluation. Under the rule for changing defaults, fixed before that evaluation ran, parameter set `v1` did not pass the gain bar. So the `Config()` defaults remain placeholders, and `v1` is a named set that a caller loads explicitly with `Config.from_parameter_set` ([parameters.md](parameters.md#why-config-is-not-v1)).
+
+Ratings are provisional. They come from one club's closed pool. Ratings from pools that share no players are not comparable ([What a rating means](model.md#what-a-rating-means)). Parameters are retuned on a published schedule ([parameters.md](parameters.md#schedule), issue #48).
 
 This is a transparent, configurable rating engine. It is not a reproduction of any proprietary rating algorithm. It supports ratings seeded from a verified snapshot of a standard external rating system, independently maintained OPEN ratings, unregistered player records, doubles categories that also feed the overall doubles rating, match-source weighting, game format weighting, inactivity-based uncertainty, rolling partner/opponent diversity, scale calibration, and deterministic historical replay.
 

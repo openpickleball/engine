@@ -4,7 +4,11 @@
 
 The reference rating engine for [OPEN](https://github.com/openpickleball), the Open Pickleball Evaluation Network.
 
-> **Project status:** This engine is a demonstration. Its methods have not been validated on real match data, its outputs are not OPEN ratings, and its API may change without notice. Do not use it to rate real players. OPEN is in early development, and no OPEN rating is live.
+> **Project status:** This engine is the reference implementation of the OPEN rating method. Its outputs are not OPEN ratings. Do not use it to rate real players. OPEN is in early development, and no OPEN rating is live.
+>
+> The engine was evaluated on one club's closed pool: 1,601 doubles matches among 189 players. A forthcoming report describes the evaluation. Parameter set `v1` did not pass the gain bar of the rule for changing defaults, so the `Config()` defaults remain placeholders, and `v1` is loaded explicitly ([parameters](https://github.com/openpickleball/engine/blob/main/docs/parameters.md)).
+>
+> Ratings are provisional. They come from one club's closed pool. Ratings from pools that share no players are not comparable. Parameters are retuned on a published [schedule](https://github.com/openpickleball/engine/blob/main/docs/parameters.md#schedule) (issue #48).
 
 ## Technology
 
@@ -18,13 +22,13 @@ A standard external rating system is the intended source of imported ratings, wh
 
 ## Install
 
-A dev release is on TestPyPI, the Python test index. It is not on PyPI. Install it with:
+A release candidate is on TestPyPI, the Python test index. It is not on PyPI. Install it with:
 
 ```bash
-pip install -i https://test.pypi.org/simple/ openpickleball-engine==0.3.0.dev0
+pip install -i https://test.pypi.org/simple/ openpickleball-engine==1.0.0rc1
 ```
 
-A dev release is for trying the package. The engine is still a demonstration, and its outputs are not OPEN ratings.
+A release candidate is for trying the package and for pinning an evaluation to a released version. Its outputs are not OPEN ratings.
 
 ## Setup and tests
 

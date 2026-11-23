@@ -1,9 +1,12 @@
 """
 OPEN rating engine: provenance-aware, performance-based Elo for pickleball.
 
-Status: demonstration only. These methods have not been validated on real
-match data, the outputs are not OPEN ratings, and the API may change without
-notice. Do not use this engine to rate real players.
+Status: reference implementation. The outputs are not OPEN ratings. The
+engine was evaluated on one club's closed pool (1,601 doubles matches, 189
+players), described in a forthcoming report. Ratings are provisional: pools
+that share no players are not comparable, and parameters are retuned on a
+published schedule (docs/parameters.md). Do not use this engine to rate real
+players.
 
 This is a transparent, configurable rating engine. It is not a reproduction of
 any proprietary rating algorithm. It supports ratings seeded from a verified

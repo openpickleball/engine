@@ -174,7 +174,7 @@ def test_config_without_overflow_still_builds_and_rates(build: object) -> None:
 def test_default_fingerprint_is_unchanged() -> None:
     # Re-pinned in issue #155 when params_version joined the fingerprint payload,
     # confirmed equal to the old pin without that key.
-    assert Config().fingerprint() == "40d9d88d4ae408cd"
+    assert Config().fingerprint() == "4012bfec9bfddd48"
 
 
 # Configs that build both before and after the fix, int and float.

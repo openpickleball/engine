@@ -2,9 +2,23 @@
 
 All notable changes to the OPEN rating engine are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until 1.0.0, a minor version may include breaking changes.
 
-The engine is a demonstration. Its outputs are not OPEN ratings.
+The engine is the reference implementation of the OPEN rating method. Its outputs are not OPEN ratings, and no OPEN rating is live.
 
 ## [Unreleased]
+
+## [1.0.0rc1] - 2026-11-23
+
+The first release candidate for 1.0.0, published to TestPyPI. It is the version an evaluation can pin. The package is the reference implementation of the OPEN rating method. Its outputs are not OPEN ratings, and no OPEN rating is live.
+
+The stability promise in `docs/behavior.md` ("Stability") and the README's "Public API" section takes effect at 1.0.0, not at this release candidate. Until 1.0.0 final, a release may still break the public API, and the changelog marks each break.
+
+Highlights since 0.3.0.dev0:
+
+- **Parameter set identity** (issue #155). `Config.params_version` labels a published parameter set, and `Config.parameter_fingerprint()` names the parameter values apart from the package version. `ReplayInfo` carries both, and since issue #48 so does `PlayerSummary`.
+- **Public API freeze** (issue #156). `tests/api_surface.txt` records the public surface, a test fails when the code differs from it, and the stability promise is written down.
+- **Parameter set v1** (issue #48). `params/v1.json`, `PARAMETERS.md`, `docs/parameters.md`, and `Config.from_parameter_set`. v1 did not pass the gain bar of the rule for changing defaults, so `Config()` keeps its placeholder defaults and v1 is loaded explicitly.
+- **What a rating means** (issue #149). `docs/model.md` and the README declare what a rating gap means under v1, that `Config()` carries no such meaning, what the level means, and that scaling the scale and K together changes no prediction.
+- **Breaking changes**, each listed below: snapshot schema version 9 (a version 8 snapshot no longer loads; a full replay rebuilds it), two new required `PlayerSummary` fields (`params_version` and `parameter_fingerprint`), `RatingEngine.self_reported_log` renamed to the internal `_self_reported_log`, `Config.from_dict` needing the `params_version` key, the new `Config` and `ReplayInfo` fields shifting positional arguments, and every `Config.fingerprint()` changing.
 
 ### Added
 
@@ -49,6 +63,8 @@ The engine is a demonstration. Its outputs are not OPEN ratings.
 
 ### Changed
 
+- The status label is now "reference implementation" instead of "demonstration", in the README, `docs/model.md`, `docs/behavior.md`, `docs/parameters.md`, `PARAMETERS.md`, the module docstrings, and the package description (issue #161). The status no longer says the API may change without notice or that the methods have not been validated on real match data. It says the engine was evaluated on one club's closed pool (1,601 doubles matches, 189 players), described in a forthcoming report, and that ratings are provisional: pools that share no players are not comparable, and parameters are retuned on a published schedule. A test checks every module docstring for the label. The README keeps "The API may change in any 0.x release." until 1.0.0 final.
+- `Config.version` and `__version__` are `1.0.0rc1`. This changes every `Config.fingerprint()`: `Config()` now gives `4012bfec9bfddd48`. `parameter_fingerprint()` leaves out the version, so it does not change, and neither does any rating.
 - **Breaking:** `RatingEngine.self_reported_log` is now `RatingEngine._self_reported_log`, an internal attribute. Its keys are an internal type, so it is not part of the public API. The snapshot key `self_reported_log` is unchanged, and so is `snapshot_version`. A pickle of a `RatingEngine` made before this change lacks the new attribute, so `to_snapshot` fails on it, and so can a self-reported match that reaches the repeat-limit check; rebuild the engine from a snapshot or a replay instead (issue #156).
 - **Breaking:** every config's `fingerprint()` changes, since the payload gains the `params_version` key. Stored fingerprints and replay records made before this release no longer match the same config. Stored snapshots fail on `snapshot_version` first (see the next entry). No rating changes (issue #155).
 - **Breaking:** snapshot schema version 9 adds `params_version` and `parameter_fingerprint` to `replay_info`. A version 8 snapshot no longer loads; run a full replay to make a new one (issue #155).
@@ -220,6 +236,7 @@ The first dev release, published to TestPyPI.
 - First demonstration release of the `openpickleball-engine` package (`open_engine`), with no runtime dependencies, for Python 3.10 and later.
 - A basic match example in `examples/basic_match.py`.
 
-[Unreleased]: https://github.com/openpickleball/engine/compare/v0.3.0.dev0...HEAD
+[Unreleased]: https://github.com/openpickleball/engine/compare/v1.0.0rc1...HEAD
+[1.0.0rc1]: https://github.com/openpickleball/engine/compare/v0.3.0.dev0...v1.0.0rc1
 [0.3.0.dev0]: https://github.com/openpickleball/engine/compare/v0.1.0...v0.3.0.dev0
 [0.1.0]: https://github.com/openpickleball/engine/releases/tag/v0.1.0
