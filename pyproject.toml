@@ -50,6 +50,7 @@ only-include = [
     "tests",
     "scripts",
     "examples",
+    "params",
     "README.md",
     "LICENSE",
     "CHANGELOG.md",

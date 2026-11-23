@@ -17,6 +17,7 @@ ALLOWED = [
     "src/open_engine/py.typed",
     "tests/test_engine.py",
     "examples/basic_match.py",
+    "params/v1.json",
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
