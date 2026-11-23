@@ -54,14 +54,14 @@ exception ConfigError(OpenEngineError)
 exception EvaluationError(OpenEngineError)
 
 dataclass EvaluationReport(object) init=True repr=True eq=True order=False unsafe_hash=False frozen=True
-    field scoring: str | None
+    field scoring: ScoringType | None
     field scale: float | None
     field matches_scored: int
     field mse: float
     field mae: float
     field bias: float
     field calibration: tuple[tuple[float, float, float, int], ...]
-    __init__(self, scoring: str | None, scale: float | None, matches_scored: int, mse: float, mae: float, bias: float, calibration: tuple[tuple[float, float, float, int], ...]) -> None
+    __init__(self, scoring: ScoringType | None, scale: float | None, matches_scored: int, mse: float, mae: float, bias: float, calibration: tuple[tuple[float, float, float, int], ...]) -> None
 
 dataclass ExternalRatingSnapshot(object) init=True repr=True eq=True order=False unsafe_hash=False frozen=True
     field source: str
@@ -265,14 +265,14 @@ dataclass ReplayInfo(object) init=True repr=True eq=True order=False unsafe_hash
     __init__(self, as_of: date, config_version: str, config_fingerprint: str, params_version: str | None, parameter_fingerprint: str, matches_considered: int, matches_counted: int, net_rating_created: Mapping[RatingFormat, float] = <factory>) -> None
 
 dataclass ScaleFit(object) init=True repr=True eq=True order=False unsafe_hash=False frozen=True
-    field scoring: str
+    field scoring: ScoringType
     field scale: float
     field default_scale: float
     field fitted: EvaluationReport
     field at_default: EvaluationReport
     field profile: tuple[tuple[float, float], ...] = ()
     field at_bound: bool = False
-    __init__(self, scoring: str, scale: float, default_scale: float, fitted: EvaluationReport, at_default: EvaluationReport, profile: tuple[tuple[float, float], ...] = (), at_bound: bool = False) -> None
+    __init__(self, scoring: ScoringType, scale: float, default_scale: float, fitted: EvaluationReport, at_default: EvaluationReport, profile: tuple[tuple[float, float], ...] = (), at_bound: bool = False) -> None
 
 enum ScoringType(_StrEnum)
     SIDE_OUT = 'side_out'
@@ -283,13 +283,13 @@ exception SnapshotError(OpenEngineError)
 exception UnknownPlayerError(PlayerError)
 
 dataclass WinCalibrationFit(object) init=True repr=True eq=True order=False unsafe_hash=False frozen=True
-    field scoring: str
+    field scoring: ScoringType
     field a: float
     field brier: float
     field brier_uncalibrated: float
     field n: int
     field at_bound: bool = False
-    __init__(self, scoring: str, a: float, brier: float, brier_uncalibrated: float, n: int, at_bound: bool = False) -> None
+    __init__(self, scoring: ScoringType, a: float, brier: float, brier_uncalibrated: float, n: int, at_bound: bool = False) -> None
 
 def calibrate_win_probability(p: float, a: float) -> float
 
