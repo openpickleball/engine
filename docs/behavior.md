@@ -327,7 +327,7 @@ established is True when reliability (as displayed, rounded to 1 place) is at le
 
 live_updates_since_recalculation counts the live updates since the last replay that are in the state's rating: the state's own live_updates_since_replay plus its inherited_live_updates, which for a category state derived from overall doubles is the parent's live count when the state was derived. It is 0 right after a replay.
 
-config_version, params_version, and parameter_fingerprint name the engine's config: its `Config.version`, its `Config.params_version` (None when the config is not a published parameter set), and its `parameter_fingerprint()`. params_version and parameter_fingerprint, after connectivity, are the last two fields. They are labels and change no rating. A summary is not stored in a snapshot, so they need no snapshot change.
+config_version, params_version, and parameter_fingerprint name the engine's config: its `Config.version`, its `Config.params_version` (None means the config is not a published parameter set), and its `parameter_fingerprint()`. params_version and parameter_fingerprint, after connectivity, are the last two fields. They are provenance and change no rating. A summary is not stored in a snapshot, so they need no snapshot change.
 
 ## Replay and resume
 
