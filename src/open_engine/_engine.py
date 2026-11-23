@@ -352,6 +352,12 @@ class RatingEngine:
         record (and so replay). An id named only in uncounted rows, or in rows
         after a replay's as_of, has no player record.
 
+        The result is the engine's own record, not a copy: a live view of
+        engine state that later calls change. Read it, do not change it.
+        Changing a Player, or a RatingState it holds, in place is unsupported
+        and outside the stability promise: it skips validation and the mark
+        that lets a snapshot resume (see docs/behavior.md, "Stability").
+
         Args:
             player_id: The player's id, exactly a str (a subclass is rejected).
 
@@ -865,6 +871,11 @@ class RatingEngine:
         stores it in singles and overall doubles, and in a category format
         while Config.category_feeds_parent is off; in a category format while
         it is on, seed_provisional_rating returns it without storing it.
+
+        A stored state is the engine's own object, not a copy: a live view of
+        engine state that later calls change. Read it, do not change it.
+        Changing a RatingState in place is unsupported and outside the
+        stability promise (see docs/behavior.md, "Stability").
 
         Args:
             player_id: The player, exactly a str (a subclass is rejected).

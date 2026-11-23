@@ -34,7 +34,7 @@ from .winprob import calibrate_win_probability, match_win_probability
 class EvaluationReport:
     """Point-share error and calibration bins for a set of prequential predictions."""
 
-    scoring: str | None
+    scoring: ScoringType | None  # the scoring evaluated, None for every scoring
     scale: float | None
     matches_scored: int
     mse: float
@@ -389,8 +389,8 @@ def _report_from_predictions(
             )
     mse = math.fsum(e * e for e in errors) / len(errors)
     report = EvaluationReport(
-        scoring=scoring.value if scoring else None,
-        scale=cfg.scale_by_scoring[scoring] if scoring else None,
+        scoring=scoring,
+        scale=cfg.scale_by_scoring[scoring] if scoring is not None else None,
         matches_scored=len(pairs),
         mse=round(mse, 6),
         mae=round(math.fsum(abs(e) for e in errors) / len(errors), 6),
@@ -447,7 +447,7 @@ class ScaleFit:
     A fit with at_bound set, or with a flat profile, is not identified.
     """
 
-    scoring: str
+    scoring: ScoringType
     scale: float
     default_scale: float
     fitted: EvaluationReport
@@ -575,7 +575,7 @@ def fit_scale(
     fitted = run(fitted_scale)[0]
     at_default = run(default_scale)[0]
     return ScaleFit(
-        scoring=scoring.value,
+        scoring=scoring,
         scale=fitted_scale,
         default_scale=default_scale,
         fitted=fitted,
@@ -593,7 +593,7 @@ class WinCalibrationFit:
     A fit with at_bound set is not identified.
     """
 
-    scoring: str
+    scoring: ScoringType
     a: float  # exponent on the logit of the raw win probability, rounded to 3 places
     brier: float  # at the fitted a
     brier_uncalibrated: float  # at a = 1
@@ -696,7 +696,7 @@ def fit_win_calibration(
     fitted = round((lo + hi) / 2, 3)
 
     return WinCalibrationFit(
-        scoring=scoring.value,
+        scoring=scoring,
         a=fitted,
         brier=brier(fitted),
         brier_uncalibrated=brier(1.0),

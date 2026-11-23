@@ -49,6 +49,10 @@ cfg.parameter_fingerprint()  # "f9149f3c38a01efc"
 
 Publishing a new set needs an engine release that adds its file under `src/open_engine/params/`, its entry in PARAMETERS.md, and its entry in the engine's table, together. CI builds the wheel, installs it alone in a clean environment, and loads every published set from it.
 
+## A published set never changes
+
+A published set's values never change. Retuning publishes a new label, such as `v2`, and `v1` keeps its values. The loader enforces this: `Config.published` and `Config.from_parameter_set` load a set only when its values match the parameter fingerprint published for its label, so the same label cannot carry other values. A change to the `Config()` defaults is a different matter: it comes in a minor release and is recorded in the changelog. Both rules are part of the stability promise ([Stability](behavior.md#stability)). How a set carries across a release that changes the `Config` payload itself, without changing its values, is a separate question ([below](#a-release-that-changes-the-config-payload)).
+
 ## Why `Config()` is not v1
 
 A new set replaces the `Config()` defaults only when it passes the default-change rule. The rule is fixed before the evaluation runs. It compares `Config()` against the new set on held-out matches, with a bootstrap interval on the difference in Brier score and in log loss. The gain bar needs the lower bound of the improvement above 0 on Brier score or on log loss. The non-inferiority bar needs the Brier lower bound above -0.005.
