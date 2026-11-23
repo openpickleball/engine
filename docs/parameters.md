@@ -51,7 +51,7 @@ Publishing a new set needs an engine release that adds its file under `src/open_
 
 ## A published set never changes
 
-A published set's values never change. Retuning publishes a new label, such as `v2`, and `v1` keeps its values. The loader enforces this: `Config.published` and `Config.from_parameter_set` load a set only when its values match the parameter fingerprint published for its label, so the same label cannot carry other values. A change to the `Config()` defaults is a different matter: it comes in a minor release and is recorded in the changelog. Both rules are part of the stability promise ([Stability](behavior.md#stability)). How a set carries across a release that changes the `Config` payload itself, without changing its values, is a separate question ([below](#a-release-that-changes-the-config-payload)).
+A published set's values never change. Retuning publishes a new label, such as `v2`, and `v1` keeps its values. The loader enforces this: `Config.published` and `Config.from_parameter_set` load a set only when its values match the parameter fingerprint published for its label, so a config loaded through them always has the published values. A label set by hand proves nothing (see [Identity](#identity)). A change to the `Config()` defaults is a different matter: it comes in a minor release and is recorded in the changelog. Both rules are part of the stability promise ([Stability](behavior.md#stability)). How a set carries across a release that changes the `Config` payload itself, without changing its values, is a separate question, not decided yet ([below](#a-release-that-changes-the-config-payload)).
 
 ## Why `Config()` is not v1
 

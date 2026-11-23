@@ -872,10 +872,11 @@ class RatingEngine:
         while Config.category_feeds_parent is off; in a category format while
         it is on, seed_provisional_rating returns it without storing it.
 
-        A stored state is the engine's own object, not a copy: a live view of
-        engine state that later calls change. Read it, do not change it.
-        Changing a RatingState in place is unsupported and outside the
-        stability promise (see docs/behavior.md, "Stability").
+        A stored state is the engine's own object, not a copy, until a later
+        update stores a new state in its place; the object returned before
+        then keeps the old values. Read it, do not change it. Changing a
+        RatingState in place is unsupported and outside the stability promise
+        (see docs/behavior.md, "Stability").
 
         Args:
             player_id: The player, exactly a str (a subclass is rejected).
