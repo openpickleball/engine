@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 import open_engine
+from open_engine import Config
 
 README = Path(__file__).parents[1] / "README.md"
 INSTALL_LINE = "pip install openpickleball-engine"
@@ -28,14 +30,23 @@ def quick_start_block(readme: Path) -> str:
     return code
 
 
-def run_block(code: str) -> None:
-    exec(compile(code, "README.md quick start", "exec"), {"__name__": "__readme__"})
+def run_block(code: str) -> dict[str, Any]:
+    """Run a code block and return the namespace it ran in."""
+    namespace: dict[str, Any] = {"__name__": "__readme__"}
+    exec(compile(code, "README.md quick start", "exec"), namespace)
+    return namespace
 
 
 def test_quick_start_runs(capsys: pytest.CaptureFixture[str]) -> None:
     run_block(quick_start_block(README))
     out = capsys.readouterr().out
     assert "alice" in out
+
+
+def test_quick_start_uses_v1() -> None:
+    # The quick start loads the published set v1, not the Config() placeholders (issue #173).
+    namespace = run_block(quick_start_block(README))
+    assert namespace["engine"].cfg == Config.published("v1")
 
 
 def test_broken_quick_start_raises(tmp_path: Path) -> None:
