@@ -15,6 +15,7 @@ README = Path(__file__).parents[1] / "README.md"
 INSTALL_LINE = "pip install openpickleball-engine"
 PIP = re.compile(r"^(?:python3? -m )?pip install ")
 PIN = re.compile(r"openpickleball-engine==([^\s`]+)")
+REPLAY_CALL = re.compile(r"\breplay\(([^)]*)\)")
 
 
 def quick_start_block(readme: Path) -> str:
@@ -47,6 +48,21 @@ def test_quick_start_uses_v1() -> None:
     # The quick start loads the published set v1, not the Config() placeholders (issue #173).
     namespace = run_block(quick_start_block(README))
     assert namespace["engine"].cfg == Config.published("v1")
+
+
+def quick_start_section(readme: Path) -> str:
+    """Return the README's '## Quick start' section, code blocks and prose together."""
+    text = readme.read_text(encoding="utf-8")
+    _, found, section = text.partition("\n## Quick start\n")
+    assert found, "README has no '## Quick start' section"
+    return section.split("\n## ", 1)[0]
+
+
+def test_quick_start_replay_passes_cfg() -> None:
+    # A replay pointer without cfg= runs on the Config() placeholders, not v1 (issue #173).
+    calls = REPLAY_CALL.findall(quick_start_section(README))
+    assert calls, "the quick start names no replay( call"
+    assert [args for args in calls if "cfg=" not in args] == []
 
 
 def test_broken_quick_start_raises(tmp_path: Path) -> None:
