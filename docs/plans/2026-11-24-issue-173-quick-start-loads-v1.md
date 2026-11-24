@@ -18,9 +18,9 @@ Domain skills: none available apply (pure Python package; no web framework, UI, 
 
 ## Files that change
 
-- `README.md`: quick start block (import `Config`, build the engine with `Config.published("v1")`); one new sentence after the block.
+- `README.md`: quick start block (import `Config`, build the engine with `Config.published("v1")`); one new sentence after the block; the `replay(...)` pointer in the paragraph under the block passes `cfg=Config.published("v1")`.
 - `examples/basic_match.py`: `cfg = Config.published("v1")`; the win probability label; the final print adds `params_version`.
-- `tests/test_readme.py`: `run_block` returns its namespace; new test that the quick start engine's config is `v1`.
+- `tests/test_readme.py`: `run_block` returns its namespace; new test that the quick start engine's config is `v1`; new test that every `replay(` call in the quick start section passes `cfg=`.
 - `tests/test_examples.py`: new parametrized AST test over `examples/*.py`.
 - `CHANGELOG.md`: one bullet under `## [Unreleased]` (a `### Changed` heading).
 
@@ -40,7 +40,7 @@ Domain skills: none available apply (pure Python package; no web framework, UI, 
 
 ## Proof
 
-- Criterion 1, 2: `test_quick_start_uses_v1` and `test_example_loads_v1` (new). Criterion 5: those plus `test_quick_start_runs` and `test_example_runs`.
+- Criterion 1, 2: `test_quick_start_uses_v1` and `test_example_loads_v1` (new). Replay pointer (added in review): `replay(` in the quick start section defaulted `cfg` to `Config()`, so the authoritative replay would run on the placeholders while the live engine ran on v1. `test_quick_start_replay_passes_cfg` (new, red first) checks that every `replay(` call in the section, code and prose, passes `cfg=`. Criterion 5: those plus `test_quick_start_runs` and `test_example_runs`.
 - Criterion 4: the example output in the gate run shows the new label and `v1`.
 - Criterion 6: `git diff --stat origin/main` lists no file under `src/`.
 

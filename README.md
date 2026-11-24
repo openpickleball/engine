@@ -99,7 +99,7 @@ print(summary.rating, summary.reliability, summary.imported_reliability)
 
 `RatingEngine()` with no config uses the `Config()` placeholders, which carry no declared gap meaning, and `v1` is the published set (see [What a rating means](#what-a-rating-means) and [PARAMETERS.md](https://github.com/openpickleball/engine/blob/main/PARAMETERS.md)).
 
-`result.reason` is `None` when the match counted and a `RejectionReason` when it did not. Authoritative ratings come from `replay(ledger, as_of=...)`. Live updates between replays are provisional. See [`examples/`](https://github.com/openpickleball/engine/tree/main/examples) for a fuller example.
+`result.reason` is `None` when the match counted and a `RejectionReason` when it did not. Authoritative ratings come from `replay(ledger, cfg=Config.published("v1"), as_of=...)`, with the same config as the live engine. Live updates between replays are provisional. See [`examples/`](https://github.com/openpickleball/engine/tree/main/examples) for a fuller example.
 
 The rules behind each step are in [`docs/behavior.md`](https://github.com/openpickleball/engine/blob/main/docs/behavior.md). The main ones to know before you try the engine:
 
