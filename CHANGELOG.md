@@ -6,6 +6,10 @@ The engine is the reference implementation of the OPEN rating method. Its output
 
 ## [Unreleased]
 
+### Changed
+
+- The README quick start and `examples/basic_match.py` load the published parameter set with `Config.published("v1")`, not the `Config()` placeholders. A sentence under the quick start says that `RatingEngine()` with no config uses those placeholders, which carry no declared gap meaning. The example's win probability line no longer says "before calibration data", since `v1` sets a win calibration, and its last line prints `params_version`. No engine code or default changes (issue #173).
+
 ## [1.0.0] - 2026-11-23
 
 The 1.0.0 release is the same code as 1.0.0rc2, which the OPEN backend was tested against; only the version differs. It is published to PyPI, so `pip install openpickleball-engine` installs it, and an evaluation can pin `openpickleball-engine==1.0.0`. Two release candidates came first, 1.0.0rc1 and 1.0.0rc2, and this entry covers everything since 0.3.0.dev0. The package is the reference implementation of the OPEN rating method. Its outputs are not OPEN ratings, and no OPEN rating is live.
