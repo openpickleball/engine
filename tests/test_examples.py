@@ -65,3 +65,34 @@ def test_example_loads_v1(script: Path) -> None:
         if _call_name(call) in ("Config", "RatingEngine") and not call.args and not call.keywords
     ]
     assert bare == []
+
+
+V1 = 'from open_engine import Config, RatingEngine\ncfg = Config.published("v1")\n'
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(V1 + "engine = RatingEngine()\n", id="stray-RatingEngine"),
+        pytest.param(V1 + "placeholder = Config()\n", id="stray-Config"),
+        pytest.param(
+            "from open_engine import Config, RatingEngine\nengine = RatingEngine(Config())\n",
+            id="no-published-v1",
+        ),
+    ],
+)
+def test_example_check_catches_placeholder_configs(tmp_path: Path, source: str) -> None:
+    # Guards the guard: each of these scripts must fail test_example_loads_v1.
+    script = tmp_path / "example.py"
+    script.write_text(source, encoding="utf-8")
+    with pytest.raises(AssertionError):
+        test_example_loads_v1(script)
+
+
+def test_example_check_accepts_published_v1(tmp_path: Path) -> None:
+    script = tmp_path / "example.py"
+    script.write_text(
+        'from open_engine import Config, RatingEngine\nRatingEngine(Config.published("v1"))\n',
+        encoding="utf-8",
+    )
+    test_example_loads_v1(script)
