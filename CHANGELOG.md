@@ -8,7 +8,7 @@ The engine is the reference implementation of the OPEN rating method. Its output
 
 ### Changed
 
-- The README quick start and `examples/basic_match.py` load the published parameter set with `Config.published("v1")`, not the `Config()` placeholders. A sentence under the quick start says that `RatingEngine()` with no config uses those placeholders, which carry no declared gap meaning. The example's win probability line no longer says "before calibration data", since `v1` sets a win calibration, and its last line prints `params_version`. No engine code or default changes (issue #173).
+- The README quick start and `examples/basic_match.py` load the published parameter set with `Config.published("v1")`, not the `Config()` placeholders. A sentence under the quick start says that `RatingEngine()` with no config uses those placeholders, which carry no declared gap meaning. The example's win probability line no longer says "before calibration data", since `v1` sets a win calibration, and its last line prints `params_version`. The quick start's pointer to authoritative ratings now reads `replay(ledger, cfg=Config.published("v1"), as_of=...)`, so a replay uses the same config as the live engine. No engine code or default changes (issue #173).
 
 ## [1.0.0] - 2026-11-23
 
