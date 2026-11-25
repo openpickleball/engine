@@ -15,7 +15,7 @@ from open_engine import (
 
 
 def main() -> None:
-    cfg = Config()
+    cfg = Config.published("v1")
     engine = RatingEngine(cfg)
 
     # Verified snapshot from a standard external rating system. Its
@@ -73,7 +73,7 @@ def main() -> None:
             f" seeded from {summary.initial_source}"
         )
     print(
-        "Team A win probability (before calibration data):",
+        "Team A win probability:",
         round(
             engine.predict_win_probability(
                 match.team_a, match.team_b, match.rating_format, match.game_format, match.best_of
@@ -81,7 +81,7 @@ def main() -> None:
             3,
         ),
     )
-    print("Config", cfg.version, cfg.fingerprint())
+    print("Config", cfg.version, cfg.params_version, cfg.fingerprint())
 
 
 if __name__ == "__main__":
