@@ -1,0 +1,22 @@
+name: Pull request
+
+# Checks the commit messages and the description with the organization's
+# shared check (openpickleball/.github, CONTRIBUTING.md "Commit messages").
+# `edited` reruns it when the title or description changes.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pull-request-${{ github.ref }}
+  cancel-in-progress: true
+
+# The status check is "pull-request / check", meant to be required on
+# main, so a change that renames this job must also update the ruleset.
+jobs:
+  pull-request:
+    uses: openpickleball/.github/.github/workflows/pull-request.yml@0403a366e77c3079885e224a0250a2336cf1098a # v1.0.0
