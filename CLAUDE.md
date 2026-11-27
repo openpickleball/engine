@@ -87,7 +87,7 @@ twine check --strict dist/*
 
 The sdist ships only the paths in `only-include` under `[tool.hatch.build.targets.sdist]` in `pyproject.toml`, plus the `PKG-INFO` and `.gitignore` that hatchling adds. A new top-level path that must ship goes in that list and in `ALLOWED_TOP_LEVEL` in `scripts/check_sdist.py`. If it is in `only-include` but not in `ALLOWED_TOP_LEVEL`, the `package` job fails.
 
-CI also runs `.github/workflows/dco.yml` (the `sign-off` check) on every pull request and the OpenSSF Scorecard workflow. GitHub Actions are pinned by commit SHA with the version in a comment; keep that form when Dependabot or a contributor bumps one.
+CI also runs `.github/workflows/dco.yml` (the `sign-off` check) and `.github/workflows/pull-request.yml` (the `pull-request / check` check: the organization's shared commit message and description rules, from openpickleball/.github, pinned to a release commit) on every pull request, and the OpenSSF Scorecard workflow. GitHub Actions are pinned by commit SHA with the version in a comment; keep that form when Dependabot or a contributor bumps one.
 
 Pushing a `v*` tag runs `.github/workflows/release.yml`, which calls `test.yml` as its gate and publishes to TestPyPI and then, after a second approval, to PyPI (see `docs/releasing.md`). The `package` job and the release build install their tools from `.github/requirements/release.txt`, a hash-pinned lock. Never edit it by hand: regenerate it with the command in its header, on Linux (see `docs/releasing.md`).
 
@@ -121,7 +121,7 @@ Pushing a `v*` tag runs `.github/workflows/release.yml`, which calls `test.yml` 
 
 - Every commit needs a DCO sign-off (`git commit -s`). CI (`.github/workflows/dco.yml`) rejects pull requests with unsigned commits. That check runs only on pull requests, so commits pushed straight to `main` must be signed off by hand.
 - Founding phase: repository admins may push directly to `main` while the project is getting established. Everyone else, and admins once this phase ends, uses one change per pull request, linked to an issue. Add or update tests, docs, and the changelog when behavior changes.
-- Commit messages: imperative mood, subject under 72 characters, body explains why.
+- Commit messages: imperative mood, subject under 72 characters, no type prefix such as `docs:`, body explains why (the organization's [commit message rules](https://github.com/openpickleball/.github/blob/main/CONTRIBUTING.md#commit-messages), which `pull-request / check` runs).
 - License: AGPL-3.0-or-later.
 - Before proposing a feature, ask whether it makes the standard more accurate, more trusted, or easier to adopt. If not, it probably belongs in a partner's product.
 
