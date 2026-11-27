@@ -131,7 +131,7 @@ This section overrides a contributor's global no-commit rule for the `/work-issu
 
 - The workflow may commit (`git commit -s`, with explicit paths) and push, but only on the `issue-<N>-*` branch it creates or resumes.
 - After a rebase it may push that branch with `--force-with-lease`. It never force-pushes any other branch.
-- It may open a pull request against `main`, edit its description, label it (creating the ready label if it does not exist), and reply to review comments on it.
+- It may open a pull request against `main`, edit its description, label it (creating the `ready-for-review` label if it does not exist), and reply to review comments on it.
 - It never commits or pushes to `main`, never merges, and never enables auto-merge. A human reviews and merges every pull request.
 
 ## Writing style
